@@ -8,7 +8,7 @@ app = QApplication([])
 from ui.main_window import MainWindow
 from ui.overlay import InlineDialog
 from ui.dialogs import ask_text, ask_confirm
-from ui.song_card import SongResultCard
+from ui.track_row import TrackRow
 from services.playlist_service import PlaylistService
 from config import get_download_dir
 
@@ -72,13 +72,13 @@ w.downloads.entries.clear(); w.downloads.changed.emit()
 # ---- orden y filas perezosas
 w.open_list("downloads"); wait(lambda: len(w.page_playlist._cards) > 0, 10); pump(0.3)
 pg = w.page_playlist
-order_before = [c.title_label.fullText() for c in pg.tracks_widget.findChildren(SongResultCard)]
+order_before = [c.title_label.fullText() for c in pg.tracks_widget.findChildren(TrackRow)]
 pg.set_sort("title", False); pump(0.3)
-cards = sorted(pg.tracks_widget.findChildren(SongResultCard), key=lambda c: c.y())
+cards = sorted(pg.tracks_widget.findChildren(TrackRow), key=lambda c: c.y())
 titles = [c.title_label.fullText().lower() for c in cards]
 check("orden por título", titles == sorted(titles))
 pg.set_sort("duration", True); pump(0.3)
-cards = sorted(pg.tracks_widget.findChildren(SongResultCard), key=lambda c: c.y())
+cards = sorted(pg.tracks_widget.findChildren(TrackRow), key=lambda c: c.y())
 durs = [c.item_info.get("duration_secs", 0) for c in cards]
 check("orden por duración", durs == sorted(durs, reverse=True))
 fake = [{"id": f"f{i}", "title": f"Tema {i:03d}", "uploader": "Fake", "album": "A", "url": "ytsearch1:x", "duration_secs": 100 + i, "duration_str": "1:40", "thumbnail": ""} for i in range(120)]

@@ -66,3 +66,16 @@ def parse_added(item: dict) -> float:
         except (ValueError, TypeError):
             continue
     return 0.0
+
+
+def split_artists(text: str) -> list:
+    """'Milo j & Yahritza Y Su Esencia' -> ['Milo j', 'Yahritza Y Su Esencia'] (varios artistas de una canción)."""
+    import re
+    parts = re.split(r"\s*(?:&|,|;|/)\s*|\s+(?:feat\.?|ft\.?)\s+", text or "", flags=re.IGNORECASE)
+    seen, out = set(), []
+    for part in parts:
+        part = part.strip()
+        if part and part.lower() not in seen:
+            seen.add(part.lower())
+            out.append(part)
+    return out

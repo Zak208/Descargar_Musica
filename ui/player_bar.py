@@ -166,6 +166,16 @@ def build_player_bar(self):
     self.btn_queue.clicked.connect(self.open_queue_dialog)
     controls_layout.addWidget(self.btn_queue)
 
+    # Panel lateral «En reproducción»
+    self.btn_panel = QPushButton("")
+    self.btn_panel.setIcon(icon("panel.svg"))
+    self.btn_panel.setIconSize(QSize(18, 18))
+    self.btn_panel.setObjectName("ControlBtn")
+    self.btn_panel.setToolTip("Vista «En reproducción» (portada, letra e información del artista)")
+    self.btn_panel.setCursor(Qt.PointingHandCursor)
+    self.btn_panel.clicked.connect(self.toggle_now_playing)
+    controls_layout.addWidget(self.btn_panel)
+
     # Ecualizador de audio
     self.btn_eq = QPushButton("")
     self.btn_eq.setIcon(icon("sliders.svg"))

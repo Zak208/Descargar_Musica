@@ -43,6 +43,9 @@ sin cuentas ni claves.
 
 **Biblioteca al estilo Spotify**
 - *Canciones que te gustan* (con pestañas *Todas / Descargadas / Sin descargar*), *Mis descargas* y tus propias listas.
+- Listas con filas numeradas como en Spotify: al pasar el ratón el número se convierte en ▶, un clic marca la fila y
+  muestra los tres puntitos (menú: añadir a una lista, quitar de la lista, descargar, ir al artista o al álbum…) y un
+  doble clic reproduce la canción.
 - Listas con portada personalizable, columnas (título, álbum, fecha en que se añadió, duración), orden por cualquier
   columna, buscador y duración total.
 - Seguir artistas: aparecen en la barra lateral y en Inicio. Filtros *Todo / Listas / Artistas*.
@@ -54,7 +57,10 @@ sin cuentas ni claves.
 
 **Reproductor**
 - Cola, aleatorio, repetir, «anterior» como en Spotify (reinicia pasados 20 s; antes vuelve a la canción previa),
-  reproductor pequeño siempre visible, letras sincronizadas y **ecualizador** real (graves, medios y agudos).
+  reproductor pequeño siempre visible, letras sincronizadas y **ecualizador** real (graves, medios y agudos) que está
+  siempre activo: con todo en 0 el audio no se toca y solo se procesa si mueves algún control.
+- Panel lateral derecho **«En reproducción»**: portada grande, me gusta, añadir a una lista, letra que avanza sola,
+  información del artista (seguidores y una breve reseña) y la siguiente canción.
 - 12 colores de aplicación.
 
 ## Requisitos
@@ -103,7 +109,7 @@ Descargar_Musica.exe --selftest        # escribe selftest.log junto al programa
 | Quiero… | Cómo |
 |---|---|
 | Buscar | Escribe en la barra de arriba (Intro, o espera un instante). También puedes pegar un enlace. |
-| Escuchar un adelanto | Botón ▶ redondo de la fila. |
+| Escuchar / reproducir | Doble clic en la fila (en los resultados de búsqueda, el botón ▶ redondo). |
 | Descargar | Botón verde **Descargar**. En un álbum: *Descargar álbum completo* o *Descargar y crear lista*. |
 | Dar «me gusta» | Corazón de la fila (o el de la barra de reproducción). |
 | Crear una lista | **+** en *Tu biblioteca* → nombre. Añade canciones con «Añadir canciones» o con el menú `+` de cada canción. |
@@ -111,7 +117,8 @@ Descargar_Musica.exe --selftest        # escribe selftest.log junto al programa
 | Ordenar una lista | Pulsa los títulos de columna o el botón **Orden**. |
 | Seguir a un artista | Botón **Seguir** en su perfil. |
 | Ver las descargas en curso | Botón **Descargas** (arriba a la derecha). |
-| Más opciones de una canción | Clic derecho sobre ella. |
+| Más opciones de una canción | Un clic en la fila y los tres puntitos de la derecha, o clic derecho. |
+| Ver la portada, la letra y el artista | Botón de panel de la barra de reproducción (**En reproducción**). |
 | Ecualizador, cola, letra, reproductor pequeño | Botones de la barra de reproducción. |
 
 **Atajos de teclado:** `Espacio` pausa/reanuda · `←` / `→` retroceden/avanzan 5 s · `M` silencia · `Ctrl+F` va al buscador ·
@@ -170,6 +177,8 @@ ui/                        interfaz
     main_window.py           ventana principal
     *_mixin.py               reproducción, listas, inicio, búsqueda y descargas
     *_page.py                páginas (inicio, lista, biblioteca, artista, álbum)
+    track_row.py             fila de canción estilo Spotify (número, ▶ al pasar el ratón, tres puntitos)
+    now_playing.py           panel lateral «En reproducción»
     overlay.py, dialogs.py   ventanas internas
     styles.py, covers.py ... estilos, portadas, iconos, animaciones
 dev_tools/                 pruebas automáticas
@@ -210,6 +219,7 @@ Se ejecutan sin abrir ventanas, desde la raíz del proyecto (algunas usan intern
 python dev_tools/prueba_interfaz.py     # ventanas internas, búsqueda, álbumes, orden, vigilancia de la carpeta...
 python dev_tools/prueba_listas.py       # listas, artistas, sin recargas
 python dev_tools/prueba_detalles.py     # fechas «añadida», rueda lateral, géneros, ventanas sueltas
+python dev_tools/prueba_filas.py        # filas estilo Spotify, menú, panel «En reproducción», ecualizador siempre activo
 ```
 
 ## Solución de problemas

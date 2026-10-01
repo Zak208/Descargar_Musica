@@ -33,13 +33,23 @@ class PlaybackMixin:
     def set_context_from_card(self, card):
         """El contexto son todas las canciones visibles junto a la tarjeta pulsada (misma lista o misma página)."""
         from ui.song_card import SongResultCard
+        from ui.track_row import TrackRow
         parent = card.parentWidget()
         if parent is None:
             self._context = [card.item_info]
             return
-        siblings = [c for c in parent.findChildren(SongResultCard) if c.parentWidget() is parent]
+        siblings = [c for c in parent.findChildren((SongResultCard, TrackRow)) if c.parentWidget() is parent]
         siblings.sort(key=lambda c: c.y())
         self._context = [c.item_info for c in siblings] or [card.item_info]
+
+    def is_current(self, info: dict) -> bool:
+        """True si `info` es la canción que está sonando ahora."""
+        cur = self.current_item_info
+        if not cur or not info:
+            return False
+        if track_key(cur) == track_key(info):
+            return True
+        return bool(cur.get("id")) and str(cur.get("id")) == str(info.get("id"))
 
     def _context_position(self) -> int:
         if not self.current_item_info or not self._context:

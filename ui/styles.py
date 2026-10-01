@@ -183,6 +183,60 @@ QLabel#TopInfo {
     padding-right: 6px;
 }
 
+/* FILAS DE CANCIÓN ESTILO SPOTIFY */
+QFrame#TrackRow {
+    background-color: transparent;
+    border-radius: 8px;
+}
+QFrame#TrackRow:hover {
+    background-color: rgba(255, 255, 255, 0.07);
+}
+QFrame#TrackRow[selected="true"] {
+    background-color: rgba(255, 255, 255, 0.15);
+}
+QLabel#RowIndex {
+    color: #B3B3B3;
+    font-size: 14px;
+    background: transparent;
+}
+
+/* PANEL «EN REPRODUCCIÓN» */
+QLabel#PanelTitle {
+    font-size: 15px;
+    font-weight: 700;
+    color: #FFFFFF;
+}
+QLabel#PanelHeading {
+    font-size: 15px;
+    font-weight: 700;
+    color: #FFFFFF;
+    background: transparent;
+}
+QLabel#PanelArtistLink {
+    font-size: 14px;
+    color: #B3B3B3;
+    background: transparent;
+}
+QLabel#PanelArtistLink:hover {
+    color: #FFFFFF;
+}
+QFrame#PanelCard {
+    background-color: #1A1A1A;
+    border-radius: 12px;
+}
+QPushButton#LinkBtn {
+    background: transparent;
+    border: none;
+    color: #B3B3B3;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 4px 6px;
+    border-radius: 6px;
+}
+QPushButton#LinkBtn:hover {
+    color: #FFFFFF;
+}
+
 /* COLUMNAS Y ORDEN DE LAS LISTAS */
 QFrame#ColumnHeader {
     background: transparent;

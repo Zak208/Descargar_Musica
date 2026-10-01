@@ -1,7 +1,7 @@
 """Ecualizador: ajuste del sonido con tres bandas (graves, medios y agudos) y ajustes predefinidos."""
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSlider, QComboBox, QCheckBox, QFrame
+    QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSlider, QComboBox, QFrame
 )
 
 from ui.overlay import InlineDialog
@@ -42,15 +42,11 @@ class EqualizerDialog(InlineDialog):
         title.setObjectName("SectionTitle")
         layout.addWidget(title)
 
-        hint = QLabel("Da forma al sonido de tu música. Se aplica a las canciones de tu biblioteca "
-                      "(las que ya has descargado).")
+        hint = QLabel("Da forma al sonido de tu música. Siempre está activo: con todo en 0 la música suena tal cual. "
+                      "Se aplica a las canciones de tu biblioteca (las que ya has descargado).")
         hint.setObjectName("SettingsHint")
         hint.setWordWrap(True)
         layout.addWidget(hint)
-
-        self.chk_enable = QCheckBox("Activar")
-        self.chk_enable.toggled.connect(self._on_toggle_enabled)
-        layout.addWidget(self.chk_enable)
 
         box = QFrame()
         box.setObjectName("SettingsGroup")
@@ -120,8 +116,6 @@ class EqualizerDialog(InlineDialog):
                 self.preset_combo.addItem("Personalizado")
             self.preset_combo.setCurrentText("Personalizado")
         self.preset_combo.blockSignals(False)
-        if current != (0, 0, 0) and not self.chk_enable.isChecked():
-            self.chk_enable.setChecked(True)
 
     def _on_preset_selected(self, name: str):
         if name in PRESETS:
@@ -131,13 +125,6 @@ class EqualizerDialog(InlineDialog):
             self.sliders["mid"].setValue(mid)
             self.sliders["treble"].setValue(treble)
             self._loading = False
-            if name != "Normal":
-                self.chk_enable.setChecked(True)
-
-    def _on_toggle_enabled(self, checked: bool):
-        for s in self.sliders.values():
-            s.setEnabled(checked)
-        self.preset_combo.setEnabled(checked)
 
     def load_settings(self):
         data = load_eq_settings()
@@ -153,12 +140,10 @@ class EqualizerDialog(InlineDialog):
         self.preset_combo.blockSignals(True)
         self.preset_combo.setCurrentText(match)
         self.preset_combo.blockSignals(False)
-        self.chk_enable.setChecked(bool(data.get("enabled")))
-        self._on_toggle_enabled(self.chk_enable.isChecked())
 
     def apply_and_close(self):
         data = {
-            "enabled": self.chk_enable.isChecked(),
+            "enabled": True,
             "preset": self.preset_combo.currentText(),
             "bass": self.sliders["bass"].value(),
             "mid": self.sliders["mid"].value(),

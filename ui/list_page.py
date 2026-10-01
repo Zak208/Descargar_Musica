@@ -14,7 +14,7 @@ from ui.formatting import format_total, parse_added
 from ui.icons import icon
 from ui.loading import LoadingBlock
 from ui.overlay import InlineDialog
-from ui.song_card import SongResultCard, COVER_SIZE, ALBUM_COL, DATE_COL, DOWNLOAD_COL
+from ui.track_row import TrackRow, IDX_COL, ROW_COVER, ALBUM_COL, DATE_COL, ICON_COL, DUR_COL, ROW_SPACING
 
 KIND_TITLES = {"favorites": "LISTA", "downloads": "LISTA", "playlist": "PLAYLIST", "mix": "MIX PARA TI", "genre": "GÉNERO"}
 
@@ -168,8 +168,8 @@ class ColumnHeader(QFrame):
         super().__init__(parent)
         self.setObjectName("ColumnHeader")
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(12, 4, 16, 4)
-        lay.setSpacing(14)
+        lay.setContentsMargins(12, 4, 14, 4)
+        lay.setSpacing(ROW_SPACING)
         self.buttons = {}
 
         def spacer(width):
@@ -189,17 +189,22 @@ class ColumnHeader(QFrame):
             self.buttons[key] = b
             return b
 
-        lay.addWidget(spacer(COVER_SIZE))
-        title = column("title", "TÍTULO")
-        lay.addWidget(title, stretch=1)
+        hash_lbl = QLabel("#")
+        hash_lbl.setObjectName("ColumnBtn")
+        hash_lbl.setFixedWidth(IDX_COL)
+        hash_lbl.setAlignment(Qt.AlignCenter)
+        hash_lbl.setStyleSheet("padding: 6px 0px;")
+        lay.addWidget(hash_lbl)
+        lay.addWidget(spacer(ROW_COVER))
+        lay.addWidget(column("title", "TÍTULO"), stretch=1)
         self.album_btn = column("album", "ÁLBUM", ALBUM_COL)
         lay.addWidget(self.album_btn)
         self.date_btn = column("added", "AÑADIDA", DATE_COL)
         lay.addWidget(self.date_btn)
-        lay.addWidget(spacer(94))                       # botones me gusta / añadir / carpeta
-        lay.addWidget(column("duration", "DUR.", 48))
-        lay.addWidget(spacer(38))                       # botón de reproducir
-        lay.addWidget(spacer(DOWNLOAD_COL))             # botón de descargar
+        lay.addWidget(spacer(ICON_COL))                 # me gusta
+        lay.addWidget(spacer(ICON_COL))                 # descargada
+        lay.addWidget(column("duration", "DUR.", DUR_COL))
+        lay.addWidget(spacer(ICON_COL))                 # tres puntitos
 
     def set_sort(self, key: str, descending: bool):
         for k, b in self.buttons.items():
@@ -593,13 +598,16 @@ class ListPage(QWidget):
                 self._cards.pop(key)
                 card = None
             if card is None:
-                card = SongResultCard(item, parent_window=self.window_ref, list_mode=True)
+                card = TrackRow(item, self.window_ref, number=pos + 1, list_mode=True)
                 card.set_columns_visible(self._columns_shown)
+                card.context_provider = self._visible_items
+                card.set_playing(self.window_ref.is_current(card.item_info))
                 if self.kind == "playlist":
                     card.extra_menu = [("Quitar de esta lista", lambda it=item: self._remove_track(it))]
                 self._cards[key] = card
                 self.tracks_container.insertWidget(pos, card)
             else:
+                card.set_number(pos + 1)
                 current = self.tracks_container.itemAt(pos).widget() if pos < self.tracks_container.count() else None
                 if current is not card:
                     self.tracks_container.removeWidget(card)
@@ -609,6 +617,11 @@ class ListPage(QWidget):
         self._update_texts(full)
         if len(full) > len(visible):
             QTimer.singleShot(150, self._fill_viewport)
+
+    def update_playing(self):
+        """Marca en la lista la canción que está sonando."""
+        for card in self._cards.values():
+            card.set_playing(self.window_ref.is_current(card.item_info))
 
     def _fill_viewport(self):
         """Si las filas creadas no llenan la pantalla, se crean más."""

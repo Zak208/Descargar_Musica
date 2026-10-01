@@ -38,7 +38,7 @@ PRESETS = {
     "Jazz": (3, 0, 3),
 }
 
-DEFAULT_SETTINGS = {"enabled": False, "preset": "Normal", "bass": 0, "mid": 0, "treble": 0}
+DEFAULT_SETTINGS = {"enabled": True, "preset": "Normal", "bass": 0, "mid": 0, "treble": 0}
 
 
 def bands_from_tone(bass: float, mid: float, treble: float) -> list[float]:
@@ -54,13 +54,13 @@ def load_eq_settings() -> dict:
             if isinstance(saved, dict):
                 if "bass" in saved:
                     data.update({k: saved[k] for k in DEFAULT_SETTINGS if k in saved})
+                    data["enabled"] = True   # el ecualizador está siempre activo; en 0/0/0 el sonido no se toca
                 # compatibilidad con el formato antiguo de 10 bandas
                 elif isinstance(saved.get("values"), list) and len(saved["values"]) == 10:
                     v = saved["values"]
                     data["bass"] = round(sum(v[0:3]) / 3)
                     data["mid"] = round(sum(v[4:7]) / 3)
                     data["treble"] = round(sum(v[7:10]) / 3)
-                    data["enabled"] = bool(saved.get("enabled", False))
     except Exception as e:
         logger.warning(f"No se pudo leer el ecualizador: {e}")
     return data
@@ -74,9 +74,7 @@ def save_eq_settings(data: dict) -> None:
 
 
 def active_bands(settings: dict) -> list[float] | None:
-    """Bandas a aplicar, o None si el ecualizador está apagado o en 'Normal'."""
-    if not settings.get("enabled"):
-        return None
+    """Bandas a aplicar, o None si todo está en 0 (entonces el audio no se procesa y suena tal cual)."""
     bands = bands_from_tone(settings.get("bass", 0), settings.get("mid", 0), settings.get("treble", 0))
     return bands if any(abs(b) > 0.05 for b in bands) else None
 

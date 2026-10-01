@@ -9,11 +9,13 @@ from PySide6.QtWidgets import QMenu, QFileDialog
 
 from config import HISTORY_FILE, get_download_dir
 from services.library_service import LibraryScanWorker, LibraryWatcher, load_items_sync
+from services.recommendation_service import AlbumResolver, ArtistResolver
 from services.playlist_service import PlaylistService
 from services.artist_service import ArtistService
 from ui.icons import icon
 from ui.styles import accent
 from ui.sidebar import SideListItem
+from ui.formatting import split_artists
 from ui.covers import import_cover, artist_avatar_path, AvatarDownloader
 from ui.dialogs import ask_text, ask_confirm
 
@@ -378,8 +380,20 @@ class ListsMixin:
         self._play_entry(items[start or 0])
 
     # ------------------------------------------------------------ menú de canción
+    def show_add_to_list_menu(self, info: dict, global_pos):
+        """Menú pequeño con tus listas para añadir una canción."""
+        menu = QMenu(self)
+        menu.addAction(icon("plus.svg"), "Nueva lista...").triggered.connect(lambda: self.create_playlist_with_track(info))
+        playlists = PlaylistService.get_playlists()
+        if playlists:
+            menu.addSeparator()
+            for p_id, data in playlists.items():
+                act = menu.addAction(icon("playlist.svg"), data.get("name", "Lista"))
+                act.triggered.connect(lambda _=False, pid=p_id: self.add_track_to_playlist(pid, info))
+        menu.exec(global_pos)
+
     def open_track_menu(self, info: dict, global_pos, extra=None):
-        """Menú de clic derecho de una canción (sirve para búsqueda, listas y descargas)."""
+        """Menú de una canción (los tres puntitos o el clic derecho), igual en búsqueda, listas y descargas."""
         menu = QMenu(self)
         local = info.get('local_path')
         local = local if (local and os.path.isfile(local)) else None
@@ -394,7 +408,7 @@ class ListsMixin:
         menu.addSeparator()
 
         is_fav = PlaylistService.is_favorite(info.get('id'), info.get('title'))
-        add(menu, "Quitar de «Me gusta»" if is_fav else "Añadir a «Me gusta»",
+        add(menu, "Quitar de Canciones que te gustan" if is_fav else "Añadir a Canciones que te gustan",
             "heart_filled.svg" if is_fav else "heart.svg",
             lambda: self.toggle_info_favorite(info), accent() if is_fav else None)
 
@@ -407,10 +421,26 @@ class ListsMixin:
                 act = pl_menu.addAction(data.get("name", "Lista"))
                 act.triggered.connect(lambda _=False, pid=p_id: self.add_track_to_playlist(pid, info))
 
-        if extra:
-            menu.addSeparator()
+        if extra:   # por ejemplo «Quitar de esta lista» (solo en playlists propias)
             for text, callback in extra:
                 add(menu, text, "x.svg", callback)
+
+        if not local:
+            add(menu, "Descargar", "download.svg", lambda: self.quick_download(dict(info)))
+
+        # Ir al artista / al álbum
+        menu.addSeparator()
+        artists = split_artists(info.get("uploader", ""))
+        if len(artists) == 1:
+            add(menu, "Ir al artista", "user.svg", lambda a=artists[0]: self.open_artist_by_name({"name": a}))
+        elif artists:
+            sub = menu.addMenu(icon("user.svg"), "Ir al artista")
+            for name in artists:
+                act = sub.addAction(name)
+                act.triggered.connect(lambda _=False, a=name: self.open_artist_by_name({"name": a}))
+        if info.get("album"):
+            add(menu, "Ir al álbum", "album.svg",
+                lambda: self.open_album_by_name(artists[0] if artists else "", info["album"]))
 
         if local:
             menu.addSeparator()
@@ -419,6 +449,28 @@ class ListsMixin:
             add(menu, "Mostrar en la carpeta", "folder.svg", lambda: self.show_in_explorer(local))
             add(menu, "Borrar de mi música", "trash.svg", lambda: self.delete_file(local))
         menu.exec(global_pos)
+
+    def open_album_by_name(self, artist: str, album: str):
+        """Localiza el álbum de una canción y abre su página."""
+        self.notify("Buscando el álbum...")
+        self._album_resolver = AlbumResolver(artist, album)
+        self._album_resolver.found.connect(self.open_album_details)
+        self._album_resolver.failed.connect(lambda: self.notify("No se encontró la página de ese álbum."))
+        self._album_resolver.start()
+
+    def follow_artist_by_name(self, name: str, on_done=None):
+        """Sigue a un artista del que solo se conoce el nombre (primero se localiza su perfil)."""
+        resolver = ArtistResolver(name)
+
+        def done(artist: dict):
+            self.toggle_follow_artist(artist["id"], artist["name"], artist.get("avatar", ""))
+            if on_done:
+                on_done()
+
+        resolver.found.connect(done)
+        resolver.failed.connect(lambda: self.notify("No se pudo localizar a este artista."))
+        self._follow_resolver = resolver
+        resolver.start()
 
     def toggle_info_favorite(self, info: dict):
         is_fav = PlaylistService.toggle_favorite(info)

@@ -48,6 +48,8 @@ from ui.imageloader import prune_disk_cache
 from ui.friendly import friendly_error
 from ui.common import resource_path
 from ui.song_card import SongResultCard, square_cover
+from ui.track_row import TrackRow
+from ui.now_playing import NowPlayingPanel, PANEL_WIDTH
 from ui.sidebar import build_sidebar
 from ui.home_page import build_home_page
 from ui.player_bar import build_player_bar
@@ -180,6 +182,12 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self.content_layout.setContentsMargins(28, 22, 28, 20)
         self.content_layout.setSpacing(18)
         self.top_hbox.addWidget(self.content_widget, stretch=1)
+
+        # Panel lateral derecho «En reproducción» (oculto hasta que se abre desde la barra de reproducción)
+        self.now_panel = NowPlayingPanel(self)
+        self.now_panel.close_requested.connect(self.toggle_now_playing)
+        self.now_panel.setVisible(False)
+        self.top_hbox.addWidget(self.now_panel)
 
         # Barra superior (de lado a lado): marca, inicio, buscador, información general y descargas en curso
         self.topbar = TopBar()
@@ -322,6 +330,8 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         if self.is_mini_mode:
             self.normal_geometry = self.geometry()
             self._normal_min_size = self.minimumSize()
+            self._panel_was_open = self.now_panel.isVisible()
+            self.now_panel.setVisible(False)
             self.topbar.setVisible(False)
             self.sidebar.setVisible(False)
             self.content_widget.setVisible(False)
@@ -341,6 +351,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             self.seek_slider.setMaximumWidth(560)
             self.topbar.setVisible(True)
             self.sidebar.setVisible(True)
+            self.now_panel.setVisible(getattr(self, '_panel_was_open', False))
             self.content_widget.setVisible(True)
             self.setMinimumSize(getattr(self, "_normal_min_size", QSize(0, 0)))
             self.setWindowFlags(self.windowFlags() & ~Qt.WindowStaysOnTopHint)
@@ -563,6 +574,8 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
     def add_to_queue(self, track_info: dict):
         self.playback_queue.append(track_info)
         self.notify("Sonará a continuación")
+        if self.now_panel.isVisible():
+            self.now_panel.refresh_next()
 
     def open_queue_dialog(self):
         cur = self.current_item_info or {}
@@ -652,6 +665,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self.update_player_heart_icon()
         self.notify_track_changed(title, artist)
         self._refresh_lyrics_if_open()
+        self._on_track_changed()
 
         if pixmap:
             self.player_thumb.setPixmap(pixmap)
@@ -745,6 +759,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self.update_player_heart_icon()
         self.notify_track_changed(title, artist)
         self._refresh_lyrics_if_open()
+        self._on_track_changed()
 
         if meta.get("has_cover") and meta.get("cover_data"):
             img = QImage()
@@ -798,14 +813,55 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         except RuntimeError:
             self.lyrics_dialog = None
 
+    def select_row(self, row):
+        """Marca una fila de canción (solo una a la vez)."""
+        prev = getattr(self, "_selected_row", None)
+        if prev is not None and prev is not row:
+            try:
+                prev.set_selected(False)
+            except RuntimeError:
+                pass
+        self._selected_row = row
+        row.set_selected(True)
+
+    def _on_track_changed(self):
+        """La canción que suena cambió: se marca en la lista y se actualiza el panel lateral."""
+        for page in (self.page_playlist,):
+            page.update_playing()
+        for page in (self.page_album, self.page_artist):
+            for row in page.findChildren(TrackRow):
+                try:
+                    row.set_playing(self.is_current(row.item_info))
+                except RuntimeError:
+                    pass
+        if self.now_panel.isVisible():
+            self.now_panel.set_track(self.current_item_info)
+
+    def toggle_now_playing(self):
+        """Abre o cierra el panel lateral derecho «En reproducción»."""
+        show = not self.now_panel.isVisible()
+        self.now_panel.setVisible(show)
+        if show:
+            self.now_panel.set_track(self.current_item_info)
+        # la ventana necesita sitio para el panel: el mínimo crece (o vuelve a su valor) con él
+        extra = PANEL_WIDTH + 8
+        if show:
+            self.setMinimumWidth(self.minimumWidth() + extra)
+            if self.width() < self.minimumWidth():
+                self.resize(self.minimumWidth(), self.height())
+        else:
+            self.setMinimumWidth(max(0, self.minimumWidth() - extra))
+
     def sync_favorite_hearts(self):
         """Mantiene sincronizados todos los corazones (barra inferior y tarjetas de la pantalla)."""
         self.update_player_heart_icon()
-        for card in self.findChildren(SongResultCard):
+        for card in self.findChildren((SongResultCard, TrackRow)):
             try:
                 card.update_heart_state()
             except RuntimeError:
                 pass
+        if self.now_panel.isVisible():
+            self.now_panel.refresh_like()
 
     # ---------- ecualizador ----------
     def _apply_eq_if_needed(self):
@@ -880,6 +936,8 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
 
             if hasattr(self, 'lyrics_dialog') and self.lyrics_dialog and self.lyrics_dialog.isVisible():
                 self.lyrics_dialog.update_position(position_ms)
+            if self.now_panel.isVisible():
+                self.now_panel.update_position(position_ms)
 
         finally:
             self.is_updating_seek = False
@@ -1005,6 +1063,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self.current_item_info = None
         if hasattr(self, 'preview_worker') and self.preview_worker and self.preview_worker.isRunning():
             self.preview_worker.is_cancelled = True
+        self._on_track_changed()
 
     def closeEvent(self, event):
         logging.info("Cerrando aplicación...")

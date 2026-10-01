@@ -41,7 +41,7 @@ def primary_artist(name: str) -> str:
 
 def _get(url: str, **params) -> dict:
     try:
-        r = requests.get(url, params=params, timeout=8)
+        r = requests.get(url, params=params, timeout=8, headers={"User-Agent": "DescargadorMusica/1.0 (github.com/Zak208/Descargar_Musica)"})
         if r.status_code == 200:
             return r.json()
     except Exception as e:
@@ -143,10 +143,8 @@ class RecommendationWorker(QThread):
         data = _get(f"{DEEZER}/search/artist", q=name, limit=5).get("data", [])
         if not data:
             return None
-        for cand in data:
-            if norm(cand.get("name", "")) == norm(name):
-                return cand
-        return max(data, key=lambda c: c.get("nb_fan", 0))
+        exact = [c for c in data if norm(c.get("name", "")) == norm(name)]
+        return max(exact or data, key=lambda c: c.get("nb_fan", 0))   # el más popular de los que coinciden
 
     @staticmethod
     def _related(artist_id) -> list:
@@ -341,7 +339,11 @@ class ArtistResolver(QThread):
         if not best:
             self.failed.emit()
             return
-        self.found.emit({"id": best["artistId"], "name": best.get("artistName", self.name), "avatar": self.picture})
+        picture = self.picture
+        if not picture:
+            from services.catalog_service import get_artist_avatar
+            picture = get_artist_avatar(best.get("artistName", self.name))
+        self.found.emit({"id": best["artistId"], "name": best.get("artistName", self.name), "avatar": picture})
 
 
 class GenreTracksWorker(QThread):
@@ -359,3 +361,65 @@ class GenreTracksWorker(QThread):
             if t:
                 tracks.append(t)
         self.ready.emit(tracks)
+
+
+class AlbumResolver(QThread):
+    """Busca en iTunes el álbum de una canción (por su nombre y artista) para poder abrir su página."""
+    found = Signal(int)
+    failed = Signal()
+
+    def __init__(self, artist: str, album: str, parent=None):
+        super().__init__(parent)
+        self.artist = artist
+        self.album = album
+
+    def run(self):
+        data = _get(f"{ITUNES}/search", term=f"{self.artist} {self.album}".strip(), entity="album", limit=8).get("results", [])
+        wanted = norm(self.album)
+        best = None
+        for item in data:
+            name = norm(item.get("collectionName", ""))
+            if name == wanted or (wanted and (wanted in name or name in wanted)):
+                best = item
+                break
+        best = best or (data[0] if data else None)
+        if best and best.get("collectionId"):
+            self.found.emit(int(best["collectionId"]))
+        else:
+            self.failed.emit()
+
+
+class ArtistInfoWorker(QThread):
+    """Información del artista para el panel «En reproducción»: foto, seguidores (Deezer) y una breve reseña (Wikipedia)."""
+    ready = Signal(dict)
+
+    def __init__(self, name: str, parent=None):
+        super().__init__(parent)
+        self.name = name
+
+    MUSIC_WORDS = ("música", "musical", "cantante", "banda", "rapero", "raper", "músico", "compositor", "productor",
+                   "dj", "singer", "band", "rapper", "musician", "songwriter", "producer", "group", "duo", "dúo")
+
+    @staticmethod
+    def _wikipedia(name: str) -> str:
+        """Breve reseña de Wikipedia: se prueba el nombre tal cual y con '(banda)', '(cantante)'... y se comprueba que trate de música."""
+        suffixes = ["", " (banda)", " (cantante)", " (músico)", " (rapero)", " (band)", " (singer)", " (rapper)"]
+        for lang in ("es", "en"):
+            for base, suffix in [(b, x) for x in suffixes for b in dict.fromkeys([name, name.title()])]:
+                title = requests.utils.quote((base + suffix).replace(" ", "_"))
+                summary = _get(f"https://{lang}.wikipedia.org/api/rest_v1/page/summary/{title}")
+                text = (summary.get("extract") or "").strip()
+                if not text or summary.get("type") == "disambiguation":
+                    continue
+                if any(w in text.lower() for w in ArtistInfoWorker.MUSIC_WORDS):
+                    return text if len(text) <= 520 else text[:520].rsplit(" ", 1)[0] + "…"
+        return ""
+
+    def run(self):
+        info = {"name": self.name, "picture": "", "fans": 0, "bio": ""}
+        artist = RecommendationWorker._find_artist(self.name)
+        if artist:
+            info["picture"] = artist.get("picture_big") or artist.get("picture_medium") or ""
+            info["fans"] = int(artist.get("nb_fan", 0) or 0)
+        info["bio"] = self._wikipedia(self.name)
+        self.ready.emit(info)

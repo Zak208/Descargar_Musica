@@ -9,7 +9,7 @@ from ui.animations import fade_in
 from ui.covers import artist_avatar_pixmap, artist_avatar_path
 from ui.home_shelves import ArtistTile, make_shelf, clear_layout
 from ui.icons import icon
-from ui.song_card import SongResultCard
+from ui.track_row import TrackRow
 from ui.imageloader import ImageLoaderThread
 from ui.spotify_views import AlbumCard
 from ui.styles import accent
@@ -183,9 +183,8 @@ class ArtistProfilePage(QWidget):
         self.btn_download_top.setEnabled(bool(tracks))
 
         clear_layout(self.tracks_container)
-        for item in tracks:
-            card = SongResultCard(item, parent_window=main_window)
-            self.tracks_container.addWidget(card)
+        for i, item in enumerate(tracks):
+            self.tracks_container.addWidget(TrackRow(item, main_window, number=i + 1, list_mode=False))
 
         clear_layout(self.albums_layout)
         for alb in albums:

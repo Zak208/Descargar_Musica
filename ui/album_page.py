@@ -8,7 +8,7 @@ from ui.formatting import format_total
 from ui.home_shelves import clear_layout
 from ui.icons import icon
 from ui.imageloader import ImageLoaderThread
-from ui.song_card import SongResultCard
+from ui.track_row import TrackRow
 from ui.styles import accent
 
 COVER = 168
@@ -156,8 +156,9 @@ class AlbumDetailsPage(QWidget):
         for b in (self.btn_play, self.btn_download_album, self.btn_save_list):
             b.setEnabled(bool(tracks))
         clear_layout(self.tracks_container)
-        for item in tracks:
-            self.tracks_container.addWidget(SongResultCard(item, parent_window=main_window))
+        for i, item in enumerate(tracks):
+            self.tracks_container.addWidget(TrackRow(item, main_window, number=int(item.get("track_number") or i + 1),
+                                                      list_mode=False))
         fade_in(self.header_frame, 300)
 
     def _play(self):

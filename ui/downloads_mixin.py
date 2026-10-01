@@ -90,22 +90,24 @@ class DownloadsMixin:
         self.download_next_parallel_worker()   # la biblioteca se actualiza una sola vez, al terminar el lote
 
     # ------------------------------------------------ canciones sueltas
-    def quick_download(self, info: dict):
+    def quick_download(self, info: dict, on_done=None):
         """Descarga una canción directamente (sin pasar por la lista de resultados)."""
         worker = DownloadWorker(info, str(get_download_dir()), get_audio_quality())
         self.downloads.track(worker, info)
         _ACTIVE_THREADS.add(worker)
-        worker.finished_signal.connect(lambda res, w=worker, it=info: self._quick_download_done(res, w, it))
+        worker.finished_signal.connect(lambda res, w=worker, it=info, cb=on_done: self._quick_download_done(res, w, it, cb))
         worker.start()
         self.notify(f"Descargando «{info.get('title', 'canción')}»…")
 
-    def _quick_download_done(self, result: dict, worker, info: dict):
+    def _quick_download_done(self, result: dict, worker, info: dict, callback=None):
         _ACTIVE_THREADS.discard(worker)
         if result.get("success"):
             self.notify(f"«{info.get('title', 'Canción')}» descargada")
             self.refresh_sidebar_library()
         else:
             self.notify(friendly_error(result.get("error")))
+        if callback is not None:
+            callback(result)
 
     # ------------------------------------------------- álbum como lista
     def download_album_as_list(self, album: dict):
