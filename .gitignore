@@ -1,0 +1,31 @@
+# --- Entorno y compilación ---
+venv/
+.venv/
+__pycache__/
+*.pyc
+build/
+build_*/
+dist/
+dist_*/
+
+# --- Datos privados del usuario (listas, favoritos, historial, caché, FFmpeg descargado) ---
+app_data/
+app_descargas.log*
+selftest.log
+
+# --- Binarios grandes (FFmpeg): la app los descarga sola ---
+bin/
+temp_ffmpeg/
+
+# --- Copias de seguridad y restos de desarrollo ---
+_backup*/
+_archivo*/
+*.tmp
+*.bak
+
+# --- Archivos del editor / sistema ---
+.vscode/
+.idea/
+.claude/
+Thumbs.db
+.DS_Store

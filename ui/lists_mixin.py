@@ -1,0 +1,428 @@
+"""Biblioteca y listas estilo Spotify: canciones que te gustan, descargas, playlists y menú de cada canción."""
+import os
+import re
+
+import json
+
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QMenu, QFileDialog
+
+from config import HISTORY_FILE, get_download_dir
+from services.library_service import LibraryScanWorker, LibraryWatcher, load_items_sync
+from services.playlist_service import PlaylistService
+from services.artist_service import ArtistService
+from ui.icons import icon
+from ui.styles import accent
+from ui.sidebar import SideListItem
+from ui.covers import import_cover, artist_avatar_path, AvatarDownloader
+from ui.dialogs import ask_text, ask_confirm
+
+
+def _norm(text: str) -> str:
+    return re.sub(r"[\W_]+", "", (text or "").lower())
+
+
+class ListsMixin:
+    """Mezcla para MainWindow. Requiere: page_playlist, page_library, stacked_widget, playlists_container,
+    notify(), switch_to_page(), _local_id(), _play_entry(), set_context() y toggle_shuffle()."""
+
+    def init_lists_state(self):
+        self._lib_items = None
+        self._lib_worker = None
+        self._rescan_pending = False
+        self._history_cache = None
+        self._home_dirty = False
+        self._rescan_timer = QTimer(self)
+        self._rescan_timer.setSingleShot(True)
+        self._rescan_timer.setInterval(900)
+        self._rescan_timer.timeout.connect(self._start_scan)
+        self._lib_watcher = LibraryWatcher(self)
+        self._lib_watcher.changed.connect(self.rescan_library)
+        self._lib_index = None
+        self._current_list = None
+        self._page_before_list = 0
+        self._lib_filter = "all"
+        self._side_items = {}
+        self._avatar_jobs = []
+
+    # ------------------------------------------------------------ biblioteca
+    def watch_library(self):
+        """Vigila la carpeta de música: si borras, añades o renombras un archivo, la app se pone al día sola."""
+        self._lib_watcher.watch(str(get_download_dir()))
+
+    def invalidate_library(self):
+        self._lib_index = None
+        self._history_cache = None
+
+    def library_items(self) -> list:
+        """Canciones descargadas (más recientes primero) con título, artista, álbum y duración."""
+        if self._lib_items is None:
+            self._lib_items = load_items_sync()   # solo la primera vez, si aún no terminó la lectura en segundo plano
+            self.invalidate_library()
+        return self._lib_items
+
+    def rescan_library(self):
+        """Vuelve a leer la biblioteca en segundo plano (con una pequeña espera para agrupar cambios)."""
+        self._rescan_timer.start()
+
+    def _start_scan(self):
+        if self._lib_worker is not None and self._lib_worker.isRunning():
+            self._rescan_pending = True
+            return
+        self._lib_worker = LibraryScanWorker(str(get_download_dir()))
+        self._lib_worker.ready.connect(self._on_library_scanned)
+        self._lib_worker.start()
+
+    def _on_library_scanned(self, items: list):
+        previous = {(it["local_path"], it["added_ts"]) for it in (self._lib_items or [])}
+        current = {(it["local_path"], it["added_ts"]) for it in items}
+        first = self._lib_items is None
+        self._lib_items = items
+        self.invalidate_library()
+        if first or previous != current:
+            self._home_dirty = True
+            self.watch_library()
+            self.refresh_playlists_sidebar()
+            self.update_header_info()
+            if self.stacked_widget.currentIndex() == 0:
+                self.refresh_home()
+                self._home_dirty = False
+            self.reload_current_list()
+            self.refresh_tiles_state()
+            if first:
+                self.refresh_recommendations()
+        if self._rescan_pending:
+            self._rescan_pending = False
+            self.rescan_library()
+
+    def history_map(self) -> dict:
+        """Historial de descargas (se lee una sola vez y se guarda en memoria)."""
+        if self._history_cache is None:
+            data = {}
+            try:
+                if HISTORY_FILE.exists():
+                    with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+            except Exception:
+                data = {}
+            self._history_cache = data if isinstance(data, dict) else {}
+        return self._history_cache
+
+    def _library_index(self) -> dict:
+        if self._lib_index is None:
+            index = {}
+            for it in self.library_items():
+                path = it['local_path']
+                index.setdefault(_norm(os.path.splitext(os.path.basename(path))[0]), path)
+                index.setdefault(_norm(f"{it['uploader']} - {it['title']}"), path)
+            self._lib_index = index
+        return self._lib_index
+
+    def resolve_local(self, info: dict):
+        """Ruta del archivo descargado de esta canción, o None si no está descargada."""
+        lp = info.get('local_path')
+        if lp and os.path.isfile(lp):
+            return lp
+        tid = str(info.get('id') or '')
+        if tid:
+            hist = self.history_map().get(tid)
+            if hist and hist.get('file_path') and os.path.isfile(hist['file_path']):
+                return hist['file_path']
+        index = self._library_index()
+        title, artist = info.get('title', ''), info.get('uploader', '')
+        for key in (_norm(f"{artist} - {title}"), _norm(title) if not artist else None):
+            if key and key in index:
+                return index[key]
+        return None
+
+    # --------------------------------------------------------- barra lateral
+    def set_library_filter(self, key: str):
+        """Filtro de 'Tu biblioteca' en la barra lateral (Todo / Listas / Artistas), como en Spotify."""
+        self._lib_filter = key
+        for k, chip in getattr(self, "library_chips", {}).items():
+            chip.setChecked(k == key)
+        self.refresh_playlists_sidebar()
+
+    def refresh_playlists_sidebar(self):
+        """Actualiza las listas y artistas de la barra lateral. Solo toca las filas que cambiaron."""
+        def count_text(n: int) -> str:
+            return "Lista · 1 canción" if n == 1 else f"Lista · {n} canciones"
+
+        entries = []   # (clave, tipo, id, título, subtítulo, firma)
+        if self._lib_filter in ("all", "lists"):
+            nfav = len(PlaylistService.get_favorites())
+            entries.append(("favorites:favorites", "favorites", "favorites", "Canciones que te gustan", count_text(nfav), None))
+            ndl = len(self._lib_items) if self._lib_items is not None else 0
+            entries.append(("downloads:downloads", "downloads", "downloads", "Mis descargas", count_text(ndl), None))
+            for p_id, p_data in PlaylistService.get_playlists().items():
+                entries.append((f"playlist:{p_id}", "playlist", p_id, p_data.get("name", "Playlist"),
+                                count_text(len(p_data.get("tracks", []))), PlaylistService.get_cover_path(p_id)))
+        if self._lib_filter in ("all", "artists"):
+            for art in ArtistService.get_followed():
+                has_photo = os.path.exists(artist_avatar_path(art["id"]))
+                entries.append((f"artist:{art['id']}", "artist", art["id"], art["name"], "Artista", has_photo))
+
+        layout = self.playlists_container
+        wanted = {e[0] for e in entries}
+
+        def drop(key):
+            widget, _sig = self._side_items.pop(key)
+            layout.removeWidget(widget)
+            widget.setParent(None)
+            widget.deleteLater()
+
+        for key in [k for k in self._side_items if k not in wanted]:
+            drop(key)
+
+        for pos, (key, kind, list_id, title, subtitle, extra) in enumerate(entries):
+            signature = (title, subtitle, extra)
+            existing = self._side_items.get(key)
+            if existing and existing[1] != signature:
+                drop(key)
+                existing = None
+            if existing is None:
+                item = SideListItem(kind, list_id, title, subtitle)
+                if kind == "artist":
+                    art = next((a for a in ArtistService.get_followed() if a["id"] == list_id), None)
+                    item.clicked.connect(lambda a=art: a and self.open_artist_by_name(a))
+                    item.context_requested.connect(lambda pos_, a=art: a and self._artist_menu(a, pos_))
+                else:
+                    item.clicked.connect(lambda k=kind, lid=list_id: self.open_list(k, lid))
+                    if kind == "playlist":
+                        item.context_requested.connect(lambda pos_, pid=list_id: self._playlist_menu(pid, pos_))
+                layout.insertWidget(pos, item)
+                self._side_items[key] = (item, signature)
+            else:
+                widget = existing[0]
+                current = layout.itemAt(pos).widget() if pos < layout.count() else None
+                if current is not widget:
+                    layout.removeWidget(widget)
+                    layout.insertWidget(pos, widget)
+
+        hint = getattr(self, "side_hint", None)
+        if hint is not None:
+            hint.setVisible(self._lib_filter == "artists" and not ArtistService.get_followed())
+
+    # ---------------------------------------------------------------- artistas
+    def toggle_follow_artist(self, artist_id, name: str, avatar: str = "") -> bool:
+        """Sigue o deja de seguir a un artista. Los que sigues aparecen en la barra lateral y en Inicio."""
+        now_following = ArtistService.toggle(artist_id, name, avatar)
+        if now_following:
+            job = AvatarDownloader(artist_id, avatar)
+            job.done.connect(lambda _id: self._on_avatar_ready())
+            self._avatar_jobs.append(job)
+            job.start()
+            self.notify(f"Ahora sigues a {name}")
+        else:
+            self.notify(f"Has dejado de seguir a {name}")
+        self.refresh_playlists_sidebar()
+        self.refresh_home()
+        if self.stacked_widget.currentIndex() == 5:
+            self._load_library_page(animate=False)
+        return now_following
+
+    def _on_avatar_ready(self):
+        self.refresh_playlists_sidebar()
+        self.refresh_home()
+        if self.stacked_widget.currentIndex() == 5:
+            self._load_library_page(animate=False)
+
+    def _artist_menu(self, artist: dict, pos):
+        menu = QMenu(self)
+        menu.addAction(icon("user.svg"), "Ver perfil").triggered.connect(lambda: self.open_artist_by_name(artist))
+        menu.addAction(icon("x.svg"), "Dejar de seguir").triggered.connect(
+            lambda: self.toggle_follow_artist(artist["id"], artist["name"], artist.get("avatar", "")))
+        menu.exec(pos)
+
+    def _library_card_clicked(self, kind: str, list_id: str):
+        if kind == "artist":
+            art = next((a for a in ArtistService.get_followed() if a["id"] == list_id), None)
+            if art:
+                self.open_artist_by_name(art)
+        else:
+            self.open_list(kind, list_id)
+
+    def unfollow_from_library(self, artist_id: str):
+        art = next((a for a in ArtistService.get_followed() if a["id"] == artist_id), None)
+        if art:
+            self.toggle_follow_artist(art["id"], art["name"], art.get("avatar", ""))
+
+    def _playlist_menu(self, p_id: str, pos):
+        menu = QMenu(self)
+        menu.addAction(icon("edit.svg"), "Cambiar nombre").triggered.connect(lambda: self.rename_playlist(p_id))
+        menu.addAction(icon("palette.svg"), "Cambiar imagen").triggered.connect(lambda: self.change_playlist_cover(p_id))
+        if PlaylistService.get_cover_path(p_id):
+            menu.addAction(icon("x.svg"), "Quitar imagen").triggered.connect(lambda: self.remove_playlist_cover(p_id))
+        menu.addSeparator()
+        menu.addAction(icon("trash.svg"), "Eliminar lista").triggered.connect(lambda: self.delete_playlist(p_id))
+        menu.exec(pos)
+
+    def change_playlist_cover(self, p_id: str):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Elige una imagen para tu lista", "", "Imágenes (*.png *.jpg *.jpeg *.webp *.bmp)")
+        if not path:
+            return
+        if import_cover(p_id, path):
+            self.notify("Imagen de la lista actualizada")
+            self.reload_current_list()
+            self.refresh_playlists_sidebar()
+        else:
+            self.notify("No se pudo usar esa imagen. Prueba con otra.")
+
+    def remove_playlist_cover(self, p_id: str):
+        PlaylistService.set_cover_filename(p_id, None)
+        self.notify("Imagen quitada")
+        self.reload_current_list()
+        self.refresh_playlists_sidebar()
+
+    def rename_playlist(self, p_id: str):
+        current = PlaylistService.get_playlists().get(p_id, {}).get("name", "")
+        name, ok = ask_text(self, "Cambiar nombre", "Nuevo nombre de la lista", text=current, ok="Guardar")
+        if ok and name.strip():
+            PlaylistService.rename_playlist(p_id, name.strip())
+            self.refresh_playlists_sidebar()
+            if self._current_list == ("playlist", p_id):
+                self.open_list("playlist", p_id)
+            else:
+                self.open_library()
+
+    def delete_playlist(self, p_id: str):
+        name = PlaylistService.get_playlists().get(p_id, {}).get("name", "esta lista")
+        if ask_confirm(self, "Eliminar lista",
+                       f"¿Seguro que quieres eliminar «{name}»?\nTus canciones descargadas no se borran.",
+                       ok="Eliminar", danger=True):
+            PlaylistService.delete_playlist(p_id)
+            self.refresh_playlists_sidebar()
+            self.open_library()
+            self.notify("Lista eliminada")
+
+    # ------------------------------------------------------------ navegación
+    def open_library(self):
+        self._current_list = None
+        self._load_library_page(animate=True)
+        self.switch_to_page(5)
+
+    def _list_data(self, kind: str, list_id):
+        """(nombre, canciones, id) de una lista, o None si ya no existe."""
+        playlists = PlaylistService.get_playlists()
+        if kind == "favorites":
+            return "Canciones que te gustan", PlaylistService.get_favorites(), "favorites"
+        if kind == "downloads":
+            return "Mis descargas", self.library_items(), "downloads"
+        if kind == "playlist" and list_id in playlists:
+            return playlists[list_id].get("name", "Playlist"), playlists[list_id].get("tracks", []), list_id
+        if kind == "genre" and self._custom_mix:
+            return self._custom_mix["name"], self._custom_mix["tracks"], int(list_id or 0)
+        if kind == "mix":
+            mixes = (self._rec_data or {}).get("mixes", [])
+            idx = int(list_id if list_id is not None else 0)
+            if 0 <= idx < len(mixes):
+                return mixes[idx]["name"], mixes[idx]["tracks"], idx
+        return None
+
+    def open_list(self, kind: str, list_id=None):
+        data = self._list_data(kind, list_id)
+        if data is None:
+            return
+        name, tracks, list_id = data
+        current = self.stacked_widget.currentIndex()
+        if current == 4 and self._current_list == (kind, list_id):
+            self.page_playlist.sync(name, tracks)   # ya estás en esta lista: se actualiza sin recargar
+            return
+        if current != 4:
+            self._page_before_list = current
+        self._current_list = (kind, list_id)
+        self.page_playlist.load(kind, list_id, name, tracks)
+        self.switch_to_page(4)
+
+    def open_playlist_page(self, p_id: str):
+        self.open_list("playlist", p_id)
+
+    def go_back_from_list(self):
+        target = self._page_before_list if self._page_before_list not in (4,) else 5
+        if target == 5:
+            self.open_library()
+        else:
+            self.switch_to_page(target)
+
+    def reload_current_list(self):
+        """Pone al día lo que se está viendo (barra lateral y lista abierta) sin volver a cargarlo todo."""
+        self.refresh_playlists_sidebar()
+        if self.stacked_widget.currentIndex() == 4 and self._current_list:
+            kind, list_id = self._current_list
+            data = self._list_data(kind, list_id)
+            if data is None:
+                self.open_library()
+                return
+            self.page_playlist.sync(data[0], data[1])
+        elif self.stacked_widget.currentIndex() == 5:
+            self._load_library_page(animate=False)
+
+    refresh_current_list = reload_current_list
+
+    def _load_library_page(self, animate: bool = True):
+        self.page_library.load(len(PlaylistService.get_favorites()), len(self.library_items()),
+                               PlaylistService.get_playlists(), ArtistService.get_followed(), animate)
+
+    # ----------------------------------------------------------- reproducción
+    def play_list(self, items: list, start, shuffle: bool = False):
+        """Reproduce una lista: 'siguiente' y 'anterior' se mueven solo dentro de ella."""
+        if not items:
+            return
+        import random
+        self.set_context(items)
+        if shuffle:
+            if not self.is_shuffle_enabled:
+                self.toggle_shuffle()
+            start = random.randrange(len(items))
+        self._play_entry(items[start or 0])
+
+    # ------------------------------------------------------------ menú de canción
+    def open_track_menu(self, info: dict, global_pos, extra=None):
+        """Menú de clic derecho de una canción (sirve para búsqueda, listas y descargas)."""
+        menu = QMenu(self)
+        local = info.get('local_path')
+        local = local if (local and os.path.isfile(local)) else None
+
+        def add(m, text, icon_name, slot, color=None):
+            act = m.addAction(icon(icon_name, color) if color else icon(icon_name), text)
+            act.triggered.connect(lambda _=False: slot())
+            return act
+
+        add(menu, "Reproducir", "play.svg", lambda: self._play_entry(info))
+        add(menu, "Reproducir a continuación", "queue.svg", lambda: self.add_to_queue(info))
+        menu.addSeparator()
+
+        is_fav = PlaylistService.is_favorite(info.get('id'), info.get('title'))
+        add(menu, "Quitar de «Me gusta»" if is_fav else "Añadir a «Me gusta»",
+            "heart_filled.svg" if is_fav else "heart.svg",
+            lambda: self.toggle_info_favorite(info), accent() if is_fav else None)
+
+        pl_menu = menu.addMenu(icon("playlist.svg"), "Añadir a una lista")
+        add(pl_menu, "Nueva lista...", "plus.svg", lambda: self.create_playlist_with_track(info))
+        playlists = PlaylistService.get_playlists()
+        if playlists:
+            pl_menu.addSeparator()
+            for p_id, data in playlists.items():
+                act = pl_menu.addAction(data.get("name", "Lista"))
+                act.triggered.connect(lambda _=False, pid=p_id: self.add_track_to_playlist(pid, info))
+
+        if extra:
+            menu.addSeparator()
+            for text, callback in extra:
+                add(menu, text, "x.svg", callback)
+
+        if local:
+            menu.addSeparator()
+            add(menu, "Editar nombre, artista y portada", "tag.svg", lambda: self.open_metadata_dialog(local))
+            add(menu, "Cambiar nombre del archivo", "edit.svg", lambda: self.rename_file(local))
+            add(menu, "Mostrar en la carpeta", "folder.svg", lambda: self.show_in_explorer(local))
+            add(menu, "Borrar de mi música", "trash.svg", lambda: self.delete_file(local))
+        menu.exec(global_pos)
+
+    def toggle_info_favorite(self, info: dict):
+        is_fav = PlaylistService.toggle_favorite(info)
+        self.sync_favorite_hearts()
+        self.notify("Añadida a «Canciones que te gustan»" if is_fav else "Quitada de «Canciones que te gustan»")
+        self.refresh_playlists_sidebar()
+        self.refresh_current_list()
