@@ -50,7 +50,8 @@ def make_shelf(title: str, height: int, subtitle: str = ""):
     scroll = HorizontalCarouselScrollArea()
     scroll.setFixedHeight(height)
     inner = QWidget()
-    inner.setStyleSheet("background: transparent;")
+    inner.setObjectName("ShelfInner")
+    inner.setStyleSheet("#ShelfInner { background: transparent; }")
     row = QHBoxLayout(inner)
     row.setContentsMargins(0, 6, 0, 8)
     row.setSpacing(12)
@@ -94,6 +95,7 @@ class TrackTile(QFrame):
         self.window_ref = window
         self.shelf_tracks = shelf_tracks
         self.setObjectName("CoverCard")
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self.setCursor(Qt.PointingHandCursor)
         self.setFixedWidth(TILE_W)
 
@@ -215,6 +217,7 @@ class ArtistTile(QFrame):
         super().__init__(parent)
         self.artist = artist
         self.setObjectName("CoverCard")
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self.setCursor(Qt.PointingHandCursor)
         self.setFixedWidth(TILE_W)
         lay = QVBoxLayout(self)
@@ -263,6 +266,7 @@ class MixTile(QFrame):
         super().__init__(parent)
         self.mix = mix
         self.setObjectName("CoverCard")
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self.setCursor(Qt.PointingHandCursor)
         self.setFixedWidth(TILE_W)
         lay = QVBoxLayout(self)
@@ -304,10 +308,12 @@ class GenreTile(QFrame):
         self.genre = genre
         self.index = index
         self.setObjectName("GenreTile")
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self.setCursor(Qt.PointingHandCursor)
         self.setFixedSize(TILE_W, 96)
         color = GENRE_COLORS[index % len(GENRE_COLORS)]
-        self.setStyleSheet(f"#GenreTile {{ background-color: {color}; border-radius: 10px; }}")
+        self.setStyleSheet(f"#GenreTile {{ background-color: {color}; border-radius: 10px; border: 2px solid transparent; }}"
+                           "#GenreTile:hover { border: 2px solid rgba(255, 255, 255, 0.9); }")
         self.setProperty("noRetheme", True)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(14, 12, 14, 12)
@@ -329,6 +335,7 @@ class QuickTile(QFrame):
     def __init__(self, kind: str, list_id, title: str, parent=None):
         super().__init__(parent)
         self.setObjectName("QuickTile")
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self.setCursor(Qt.PointingHandCursor)
         self.setFixedHeight(60)
         lay = QHBoxLayout(self)

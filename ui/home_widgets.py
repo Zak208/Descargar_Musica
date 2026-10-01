@@ -17,6 +17,7 @@ class RecentTrackCard(QFrame):
         super().__init__(parent)
         self.path = info["local_path"]
         self.setObjectName("CoverCard")
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self.setCursor(Qt.PointingHandCursor)
         self.setFixedWidth(CARD_COVER + 24)
 

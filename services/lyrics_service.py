@@ -138,8 +138,27 @@ def _lyrics_ovh(artist: str, title: str) -> dict | None:
     return None
 
 
+def _norm(text: str) -> str:
+    return re.sub(r"\W+", "", (text or "").lower())
+
+
+def _artist_parts(text: str) -> set:
+    parts = re.split(r"\s*(?:&|,|;|/|\bfeat\.?|\bft\.?|\by\b|\band\b|\bx\b)\s*", (text or "").lower())
+    return {_norm(p) for p in parts if _norm(p)}
+
+
+def _same_artist(wanted: str, found: str) -> bool:
+    """¿La letra encontrada es del artista pedido? Sin esto, una canción con el mismo título de otro artista colaba su letra."""
+    w, f = _artist_parts(wanted), _artist_parts(found)
+    if not w or not f:
+        return True
+    return any(x in y or y in x for x in w for y in f)
+
+
 def fetch_lyrics(title: str, artist: str = "") -> dict | None:
-    """Busca la letra probando varias combinaciones y varias fuentes (LRCLIB y lyrics.ovh)."""
+    """Busca la letra probando varias combinaciones y varias fuentes (LRCLIB y lyrics.ovh).
+    Solo se acepta si el artista de la letra coincide con el de la canción."""
+    known = "" if artist in ("Artista Desconocido", "Artista", "Música Local", "Música local") else _clean(artist)
     pairs = _candidates(title, artist)
     attempts = []
     for art, tit in pairs:
@@ -149,10 +168,12 @@ def fetch_lyrics(title: str, artist: str = "") -> dict | None:
     for art, tit in pairs:
         attempts.append(lambda a=art, t=tit: _lyrics_ovh(a, t))
 
+    allowed = {_norm(known)} | {_norm(a) for a, _t in pairs if a}
+    allowed.discard("")
     for attempt in attempts:
         try:
             result = attempt()
-            if result:
+            if result and (not allowed or any(_same_artist(a, result.get("artist", "")) for a in allowed)):
                 return result
         except Exception as e:
             logger.warning(f"Intento de letra fallido ({title} - {artist}): {e}")

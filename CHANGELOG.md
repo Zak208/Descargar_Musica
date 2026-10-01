@@ -3,6 +3,10 @@
 Formato: `MAYOR.MENOR.PARCHE`. MAYOR = cambios que rompen datos o uso, MENOR = funciones nuevas, PARCHE = arreglos.
 Cada versión subida a GitHub tiene su etiqueta `vX.Y.Z` (pestaña *Releases/Tags*).
 
+## 1.5.0
+- Las tarjetas (mixes, canciones, artistas, géneros, accesos rápidos, listas de la barra lateral) se iluminan y se marcan al pasar el ratón, igual que las filas de las listas. Antes su fondo no se llegaba a pintar.
+- Arreglo de letras: ya no se muestra la letra de otro artista con el mismo título de la canción (ej. «Cosas pendientes» de Dib salía con la de Maluma). Si no hay letra del artista correcto, se avisa de que no se encontró.
+
 ## 1.4.0
 - Ventana de letras al estilo Spotify: fondo con el color de la portada, texto grande que crece con la ventana, siempre una sola ventana y se actualiza sola al cambiar de canción.
 - Arreglo: al elegir otra canción con el panel «En reproducción» abierto, la canción se quedaba en pausa aunque el botón dijera «Reproduciendo» (y la letra no seguía).

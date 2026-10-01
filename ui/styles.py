@@ -108,7 +108,7 @@ QFrame#SideListItem {
     border-radius: 10px;
 }
 QFrame#SideListItem:hover {
-    background-color: rgba(255, 255, 255, 0.08);
+    background-color: rgba(255, 255, 255, 0.14);
 }
 QLabel#SideItemTitle {
     font-size: 13px;
@@ -344,7 +344,7 @@ QFrame#QuickTile {
     border-radius: 8px;
 }
 QFrame#QuickTile:hover {
-    background-color: rgba(255, 255, 255, 0.15);
+    background-color: rgba(255, 255, 255, 0.24);
 }
 
 /* BOTÓN SEGUIR */
@@ -600,10 +600,11 @@ QPushButton#IconBtn:hover {
 #CoverCard {
     background-color: #181818;
     border-radius: 10px;
-    border: none;
+    border: 1px solid transparent;
 }
 #CoverCard:hover {
-    background-color: #262626;
+    background-color: #2A2A2A;
+    border: 1px solid rgba(255, 255, 255, 0.18);
 }
 #CoverTitle {
     font-size: 14px;
