@@ -189,10 +189,10 @@ QFrame#TrackRow {
     border-radius: 8px;
 }
 QFrame#TrackRow:hover {
-    background-color: rgba(255, 255, 255, 0.07);
+    background-color: rgba(255, 255, 255, 0.10);
 }
 QFrame#TrackRow[selected="true"] {
-    background-color: rgba(255, 255, 255, 0.15);
+    background-color: rgba(255, 255, 255, 0.20);
 }
 QLabel#RowIndex {
     color: #B3B3B3;

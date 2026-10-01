@@ -1,7 +1,8 @@
 """Panel lateral derecho «En reproducción» (como el de Spotify): portada, acciones, letra, artista y siguiente canción."""
 import os
 
-from PySide6.QtCore import Qt, Signal, QSize, QTimer
+from PySide6.QtCore import Qt, Signal, QSize, QTimer, QPropertyAnimation, QEasingCurve
+from PySide6.QtGui import QColor, QImage
 from PySide6.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QScrollArea, QWidget
 )
@@ -14,6 +15,7 @@ from ui.formatting import split_artists
 from ui.icons import icon
 from ui.save_popup import save_icon
 from ui.imageloader import ImageLoaderThread, LocalCoverLoader
+from ui.perf import eco
 from ui.styles import accent
 from ui.widgets import ElidedLabel
 
@@ -30,13 +32,48 @@ class ClickableLabel(QLabel):
         super().mouseReleaseEvent(ev)
 
 
+LINE_IDLE = "color: #D2D2D2; font-size: 19px; font-weight: 700; background: transparent;"
+LINE_ACTIVE = "color: #FFFFFF; font-size: 19px; font-weight: 800; background: transparent;"
+
+
+def cover_color(pix):
+    """Mezcla todos los colores de la portada (más peso a los vivos) y devuelve un tono medio con el que el texto claro se lee bien."""
+    if pix is None or pix.isNull():
+        return None
+    img = pix.toImage().scaled(24, 24, Qt.IgnoreAspectRatio, Qt.SmoothTransformation).convertToFormat(QImage.Format_RGB32)
+    r = g = b = wsum = 0.0
+    for y in range(img.height()):
+        for x in range(img.width()):
+            c = QColor(img.pixel(x, y))
+            weight = 0.15 + c.hsvSaturationF() * c.valueF()
+            r += c.red() * weight
+            g += c.green() * weight
+            b += c.blue() * weight
+            wsum += weight
+    if not wsum:
+        return None
+    mixed = QColor(int(r / wsum), int(g / wsum), int(b / wsum))
+    return QColor.fromHslF(max(mixed.hslHueF(), 0.0), min(max(mixed.hslSaturationF(), 0.38), 0.62), 0.40)
+
+
+class AutoScrollArea(QScrollArea):
+    """Zona de letra: se mueve sola con la canción; la rueda del ratón no la desplaza (sigue moviendo el panel)."""
+
+    def wheelEvent(self, ev):
+        ev.ignore()
+
+
 class LyricsBox(QFrame):
     """Letra de la canción dentro del panel (las sincronizadas avanzan solas)."""
 
     def __init__(self, window, parent=None):
         super().__init__(parent)
-        self.setObjectName("PanelCard")
+        self.setObjectName("LyricsCard")
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self.window_ref = window
+        self._anim = None
+        self._plain = False
+        self.set_color(QColor("#3D5A4A"))
         self._worker = None
         self._key = None
         self._lines = []      # [(ms, QLabel)]
@@ -46,33 +83,42 @@ class LyricsBox(QFrame):
         lay.setSpacing(8)
         head = QHBoxLayout()
         title = QLabel("Letra")
-        title.setObjectName("PanelHeading")
+        title.setStyleSheet("color: #FFFFFF; font-size: 15px; font-weight: 800; background: transparent;")
         head.addWidget(title)
         head.addStretch()
         self.btn_full = QPushButton("Ver completa")
         self.btn_full.setObjectName("LinkBtn")
+        self.btn_full.setStyleSheet("color: #FFFFFF; background: transparent; border: none; font-weight: 700;")
         self.btn_full.setCursor(Qt.PointingHandCursor)
         self.btn_full.clicked.connect(self.window_ref.open_lyrics)
         head.addWidget(self.btn_full)
         lay.addLayout(head)
 
         self.status = QLabel("")
-        self.status.setObjectName("SectionSubtitle")
+        self.status.setStyleSheet("color: #E6E6E6; background: transparent; font-size: 14px;")
         self.status.setWordWrap(True)
         lay.addWidget(self.status)
 
-        self.scroll = QScrollArea()
+        self.scroll = AutoScrollArea()
         self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.NoFrame)
+        self.scroll.setStyleSheet("background: transparent;")
+        self.scroll.viewport().setStyleSheet("background: transparent;")
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.scroll.setFixedHeight(230)
+        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.scroll.setFixedHeight(320)
         inner = QWidget()
         inner.setStyleSheet("background: transparent;")
         self.body = QVBoxLayout(inner)
         self.body.setContentsMargins(0, 4, 4, 4)
-        self.body.setSpacing(6)
+        self.body.setSpacing(12)
         self.body.setAlignment(Qt.AlignTop)
         self.scroll.setWidget(inner)
         lay.addWidget(self.scroll)
+
+    def set_color(self, color):
+        """Fondo de la tarjeta: el tono que sale de mezclar los colores de la portada."""
+        self.setStyleSheet(f"QFrame#LyricsCard {{ background-color: {color.name()}; border-radius: 14px; }}")
 
     def load(self, title: str, artist: str, key: str):
         if key == self._key:
@@ -116,16 +162,24 @@ class LyricsBox(QFrame):
         for ms, text in lines:
             lbl = QLabel(text)
             lbl.setWordWrap(True)
-            lbl.setStyleSheet("color: #8A8A8A; font-size: 14px; font-weight: 600; background: transparent;")
+            lbl.setStyleSheet(LINE_IDLE)
             self.body.addWidget(lbl)
             if synced:
                 self._lines.append((ms, lbl))
+        self._plain = bool(lines) and not synced
+        self.scroll.verticalScrollBar().setValue(0)
         self.status.setVisible(not lines)
         if not lines:
             self.status.setText("No hemos encontrado la letra de esta canción.")
         self.scroll.setVisible(bool(lines))
 
     def update_position(self, ms: int):
+        if self._plain:     # letra sin tiempos: baja poco a poco según lo que lleva la canción
+            dur = self.window_ref.player.duration()
+            if dur > 0:
+                bar = self.scroll.verticalScrollBar()
+                self._scroll_to(int(bar.maximum() * min(1.0, ms / dur)))
+            return
         if not self._lines:
             return
         new = -1
@@ -137,19 +191,31 @@ class LyricsBox(QFrame):
         if new == self._active or new < 0:
             return
         if 0 <= self._active < len(self._lines):
-            self._lines[self._active][1].setStyleSheet(
-                "color: #8A8A8A; font-size: 14px; font-weight: 600; background: transparent;")
+            self._lines[self._active][1].setStyleSheet(LINE_IDLE)
         self._active = new
         lbl = self._lines[new][1]
-        lbl.setStyleSheet(f"color: {accent()}; font-size: 14px; font-weight: 800; background: transparent;")
+        lbl.setStyleSheet(LINE_ACTIVE)
         QTimer.singleShot(0, lambda l=lbl: self._center(l))
 
     def _center(self, lbl):
         try:
-            bar = self.scroll.verticalScrollBar()
-            bar.setValue(max(0, lbl.y() + lbl.height() // 2 - self.scroll.viewport().height() // 2))
+            self._scroll_to(max(0, lbl.y() + lbl.height() // 2 - self.scroll.viewport().height() // 2))
         except RuntimeError:
             pass
+
+    def _scroll_to(self, value: int):
+        bar = self.scroll.verticalScrollBar()
+        if eco():
+            bar.setValue(value)
+            return
+        if self._anim is None:
+            self._anim = QPropertyAnimation(bar, b"value", self)
+            self._anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._anim.stop()
+        self._anim.setDuration(350)
+        self._anim.setStartValue(bar.value())
+        self._anim.setEndValue(value)
+        self._anim.start()
 
 
 class NowPlayingPanel(QFrame):
@@ -374,9 +440,20 @@ class NowPlayingPanel(QFrame):
         else:
             self.cover.clear()
             return
-        loader.image_loaded.connect(lambda pix: self._safe_set(self.cover, pix))
+        loader.image_loaded.connect(self._cover_ready)
         self._cover_loader = loader
         loader.start()
+
+    def _cover_ready(self, pix):
+        self._safe_set(self.cover, pix)
+        color = cover_color(pix)
+        if color is not None:
+            self.lyrics.set_color(color)
+            top = QColor(color)
+            top.setHslF(top.hslHueF(), top.hslSaturationF(), 0.26)
+            self.setStyleSheet(
+                "QFrame#SidePanel { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+                f"stop:0 {top.name()}, stop:0.5 #121212, stop:1 #121212); border-radius: 14px; }}")
 
     @staticmethod
     def _safe_set(label, pix):
