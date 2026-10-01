@@ -27,6 +27,7 @@ from services.metadata_service import MetadataService
 from services.playlist_service import PlaylistService
 from ui.styles import MAIN_STYLE, get_theme_stylesheet, THEME_CONFIGS, set_active_theme, accent, retheme_stylesheet
 from ui.icons import icon
+from version import __version__
 from ui.home_shelves import TrackTile
 from ui.save_popup import save_icon
 from ui.playback_mixin import PlaybackMixin
@@ -51,7 +52,7 @@ from ui.friendly import friendly_error
 from ui.common import resource_path
 from ui.song_card import SongResultCard, square_cover
 from ui.track_row import TrackRow
-from ui.now_playing import NowPlayingPanel, PANEL_WIDTH
+from ui.now_playing import NowPlayingPanel, PANEL_WIDTH, cover_color
 from ui.sidebar import build_sidebar
 from ui.home_page import build_home_page
 from ui.player_bar import build_player_bar
@@ -90,7 +91,7 @@ class FFmpegDownloadWorker(QThread):
 class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin, DownloadsMixin):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Descargador de Música")
+        self.setWindowTitle(f"Descargador de Música {__version__}")
         self.setWindowIcon(QIcon(resource_path("assets/logo.jpg")))
         self.resize(1360, 860)
         self.setStyleSheet(MAIN_STYLE)
@@ -311,7 +312,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
 
         title = self.current_item_info.get('title', '')
         artist = self.current_item_info.get('uploader', '')
-        dlg = LyricsDialog(title, artist, player=self.player, parent=self)
+        dlg = LyricsDialog(title, artist, player=self.player, color=self._cover_color(), parent=self)
         dlg.setAttribute(Qt.WA_DeleteOnClose, True)
         dlg.destroyed.connect(lambda *_: setattr(self, 'lyrics_dialog', None))
         self.lyrics_dialog = dlg
@@ -799,11 +800,23 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         dlg = self.lyrics_dialog
         try:
             if dlg is not None and dlg.isVisible() and self.current_item_info:
-                dlg.close()
-                self.lyrics_dialog = None
-                self.open_lyrics()
+                dlg.set_track(self.current_item_info.get('title', ''), self.current_item_info.get('uploader', ''),
+                              self._cover_color())
+                QTimer.singleShot(900, lambda: self._recolor_lyrics(dlg))   # la portada puede tardar en cargar
         except RuntimeError:
             self.lyrics_dialog = None
+
+    def _cover_color(self):
+        pix = self.player_thumb.pixmap()
+        return cover_color(pix) if pix is not None and not pix.isNull() else None
+
+    def _recolor_lyrics(self, dlg):
+        try:
+            color = self._cover_color()
+            if color is not None and dlg is self.lyrics_dialog:
+                dlg.set_color(color)
+        except RuntimeError:
+            pass
 
     def select_row(self, row):
         """Marca una fila de canción (solo una a la vez)."""

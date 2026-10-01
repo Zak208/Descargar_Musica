@@ -1,5 +1,7 @@
 # Descargador de Música
 
+**Versión actual: 1.4.0** · [Historial de versiones](CHANGELOG.md) · cada versión subida tiene su etiqueta `vX.Y.Z` en GitHub
+
 Aplicación de escritorio para **Windows** que combina un reproductor con aspecto de Spotify y un descargador de música:
 buscas una canción, un artista o un álbum, escuchas un adelanto y la descargas a tu equipo en MP3, M4A, FLAC o WAV,
 con su portada y sus etiquetas. Todo (listas, favoritos, artistas que sigues, recomendaciones) funciona en local,

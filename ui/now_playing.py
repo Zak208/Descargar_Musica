@@ -143,10 +143,10 @@ class LyricsBox(QFrame):
         self._lines = []
         self._active = -1
         while self.body.count():
-            item = self.body.takeAt(0)
-            if item.widget():
-                item.widget().setParent(None)
-                item.widget().deleteLater()
+            widget = self.body.takeAt(0).widget()
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
 
     def _on_error(self, msg: str, key: str):
         if key == self._key:

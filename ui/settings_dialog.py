@@ -10,6 +10,7 @@ from config import (
 )
 from ui.styles import THEME_CONFIGS
 from ui.icons import icon
+from version import __version__
 from ui.overlay import InlineDialog
 from ui.perf import eco, set_eco
 
@@ -140,6 +141,10 @@ class SettingsDialog(InlineDialog):
         self.theme_name_lbl.setObjectName("SettingsHint")
         look_lay.addWidget(self.theme_name_lbl)
         root.addWidget(look_box)
+
+        version_lbl = QLabel(f"Descargador de Música · versión {__version__}")
+        version_lbl.setObjectName("SettingsHint")
+        root.addWidget(version_lbl)
 
         close_row = QHBoxLayout()
         close_row.addStretch()
