@@ -7,6 +7,7 @@ from services.playlist_service import PlaylistService
 from ui.covers import list_cover_pixmap, artist_avatar_pixmap, mix_cover, GENRE_COLORS
 from ui.formatting import format_total
 from ui.icons import icon
+from ui.save_popup import save_icon
 from ui.imageloader import ImageLoaderThread
 from ui.spotify_views import HorizontalCarouselScrollArea
 from ui.styles import accent
@@ -132,7 +133,7 @@ class TrackTile(QFrame):
         self.heart_btn = QPushButton("")
         self.heart_btn.setObjectName("IconBtn")
         self.heart_btn.setIconSize(QSize(17, 17))
-        self.heart_btn.setToolTip("Me gusta")
+        self.heart_btn.setToolTip("Guardar en una lista")
         self.heart_btn.setCursor(Qt.PointingHandCursor)
         self.heart_btn.clicked.connect(self._toggle_like)
         actions.addWidget(self.heart_btn)
@@ -153,8 +154,8 @@ class TrackTile(QFrame):
 
     # ------------------------------------------------------------ estado
     def refresh_state(self):
-        fav = PlaylistService.is_favorite(self.info.get("id"), self.info.get("title"))
-        self.heart_btn.setIcon(icon("heart_filled.svg", accent()) if fav else icon("heart.svg", "#8A8A8A"))
+        saved = bool(PlaylistService.lists_containing(self.info))
+        self.heart_btn.setIcon(save_icon(saved, "#8A8A8A"))
         local = self.window_ref.resolve_local(self.info)
         if local:
             self.dl_btn.setIcon(icon("check.svg", accent()))
@@ -179,7 +180,7 @@ class TrackTile(QFrame):
         self.window_ref.play_shelf(self.shelf_tracks, item, self.cover.pixmap())
 
     def _toggle_like(self):
-        self.window_ref.toggle_info_favorite(dict(self.info))
+        self.window_ref.save_button_clicked(dict(self.info), self.heart_btn)
         self.refresh_state()
 
     def _download(self):

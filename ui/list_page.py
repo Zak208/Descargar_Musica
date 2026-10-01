@@ -201,8 +201,14 @@ class ColumnHeader(QFrame):
         lay.addWidget(self.album_btn)
         self.date_btn = column("added", "AÑADIDA", DATE_COL)
         lay.addWidget(self.date_btn)
-        lay.addWidget(spacer(ICON_COL))                 # me gusta
-        lay.addWidget(spacer(ICON_COL))                 # descargada
+        lay.addWidget(spacer(ICON_COL))                 # guardar en lista (+)
+        dl_head = QLabel()                              # descargada
+        dl_head.setFixedWidth(ICON_COL)
+        dl_head.setAlignment(Qt.AlignCenter)
+        dl_head.setPixmap(icon("download.svg", "#B3B3B3").pixmap(14, 14))
+        dl_head.setToolTip("Descargada en tu equipo")
+        dl_head.setStyleSheet("background: transparent;")
+        lay.addWidget(dl_head)
         lay.addWidget(column("duration", "DUR.", DUR_COL))
         lay.addWidget(spacer(ICON_COL))                 # tres puntitos
 

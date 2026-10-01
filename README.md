@@ -59,7 +59,7 @@ sin cuentas ni claves.
 - Cola, aleatorio, repetir, «anterior» como en Spotify (reinicia pasados 20 s; antes vuelve a la canción previa),
   reproductor pequeño siempre visible, letras sincronizadas y **ecualizador** real (graves, medios y agudos) que está
   siempre activo: con todo en 0 el audio no se toca y solo se procesa si mueves algún control.
-- Panel lateral derecho **«En reproducción»**: portada grande, me gusta, añadir a una lista, letra que avanza sola,
+- Panel lateral derecho **«En reproducción»**: portada grande, botón «+» para guardar, letra que avanza sola,
   información del artista (seguidores y una breve reseña) y la siguiente canción.
 - 12 colores de aplicación.
 
@@ -111,7 +111,7 @@ Descargar_Musica.exe --selftest        # escribe selftest.log junto al programa
 | Buscar | Escribe en la barra de arriba (Intro, o espera un instante). También puedes pegar un enlace. |
 | Escuchar / reproducir | Doble clic en la fila (en los resultados de búsqueda, el botón ▶ redondo). |
 | Descargar | Botón verde **Descargar**. En un álbum: *Descargar álbum completo* o *Descargar y crear lista*. |
-| Dar «me gusta» | Corazón de la fila (o el de la barra de reproducción). |
+| Guardar una canción | Botón «+» (fila, tarjeta, panel o barra de reproducción): el primer clic la guarda en «Canciones que te gustan»; si ya está guardada, abre la lista de listas para marcarla (✓ verde) o quitarla de cada una. |
 | Crear una lista | **+** en *Tu biblioteca* → nombre. Añade canciones con «Añadir canciones» o con el menú `+` de cada canción. |
 | Cambiar la imagen de una lista | Pulsa su portada, o clic derecho en la barra lateral. |
 | Ordenar una lista | Pulsa los títulos de columna o el botón **Orden**. |
@@ -178,7 +178,8 @@ ui/                        interfaz
     *_mixin.py               reproducción, listas, inicio, búsqueda y descargas
     *_page.py                páginas (inicio, lista, biblioteca, artista, álbum)
     track_row.py             fila de canción estilo Spotify (número, ▶ al pasar el ratón, tres puntitos)
-    now_playing.py           panel lateral «En reproducción»
+    now_playing.py           panel lateral «En reproducción» (se abre solo al reproducir)
+    save_popup.py            botón «+» y listita de guardado en listas
     overlay.py, dialogs.py   ventanas internas
     styles.py, covers.py ... estilos, portadas, iconos, animaciones
 dev_tools/                 pruebas automáticas

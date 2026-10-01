@@ -12,6 +12,7 @@ from services.playlist_service import PlaylistService
 from services.recommendation_service import ArtistInfoWorker
 from ui.formatting import split_artists
 from ui.icons import icon
+from ui.save_popup import save_icon
 from ui.imageloader import ImageLoaderThread, LocalCoverLoader
 from ui.styles import accent
 from ui.widgets import ElidedLabel
@@ -231,18 +232,10 @@ class NowPlayingPanel(QFrame):
         self.btn_like = QPushButton("")
         self.btn_like.setObjectName("IconBtn")
         self.btn_like.setIconSize(QSize(22, 22))
-        self.btn_like.setToolTip("Me gusta")
+        self.btn_like.setToolTip("Guardar en una lista")
         self.btn_like.setCursor(Qt.PointingHandCursor)
         self.btn_like.clicked.connect(self._toggle_like)
         actions.addWidget(self.btn_like)
-        self.btn_add = QPushButton("")
-        self.btn_add.setObjectName("IconBtn")
-        self.btn_add.setIcon(icon("playlist.svg", "#B3B3B3"))
-        self.btn_add.setIconSize(QSize(22, 22))
-        self.btn_add.setToolTip("Añadir a una lista")
-        self.btn_add.setCursor(Qt.PointingHandCursor)
-        self.btn_add.clicked.connect(self._add_to_list)
-        actions.addWidget(self.btn_add)
         actions.addStretch()
         main_lay.addLayout(actions)
         self.body.addWidget(self.main_box)
@@ -454,20 +447,15 @@ class NowPlayingPanel(QFrame):
     def _refresh_like(self):
         if not self._info:
             return
-        liked = PlaylistService.is_favorite(self._info.get("id"), self._info.get("title"))
-        self.btn_like.setIcon(icon("heart_filled.svg", accent()) if liked else icon("heart.svg", "#B3B3B3"))
+        self.btn_like.setIcon(save_icon(bool(PlaylistService.lists_containing(self._info))))
 
     def refresh_like(self):
         self._refresh_like()
 
     def _toggle_like(self):
         if self._info:
-            self.window_ref.toggle_info_favorite(dict(self._info))
+            self.window_ref.save_button_clicked(dict(self._info), self.btn_like)
             self._refresh_like()
-
-    def _add_to_list(self):
-        if self._info:
-            self.window_ref.show_add_to_list_menu(self._info, self.btn_add.mapToGlobal(self.btn_add.rect().bottomLeft()))
 
     def _open_artist(self):
         if self._artist_name:

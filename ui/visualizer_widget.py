@@ -21,7 +21,7 @@ class AudioVisualizerWidget(QWidget):
         self.is_playing = False
         self.phase = 0.0
 
-        self.setFixedSize(56, 24)
+        self.setFixedSize(34, 22)
         self.setStyleSheet("background: transparent;")
 
         self.timer = QTimer(self)

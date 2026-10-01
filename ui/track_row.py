@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QFrame, QHBoxLayout, QVBoxLayout, QLabel, QPushBut
 
 from services.playlist_service import PlaylistService
 from ui.formatting import format_added
+from ui.save_popup import save_icon
 from ui.icons import icon
 from ui.imageloader import ImageLoaderThread, LocalCoverLoader
 from ui.styles import accent
@@ -113,9 +114,9 @@ class TrackRow(QFrame):
             self.date_label.setFixedWidth(DATE_COL)
             lay.addWidget(self.date_label)
 
-        self.heart_btn = self._icon_button("Me gusta", self._toggle_like)
+        self.heart_btn = self._icon_button("Guardar en una lista", self._toggle_like)
         lay.addWidget(self.heart_btn)
-        self.dl_btn = self._icon_button("Descargar", self._download)
+        self.dl_btn = self._icon_button("Descargar", self._download)   # columna «descargada»
         lay.addWidget(self.dl_btn)
 
         self.duration_label = QLabel(self.item_info.get("duration_str", ""))
@@ -171,16 +172,16 @@ class TrackRow(QFrame):
         else:
             self.idx_label.setText(str(self.number))
 
-        liked = PlaylistService.is_favorite(self.item_info.get("id"), self.item_info.get("title"))
-        if liked:
-            self.heart_btn.setIcon(icon("heart_filled.svg", accent()))
+        saved = bool(PlaylistService.lists_containing(self.item_info))
+        if saved:
+            self.heart_btn.setIcon(save_icon(True))
         else:
-            self.heart_btn.setIcon(icon("heart.svg", color) if active else _EMPTY)
+            self.heart_btn.setIcon(save_icon(False, color) if active else _EMPTY)
 
         local = bool(self.item_info.get("local_path"))
         if local:
             self.dl_btn.setIcon(icon("check_circle.svg", accent()))
-            self.dl_btn.setToolTip("Descargada")
+            self.dl_btn.setToolTip("Descargada en tu equipo")
             self.dl_btn.setEnabled(False)
         elif self._downloading:
             self.dl_btn.setIcon(icon("clock.svg", accent()))
@@ -244,7 +245,7 @@ class TrackRow(QFrame):
             w.play_preview(self.item_info, None, self.cover.pixmap())
 
     def _toggle_like(self):
-        self.parent_window.toggle_info_favorite(dict(self.item_info))
+        self.parent_window.save_button_clicked(dict(self.item_info), self.heart_btn)
         self.refresh_state()
 
     def _download(self):
@@ -279,8 +280,13 @@ class TrackRow(QFrame):
         super().leaveEvent(event)
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton and hasattr(self.parent_window, "select_row"):
-            self.parent_window.select_row(self)
+        if event.button() == Qt.LeftButton:
+            if self._hot and self.idx_label.geometry().contains(event.position().toPoint()):
+                self.play()          # un clic sobre el símbolo ▶ reproduce directamente
+                event.accept()
+                return
+            if hasattr(self.parent_window, "select_row"):
+                self.parent_window.select_row(self)
         super().mousePressEvent(event)
 
     def mouseDoubleClickEvent(self, event):

@@ -220,6 +220,18 @@ QLabel#PanelArtistLink {
 QLabel#PanelArtistLink:hover {
     color: #FFFFFF;
 }
+QFrame#SavePopup {
+    background-color: #282828;
+    border: 1px solid #3A3A3A;
+    border-radius: 12px;
+}
+QFrame#SaveRow {
+    background: transparent;
+    border-radius: 8px;
+}
+QFrame#SaveRow:hover {
+    background-color: rgba(255, 255, 255, 0.10);
+}
 QFrame#PanelCard {
     background-color: #1A1A1A;
     border-radius: 12px;

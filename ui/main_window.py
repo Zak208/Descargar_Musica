@@ -27,6 +27,8 @@ from services.metadata_service import MetadataService
 from services.playlist_service import PlaylistService
 from ui.styles import MAIN_STYLE, get_theme_stylesheet, THEME_CONFIGS, set_active_theme, accent, retheme_stylesheet
 from ui.icons import icon
+from ui.home_shelves import TrackTile
+from ui.save_popup import save_icon
 from ui.playback_mixin import PlaybackMixin
 from ui.lists_mixin import ListsMixin
 from ui.home_mixin import HomeMixin
@@ -323,7 +325,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
 
         self.is_mini_mode = not self.is_mini_mode
         extras = [
-            self.btn_shuffle, self.btn_loop, self.btn_lyrics, self.btn_queue, self.btn_eq,
+            self.btn_shuffle, self.btn_loop, self.btn_lyrics, self.btn_queue, self.btn_eq, self.btn_panel,
             self.vol_icon, self.volume_slider, self.player_status, self.visualizer,
             self.player_heart_btn, self.btn_close_player,
         ]
@@ -528,23 +530,13 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self.refresh_playlists_sidebar()
 
     def toggle_player_heart(self):
-        if not self.current_item_info:
-            return
-        is_fav = PlaylistService.toggle_favorite(self.current_item_info)
-        self.sync_favorite_hearts()
-        pop_icon(self.player_heart_btn)
-        self.refresh_playlists_sidebar()
-        self.notify("Añadida a «Canciones que te gustan»" if is_fav else "Quitada de «Canciones que te gustan»")
+        if self.current_item_info:
+            self.save_button_clicked(dict(self.current_item_info), self.player_heart_btn)
+            pop_icon(self.player_heart_btn)
 
     def update_player_heart_icon(self):
-        if not self.current_item_info:
-            self.player_heart_btn.setIcon(icon("heart.svg", "#B3B3B3"))
-            return
-        is_fav = PlaylistService.is_favorite(
-            self.current_item_info.get("id"),
-            self.current_item_info.get("title")
-        )
-        self.player_heart_btn.setIcon(icon("heart_filled.svg", accent()) if is_fav else icon("heart.svg", "#B3B3B3"))
+        saved = bool(self.current_item_info and PlaylistService.lists_containing(self.current_item_info))
+        self.player_heart_btn.setIcon(save_icon(saved))
 
     def create_new_playlist_dialog(self):
         name, ok = ask_text(self, "Nueva lista", "Ponle un nombre a tu lista", ok="Crear", placeholder="Mi lista")
@@ -834,12 +826,20 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
                     row.set_playing(self.is_current(row.item_info))
                 except RuntimeError:
                     pass
-        if self.now_panel.isVisible():
+        if (not self.now_panel.isVisible() and self.current_item_info and not self.is_mini_mode
+                and not getattr(self, "_panel_user_closed", False)):
+            self.set_now_playing_visible(True)     # al reproducir, el panel aparece solo (como en Spotify)
+        elif self.now_panel.isVisible():
             self.now_panel.set_track(self.current_item_info)
 
     def toggle_now_playing(self):
-        """Abre o cierra el panel lateral derecho «En reproducción»."""
-        show = not self.now_panel.isVisible()
+        """Abre o cierra el panel lateral derecho «En reproducción» (si lo cierras tú, no se vuelve a abrir solo)."""
+        self._panel_user_closed = self.now_panel.isVisible()
+        self.set_now_playing_visible(not self.now_panel.isVisible())
+
+    def set_now_playing_visible(self, show: bool):
+        if show == self.now_panel.isVisible():
+            return
         self.now_panel.setVisible(show)
         if show:
             self.now_panel.set_track(self.current_item_info)
@@ -855,11 +855,12 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
     def sync_favorite_hearts(self):
         """Mantiene sincronizados todos los corazones (barra inferior y tarjetas de la pantalla)."""
         self.update_player_heart_icon()
-        for card in self.findChildren((SongResultCard, TrackRow)):
-            try:
-                card.update_heart_state()
-            except RuntimeError:
-                pass
+        for kind in (SongResultCard, TrackRow, TrackTile):
+            for card in self.findChildren(kind):
+                try:
+                    card.refresh_state() if kind is TrackTile else card.update_heart_state()
+                except RuntimeError:
+                    pass
         if self.now_panel.isVisible():
             self.now_panel.refresh_like()
 

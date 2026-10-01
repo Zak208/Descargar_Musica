@@ -17,6 +17,7 @@ from services.youtube_service import DownloadWorker
 from services.playlist_service import PlaylistService
 from ui.styles import accent
 from ui.icons import icon
+from ui.save_popup import save_icon
 from ui.widgets import ElidedLabel
 from ui.friendly import friendly_error
 
@@ -167,7 +168,7 @@ class SongResultCard(QFrame):
         self.heart_btn = QPushButton("")
         self.heart_btn.setObjectName("IconBtn")
         self.heart_btn.setIconSize(QSize(18, 18))
-        self.heart_btn.setToolTip("Guardar en Canciones que te gustan")
+        self.heart_btn.setToolTip("Guardar en una lista")
         self.heart_btn.setCursor(Qt.PointingHandCursor)
         self.heart_btn.clicked.connect(self.toggle_favorite_card)
         press_feedback(self.heart_btn)
@@ -176,9 +177,9 @@ class SongResultCard(QFrame):
 
         self.menu_btn = QPushButton("")
         self.menu_btn.setObjectName("IconBtn")
-        self.menu_btn.setIcon(icon("plus.svg", ACTION_IDLE))
+        self.menu_btn.setIcon(icon("more.svg", ACTION_IDLE))
         self.menu_btn.setIconSize(QSize(18, 18))
-        self.menu_btn.setToolTip("Añadir a la cola o a una playlist")
+        self.menu_btn.setToolTip("Más opciones")
         self.menu_btn.setCursor(Qt.PointingHandCursor)
         self.menu_btn.clicked.connect(self.show_track_menu)
         hover_layout.addWidget(self.menu_btn)
@@ -233,7 +234,7 @@ class SongResultCard(QFrame):
     def _paint_actions(self):
         """Los botones secundarios se ven siempre en gris; al pasar el ratón por la fila se iluminan."""
         color = ACTION_HOT if self._hot else ACTION_IDLE
-        self.menu_btn.setIcon(icon("plus.svg", color))
+        self.menu_btn.setIcon(icon("more.svg", color))
         self.open_folder_btn.setIcon(icon("folder.svg", color))
         self.update_heart_state()
 
@@ -248,18 +249,14 @@ class SongResultCard(QFrame):
         super().leaveEvent(event)
 
     def update_heart_state(self):
-        is_fav = PlaylistService.is_favorite(self.item_info.get("id"), self.item_info.get("title"))
-        if is_fav:
-            self.heart_btn.setIcon(icon("heart_filled.svg", accent()))
-        else:
-            self.heart_btn.setIcon(icon("heart.svg", ACTION_HOT if self._hot else ACTION_IDLE))
+        saved = bool(PlaylistService.lists_containing(self.item_info))
+        self.heart_btn.setIcon(save_icon(saved, ACTION_HOT if self._hot else ACTION_IDLE))
 
     def toggle_favorite_card(self):
-        PlaylistService.toggle_favorite(self.item_info)
+        if self.parent_window and hasattr(self.parent_window, "save_button_clicked"):
+            self.parent_window.save_button_clicked(dict(self.item_info), self.heart_btn)
         self.update_heart_state()
         pop_icon(self.heart_btn)
-        if self.parent_window and hasattr(self.parent_window, "refresh_favorites_ui"):
-            self.parent_window.refresh_favorites_ui()
 
     def show_track_menu(self):
         if not self.parent_window:

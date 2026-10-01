@@ -184,3 +184,34 @@ class PlaylistService:
             cls._save_json(PLAYLISTS_FILE, playlists)
             return True
         return False
+
+    # ================= PERTENENCIA A LISTAS =================
+    @staticmethod
+    def _same_track(t: dict, track_id: str, title: str) -> bool:
+        return bool((track_id and str(t.get("id")) == track_id) or (title and t.get("title", "").strip().lower() == title))
+
+    @classmethod
+    def lists_containing(cls, track_info: dict) -> set:
+        """Claves de las listas donde está la canción: 'favorites' y/o los identificadores de tus playlists."""
+        track_id = str(track_info.get("id", ""))
+        title = track_info.get("title", "").strip().lower()
+        found = set()
+        if cls.is_favorite(track_id, track_info.get("title", "")):
+            found.add("favorites")
+        for p_id, data in cls.get_playlists().items():
+            if any(cls._same_track(t, track_id, title) for t in data.get("tracks", [])):
+                found.add(p_id)
+        return found
+
+    @classmethod
+    def toggle_in_playlist(cls, playlist_id: str, track_info: dict) -> bool:
+        """Añade la canción a la lista o la quita si ya estaba. Devuelve True si ahora está dentro."""
+        track_id = str(track_info.get("id", ""))
+        title = track_info.get("title", "").strip().lower()
+        playlists = cls.get_playlists()
+        tracks = playlists.get(playlist_id, {}).get("tracks", [])
+        match = next((t for t in tracks if cls._same_track(t, track_id, title)), None)
+        if match is None:
+            return cls.add_track_to_playlist(playlist_id, track_info)
+        cls.remove_track_from_playlist(playlist_id, match.get("id"))
+        return False

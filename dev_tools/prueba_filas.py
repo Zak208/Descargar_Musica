@@ -101,12 +101,44 @@ check("menú: ir al artista (con varios artistas) y al álbum",
       "Ir al artista" in text and "Milo j" in text and "Yahritza Y Su Esencia" in text and "Ir al álbum" in text)
 check("menú: quitar de la lista y quitar de favoritos", "Quitar de esta lista" in text and "Canciones que te gustan" in text)
 
-# panel «En reproducción»
-w.toggle_now_playing()
+# panel «En reproducción»: se abre solo al reproducir
 pump(0.5)
-check("panel lateral derecho visible", w.now_panel.isVisible())
+check("el panel lateral aparece solo al reproducir", w.now_panel.isVisible())
 check("panel: título de la canción que suena", w.now_panel.title.text() == w.current_item_info["title"])
 check("panel: tiene sitio (el mínimo de la ventana creció)", w.minimumWidth() >= 1000)
 w.toggle_now_playing()
 check("panel se cierra", not w.now_panel.isVisible())
+w.play_local_file(first.item_info["local_path"])
+pump(0.5)
+check("si lo cierras tú no se vuelve a abrir solo", not w.now_panel.isVisible())
+
+# clic sobre el simbolo de play de la fila
+third = rows[2]
+third._hot = True
+third.refresh_state()
+cx = third.idx_label.geometry().center()
+ev = QMouseEvent(QEvent.MouseButtonPress, QPointF(cx), Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+third.mousePressEvent(ev)
+check("un clic sobre el simbolo de play reproduce", wait(lambda: w.current_item_info.get("local_path") == third.item_info["local_path"]))
+third._hot = False
+
+# botón «+» y listita de guardado
+from services.playlist_service import PlaylistService
+pid = PlaylistService.create_playlist("Prueba +")
+test = dict(rows[3].item_info)
+check("sin guardar: círculo con +", not PlaylistService.lists_containing(test))
+w.save_button_clicked(test, rows[3].heart_btn)
+check("1.er clic: se guarda en Canciones que te gustan", PlaylistService.lists_containing(test) == {"favorites"})
+from ui.save_popup import SavePopup
+w.save_button_clicked(test, rows[3].heart_btn)
+pop = w._save_popup
+check("2.º clic: listita con favoritas y tus listas (sin Mis descargas)",
+      isinstance(pop, SavePopup) and set(pop.rows) == {"favorites", pid})
+pop._toggle(pid)
+check("se puede estar en varias listas a la vez", PlaylistService.lists_containing(test) == {"favorites", pid})
+pop._toggle("favorites")
+pop._toggle(pid)
+check("al quitarlo de todas vuelve al +", not PlaylistService.lists_containing(test))
+pop.close()
+PlaylistService.delete_playlist(pid)
 print("FIN")

@@ -16,6 +16,7 @@ from ui.icons import icon
 from ui.styles import accent
 from ui.sidebar import SideListItem
 from ui.formatting import split_artists
+from ui.save_popup import SavePopup
 from ui.covers import import_cover, artist_avatar_path, AvatarDownloader
 from ui.dialogs import ask_text, ask_confirm
 
@@ -409,7 +410,7 @@ class ListsMixin:
 
         is_fav = PlaylistService.is_favorite(info.get('id'), info.get('title'))
         add(menu, "Quitar de Canciones que te gustan" if is_fav else "Añadir a Canciones que te gustan",
-            "heart_filled.svg" if is_fav else "heart.svg",
+            "added.svg" if is_fav else "plus_circle.svg",
             lambda: self.toggle_info_favorite(info), accent() if is_fav else None)
 
         pl_menu = menu.addMenu(icon("playlist.svg"), "Añadir a una lista")
@@ -471,6 +472,26 @@ class ListsMixin:
         resolver.failed.connect(lambda: self.notify("No se pudo localizar a este artista."))
         self._follow_resolver = resolver
         resolver.start()
+
+    def save_button_clicked(self, info: dict, button):
+        """Botón «+»: la primera vez guarda en «Canciones que te gustan»; si ya está guardada, abre la lista de listas."""
+        if not PlaylistService.lists_containing(info):
+            self.toggle_info_favorite(info)
+            return
+        popup = SavePopup(self, info)
+        popup.popup_at(button)
+        self._save_popup = popup
+
+    def after_save_change(self, info: dict, key: str, now_in: bool):
+        """Tras añadir/quitar una canción de una lista desde la listita: refresca marcas, barra lateral y lista abierta."""
+        if key == "favorites":
+            self.notify("Añadida a «Canciones que te gustan»" if now_in else "Quitada de «Canciones que te gustan»")
+        else:
+            name = PlaylistService.get_playlists().get(key, {}).get("name", "lista")
+            self.notify(f"Añadida a «{name}»" if now_in else f"Quitada de «{name}»")
+        self.sync_favorite_hearts()
+        self.refresh_playlists_sidebar()
+        self.refresh_current_list()
 
     def toggle_info_favorite(self, info: dict):
         is_fav = PlaylistService.toggle_favorite(info)

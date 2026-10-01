@@ -54,10 +54,10 @@ def build_player_bar(self):
 
     # Botón Favorito en barra de reproducción
     self.player_heart_btn = QPushButton("")
-    self.player_heart_btn.setIcon(icon("heart.svg", "#B3B3B3"))
-    self.player_heart_btn.setIconSize(QSize(18, 18))
+    self.player_heart_btn.setIcon(icon("plus_circle.svg", "#B3B3B3"))
+    self.player_heart_btn.setIconSize(QSize(20, 20))
     self.player_heart_btn.setFixedSize(30, 30)
-    self.player_heart_btn.setToolTip("Guardar en canciones que te gustan")
+    self.player_heart_btn.setToolTip("Guardar en una lista")
     self.player_heart_btn.setCursor(Qt.PointingHandCursor)
     self.player_heart_btn.setStyleSheet("background: transparent; border: none; padding: 0;")
     self.player_heart_btn.clicked.connect(self.toggle_player_heart)
@@ -69,7 +69,7 @@ def build_player_bar(self):
     info_widget_layout.addWidget(self.visualizer)
 
     player_layout.addWidget(self.info_widget, stretch=1)
-    self.info_widget.setMaximumWidth(280)
+    self.info_widget.setMaximumWidth(360)
 
     self.info_opacity = QGraphicsOpacityEffect(self.info_widget)
     self.info_widget.setGraphicsEffect(self.info_opacity)
@@ -85,7 +85,9 @@ def build_player_bar(self):
 
     controls_layout = QHBoxLayout()
     controls_layout.setAlignment(Qt.AlignCenter)
-    controls_layout.setSpacing(16)
+    controls_layout.setSpacing(18)
+    tools_layout = QHBoxLayout()     # herramientas de la derecha: letra, cola, panel, ecualizador, mini y volumen
+    tools_layout.setSpacing(4)
 
     # Aleatorio
     self.btn_shuffle = QPushButton("")
@@ -110,7 +112,7 @@ def build_player_bar(self):
     # Play / Pause
     self.btn_play_pause = QPushButton("")
     self.btn_play_pause.setIcon(QIcon(resource_path(os.path.join("assets", "icons", "play_black.svg"))))
-    self.btn_play_pause.setIconSize(QSize(22, 22))
+    self.btn_play_pause.setIconSize(QSize(20, 20))
     self.btn_play_pause.setObjectName("PlayPauseBtn")
     self.btn_play_pause.setCursor(Qt.PointingHandCursor)
     self.btn_play_pause.clicked.connect(self.toggle_play_pause)
@@ -144,7 +146,7 @@ def build_player_bar(self):
     self.btn_lyrics.setToolTip("Ver la letra")
     self.btn_lyrics.setCursor(Qt.PointingHandCursor)
     self.btn_lyrics.clicked.connect(self.open_lyrics)
-    controls_layout.addWidget(self.btn_lyrics)
+    tools_layout.addWidget(self.btn_lyrics)
 
     # Mini Reproductor (PiP)
     self.btn_pip = QPushButton("")
@@ -154,7 +156,7 @@ def build_player_bar(self):
     self.btn_pip.setToolTip("Reproductor pequeño")
     self.btn_pip.setCursor(Qt.PointingHandCursor)
     self.btn_pip.clicked.connect(self.toggle_mini_player)
-    controls_layout.addWidget(self.btn_pip)
+    tools_layout.addWidget(self.btn_pip)
 
     # Cola de reproducción
     self.btn_queue = QPushButton("")
@@ -164,7 +166,7 @@ def build_player_bar(self):
     self.btn_queue.setToolTip("Siguientes canciones")
     self.btn_queue.setCursor(Qt.PointingHandCursor)
     self.btn_queue.clicked.connect(self.open_queue_dialog)
-    controls_layout.addWidget(self.btn_queue)
+    tools_layout.addWidget(self.btn_queue)
 
     # Panel lateral «En reproducción»
     self.btn_panel = QPushButton("")
@@ -174,7 +176,7 @@ def build_player_bar(self):
     self.btn_panel.setToolTip("Vista «En reproducción» (portada, letra e información del artista)")
     self.btn_panel.setCursor(Qt.PointingHandCursor)
     self.btn_panel.clicked.connect(self.toggle_now_playing)
-    controls_layout.addWidget(self.btn_panel)
+    tools_layout.addWidget(self.btn_panel)
 
     # Ecualizador de audio
     self.btn_eq = QPushButton("")
@@ -184,7 +186,7 @@ def build_player_bar(self):
     self.btn_eq.setToolTip("Ecualizador")
     self.btn_eq.setCursor(Qt.PointingHandCursor)
     self.btn_eq.clicked.connect(self.open_equalizer)
-    controls_layout.addWidget(self.btn_eq)
+    tools_layout.addWidget(self.btn_eq)
 
     center_layout.addLayout(controls_layout)
 
@@ -224,8 +226,8 @@ def build_player_bar(self):
     self.player_status.setAlignment(Qt.AlignRight)
     right_layout.addWidget(self.player_status)
 
-    vol_layout = QHBoxLayout()
-    vol_layout.setSpacing(8)
+    vol_layout = tools_layout
+    vol_layout.addSpacing(8)
     vol_icon = self.vol_icon = QLabel()
     vol_pixmap = QPixmap(resource_path(os.path.join("assets", "icons", "volume.svg"))).scaled(16, 16, Qt.KeepAspectRatio, Qt.SmoothTransformation)
     vol_icon.setPixmap(vol_pixmap)
@@ -234,7 +236,7 @@ def build_player_bar(self):
     self.volume_slider = QSlider(Qt.Horizontal)
     self.volume_slider.setRange(0, 100)
     self.volume_slider.setValue(100)
-    self.volume_slider.setFixedWidth(110)
+    self.volume_slider.setFixedWidth(96)
     self.volume_slider.setFixedHeight(16)
     self.volume_slider.setCursor(Qt.PointingHandCursor)
     self.volume_slider.valueChanged.connect(self.change_volume)
@@ -242,7 +244,7 @@ def build_player_bar(self):
     vol_layout.addWidget(vol_icon)
     vol_layout.addWidget(self.volume_slider)
 
-    right_layout.addLayout(vol_layout)
+    right_layout.addLayout(tools_layout)
     player_layout.addLayout(right_layout)
 
     # Cerrar reproductor
