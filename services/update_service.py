@@ -5,8 +5,10 @@ Todo sale de GitHub (peticiones públicas, sin cuenta). Solo se consulta con con
 import hashlib
 import logging
 import os
+import re
 import tempfile
 import time
+from urllib.parse import unquote
 
 from PySide6.QtCore import QThread, Signal
 
@@ -36,9 +38,25 @@ def mark_checked(setting_key: str) -> None:
     save_settings(settings)
 
 
-def _latest_tag(url: str, key: str) -> str | None:
+def tag_from_redirect(repo: str) -> str | None:
+    """Última versión publicada leyendo adónde redirige `github.com/<repo>/releases/latest`. A diferencia de la API de GitHub,
+    esta dirección NO tiene el límite de 60 peticiones por hora y conexión (que dejaba sin avisos de versión nueva a quien
+    compartía la conexión o la había gastado)."""
+    r = http.get(f"https://github.com/{repo}/releases/latest", allow_redirects=False, timeout=10)
+    m = re.search(r"/releases/tag/([^/?#]+)", r.headers.get("Location", "") or "")
+    return unquote(m.group(1)) if r.status_code in (301, 302, 303, 307, 308) and m else None
+
+
+def _latest_tag(url: str, key: str, repo: str = "") -> str | None:
     """`tag_name` de la última versión publicada en `url`. Pide solo lo que cambió (ETag): si no hay novedades GitHub
     contesta «304» sin contarlo en el límite de peticiones. Si GitHub dice «demasiadas peticiones», espera una hora."""
+    if repo:
+        try:
+            tag = tag_from_redirect(repo)
+            if tag:
+                return tag
+        except Exception as e:
+            logger.info(f"No se pudo mirar {repo} por la web, se prueba con la API: {e}")
     settings = load_settings()
     cached = settings.get(f"tag_{key}")
     if time.time() < float(settings.get("update_backoff_until", 0) or 0):
@@ -66,12 +84,12 @@ def _latest_tag(url: str, key: str) -> str | None:
 
 
 def latest_ytdlp_tag() -> str | None:
-    return _latest_tag(YTDLP_API, "ytdlp")
+    return _latest_tag(YTDLP_API, "ytdlp", "yt-dlp/yt-dlp")
 
 
 def latest_app_version() -> str | None:
     """Versión más reciente publicada de la aplicación (sin la «v»)."""
-    tag = _latest_tag(APP_API, "app")
+    tag = _latest_tag(APP_API, "app", "Zak208/Descargar_Musica")
     if tag:
         return tag.lstrip("vV")
     r = http.get(APP_TAGS, headers={"Accept": "application/vnd.github+json"}, timeout=10)
@@ -97,15 +115,20 @@ class UpdateCheckWorker(QThread):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.ok = True
 
     def run(self):
         self.setPriority(QThread.LowPriority)
         app_new = ytdlp_new = ""
+        self.ok = False                      # ¿se pudo consultar GitHub? (para no decir «todo al día» si no se pudo)
         if not network_service.is_online():
             self.result.emit("", "")
             return
         try:
-            app_new = app_update_available() or ""
+            latest = latest_app_version()
+            self.ok = latest is not None
+            if latest and ytdlp_loader.parse_version(latest) > ytdlp_loader.parse_version(__version__):
+                app_new = latest
         except Exception as e:
             logger.info(f"No se pudo mirar si hay versión nueva: {e}")
         try:

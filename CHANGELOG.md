@@ -3,6 +3,12 @@
 Formato: `MAYOR.MENOR.PARCHE`. MAYOR = cambios que rompen datos o uso, MENOR = funciones nuevas, PARCHE = arreglos.
 Cada versión subida a GitHub tiene su etiqueta `vX.Y.Z` (pestaña *Releases/Tags*).
 
+## 1.14.1
+**Arreglos**
+- **La aplicación no encontraba versiones nuevas**: consultaba la API de GitHub, que solo deja 60 peticiones por hora y conexión; cuando se gastaban (o la conexión se compartía) no avisaba de nada y encima decía «todo al día». Ahora la versión se lee de la web de GitHub (la redirección de `releases/latest`), que no tiene ese límite, y las direcciones de descarga se calculan; la API queda solo como último recurso.
+- Si no se puede consultar GitHub, ya no dice «todo al día»: dice que no se pudo.
+- **Ajustes → Actualizaciones**: botón «Buscar actualizaciones», estado y opción de mantener yt-dlp al día (también sigue en Ayuda).
+
 ## 1.14.0
 **Auditoría completa del proyecto: robustez, rendimiento y seguridad**
 

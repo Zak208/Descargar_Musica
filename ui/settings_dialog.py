@@ -238,6 +238,27 @@ class SettingsDialog(InlineDialog):
         net_lay.addWidget(self.chk_offline)
         root.addWidget(net_box)
 
+        # --- Actualizaciones ---
+        upd_box, upd_lay = _group(
+            "Actualizaciones",
+            "La aplicación mira sola si hay una versión nueva y te lo dice con un botón azul arriba a la izquierda. "
+            "Aquí puedes buscar a mano.")
+        self.lbl_update_status = QLabel(f"Versión instalada: {__version__}")
+        self.lbl_update_status.setObjectName("SettingsHint")
+        self.lbl_update_status.setWordWrap(True)
+        upd_lay.addWidget(self.lbl_update_status)
+        upd_row = QHBoxLayout()
+        self.btn_check_updates = _button("Buscar actualizaciones", "refresh.svg")
+        self.btn_check_updates.clicked.connect(self._check_updates)
+        upd_row.addWidget(self.btn_check_updates)
+        upd_row.addStretch()
+        upd_lay.addLayout(upd_row)
+        self.chk_auto_engine = QCheckBox("Mantener el descargador de canciones (yt-dlp) al día automáticamente")
+        self.chk_auto_engine.setChecked(bool(load_settings().get("ytdlp_auto_update", True)))
+        self.chk_auto_engine.toggled.connect(lambda on: self._save_flag("ytdlp_auto_update", on))
+        upd_lay.addWidget(self.chk_auto_engine)
+        root.addWidget(upd_box)
+
         # --- Espacio ---
         space_box, space_lay = _group(
             "Espacio que ocupa la aplicación",
@@ -320,6 +341,13 @@ class SettingsDialog(InlineDialog):
         outer.addLayout(footer)
 
         self.refresh_space()
+
+    def _check_updates(self):
+        self.lbl_update_status.setText("Buscando…")
+        self.window_ref.check_updates(manual=True)
+
+    def set_update_status(self, text: str):
+        self.lbl_update_status.setText(text)
 
     def _dynamic_toggled(self, on: bool):
         self._save_flag("dynamic_accent", on)

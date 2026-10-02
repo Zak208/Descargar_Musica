@@ -947,11 +947,27 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         if manual:
             self.notify("Buscando actualizaciones...")
         self._update_check = update_service.UpdateCheckWorker(self)
-        self._update_check.result.connect(lambda app_new, engine_new: self._on_update_result(app_new, engine_new, manual))
+        worker = self._update_check
+        self._update_check.result.connect(lambda app_new, engine_new: self._on_update_result(app_new, engine_new, manual, worker.ok))
         self._update_check.start()
 
-    def _on_update_result(self, app_new: str, engine_new: str, manual: bool):
+    def _on_update_result(self, app_new: str, engine_new: str, manual: bool, ok: bool = True):
         update_service.mark_checked("last_update_check")
+        if not ok and not app_new and not engine_new:
+            try:
+                self.settings_dialog.set_update_status("No se pudo consultar GitHub. Inténtalo de nuevo en un rato.")
+            except (AttributeError, RuntimeError):
+                pass
+            if manual:
+                self.notify("No se pudo buscar actualizaciones ahora mismo.")
+            return
+        status = (f"Hay una versión nueva de la aplicación: {app_new}" if app_new else
+                  f"Hay una versión nueva del motor de descargas: {engine_new}" if engine_new else
+                  f"Todo al día · versión {__version__}")
+        try:
+            self.settings_dialog.set_update_status(status)
+        except (AttributeError, RuntimeError):
+            pass
         self._pending_engine = engine_new
         self._pending_app = app_new
         dlg = getattr(self, "help_dialog", None)

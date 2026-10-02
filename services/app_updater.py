@@ -20,7 +20,7 @@ from pathlib import Path
 from PySide6.QtCore import QThread, Signal
 
 from config import APP_DATA_DIR, load_settings, save_settings
-from services import http, ytdlp_loader
+from services import http, update_service, ytdlp_loader
 from version import __version__
 
 logger = logging.getLogger(__name__)
@@ -52,7 +52,22 @@ def is_newer(version: str) -> bool:
 
 # ------------------------------------------------------------------ la versión publicada
 def fetch_release() -> dict | None:
-    """{'version', 'zip_url', 'sha_url', 'size'} de la última versión publicada, o None si no se puede usar."""
+    """{'version', 'zip_url', 'sha_url', 'size'} de la última versión publicada, o None si no se puede usar.
+    Primero se mira la web de GitHub (sin límite de peticiones); los archivos tienen siempre el mismo nombre, así que sus
+    direcciones se calculan. Si falla, se usa la API."""
+    try:
+        tag = update_service.tag_from_redirect(REPO)
+        if tag:
+            version = tag.lstrip("vV")
+            base = f"{ALLOWED_PREFIX}{tag}/{FOLDER_NAME}-v{version}-windows.zip"
+            if http.head(base + ".sha256", allow_redirects=True, timeout=12).status_code == 200:
+                return {"version": version, "zip_url": base, "sha_url": base + ".sha256", "size": 0}
+    except Exception as e:
+        logger.info(f"No se pudo mirar la versión por la web: {e}")
+    return _fetch_release_api()
+
+
+def _fetch_release_api() -> dict | None:
     r = http.get(API_LATEST, headers={"Accept": "application/vnd.github+json"}, timeout=12)
     if r.status_code != 200:
         return None

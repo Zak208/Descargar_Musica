@@ -99,6 +99,32 @@ state["assets"] = False
 check("sin huella publicada no se actualiza", app_updater.fetch_release() is None)
 state["assets"] = True
 
+# la versión se averigua por la web de GitHub (redirección de «releases/latest»), que no tiene el límite de la API
+from services import update_service
+
+class Redirect(FakeResponse):
+    def __init__(self, tag):
+        super().__init__(status=302)
+        self.headers = {"Location": f"https://github.com/Zak208/Descargar_Musica/releases/tag/{tag}"}
+
+api_calls = []
+def get_web(url, **kw):
+    if url.endswith("/releases/latest") and url.startswith("https://github.com/"):
+        return Redirect("v98.0.0")
+    if url == app_updater.API_LATEST or url.startswith("https://api.github.com"):
+        api_calls.append(url)
+        return FakeResponse(status=403)               # como si el límite de la API ya se hubiera gastado
+    return fake_get(url, **kw)
+
+http.get = get_web
+http.head = lambda url, **kw: FakeResponse(status=200)
+check("la última versión se lee de la web sin usar la API", update_service.latest_app_version() == "98.0.0" and not api_calls)
+rel_web = app_updater.fetch_release()
+check("y las direcciones de descarga se calculan, aunque la API esté agotada",
+      rel_web and rel_web["version"] == "98.0.0" and rel_web["zip_url"].endswith("v98.0.0/Descargar_Musica-v98.0.0-windows.zip")
+      and rel_web["sha_url"].endswith(".zip.sha256") and not api_calls)
+http.get = fake_get
+
 # ---------------------------------------------------------------- descompresión segura
 evil = make_zip({"../fuera.txt": "no"})
 tmp = Path(tempfile.mkdtemp(prefix="descargador_zip_"))
@@ -201,6 +227,12 @@ check("al pulsarlo se lanza la instalación y se cierra la aplicación", launche
 app_updater.install_and_restart = lambda: False
 w.topbar.btn_update.click()
 check("si no se puede preparar, avisa y vuelve a ofrecerlo", w._update_state == "available")
+
+check("Ajustes tiene su apartado de actualizaciones con botón de buscar", "Buscar actualizaciones" in w.settings_dialog.btn_check_updates.text())
+w._on_update_result("", "", True, False)
+check("si no se pudo consultar GitHub no dice «todo al día»", "No se pudo" in w.settings_dialog.lbl_update_status.text())
+w._on_update_result("", "", True, True)
+check("y si todo está al día, lo dice", "al día" in w.settings_dialog.lbl_update_status.text())
 
 # una versión nueva detectada con conexión normal empieza a descargarse sola
 started = []
