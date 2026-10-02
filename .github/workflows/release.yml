@@ -98,7 +98,7 @@ jobs:
           Set-Content -Path release_notes.md -Value $notes -Encoding utf8
 
       - name: Publicar
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             Descargar_Musica-v${{ env.VERSION }}-windows.zip
