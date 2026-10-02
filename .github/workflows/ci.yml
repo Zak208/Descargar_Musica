@@ -33,6 +33,7 @@ jobs:
           # se ignoran los avisos de «importado y sin usar»; cualquier otro aviso (nombres sin definir, etc.) falla
           $out = python -m pyflakes ui services config.py main.py version.py 2>&1 | Where-Object { $_ -notmatch "imported but unused|assigned to but never used|f-string is missing" }
           if ($out) { $out; throw "pyflakes encontró problemas" }
+          exit 0   # pyflakes sale con 1 si encuentra avisos (aunque sean los ignorados): lo que cuenta es el filtro de arriba
 
       - name: Pruebas automáticas
         env:
