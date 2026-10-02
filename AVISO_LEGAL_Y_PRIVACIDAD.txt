@@ -1,0 +1,61 @@
+﻿DESCARGADOR DE MÚSICA — AVISO LEGAL, PRIVACIDAD Y LICENCIA
+=========================================================
+
+Lee esto antes de instalar. Al marcar «Lo he leído y lo acepto» confirmas que lo has leído y que lo entiendes. (Este texto es informativo; no es asesoramiento jurídico.)
+
+1. QUÉ ES ESTE PROGRAMA
+-----------------------
+Descargador de Música es una aplicación gratuita y de código abierto (licencia MIT) para Windows. Combina un reproductor de música con una herramienta que te permite buscar y guardar en tu equipo el audio de vídeos y canciones disponibles en internet. Es un proyecto personal, sin ánimo de lucro, y no está afiliado, patrocinado ni respaldado por YouTube, Google, Spotify, Apple, Deezer ni ninguna otra empresa o servicio que se mencione.
+
+2. USO RESPONSABLE Y DERECHOS DE AUTOR
+--------------------------------------
+- El programa es para USO PERSONAL y PRIVADO.
+- Descargar o copiar contenido protegido por derechos de autor puede estar prohibido en tu país o ir en contra de las condiciones de uso de las plataformas de origen. Tú eres el único responsable del uso que hagas del programa y de lo que descargues con él.
+- Descarga solo música que tengas derecho a copiar: tuya, con licencia libre (Creative Commons, dominio público...), que hayas comprado o que el titular de los derechos permita descargar.
+- Si puedes, apoya a los artistas comprando su música o escuchándola en las plataformas oficiales.
+- El programa no elude medidas de cifrado ni de pago: solo accede a lo que el servicio de origen ya sirve a cualquier navegador. No se aloja ni se distribuye música desde este proyecto.
+- Si eres titular de derechos y crees que el proyecto vulnera los tuyos, escribe a través de https://github.com/Zak208/Descargar_Musica/issues y se atenderá con rapidez.
+
+3. SIN GARANTÍA
+---------------
+El programa se ofrece «TAL CUAL», sin garantía de ningún tipo, expresa o implícita (funcionamiento, adecuación a un fin concreto, ausencia de errores...). Los autores no se hacen responsables de daños, pérdidas de datos o reclamaciones derivadas de su uso. Los servicios de terceros pueden cambiar o dejar de funcionar sin aviso.
+
+4. PRIVACIDAD: QUÉ DATOS USA EL PROGRAMA
+----------------------------------------
+Resumen: tus datos se quedan en tu equipo. No hay cuentas, ni publicidad, ni telemetría, ni análisis de uso.
+
+4.1 Qué se guarda en tu equipo (nada de esto se envía a nadie)
+  - Tus listas, favoritos, artistas que sigues, ajustes, letras, historial de descargas y recuento de reproducciones, en %APPDATA%\Descargador de Música.
+  - Cachés de imágenes y copias del ecualizador (se pueden vaciar desde Ajustes → Espacio).
+  - Un registro de errores (app_descargas.log) que solo apunta avisos y fallos técnicos, sin los títulos ni enlaces de lo que escuchas.
+  - Tu música, en la carpeta que elijas.
+  Todo esto se puede copiar, restaurar o borrar. Al desinstalar, el instalador te pregunta si quieres borrar también estos datos.
+
+4.2 Con quién se comunica el programa (y qué le envía)
+  Solo se conecta a internet para lo que tú haces o para las funciones que no desactives. Como en cualquier conexión, cada servicio ve tu dirección IP.
+  - YouTube (youtube.com, ytimg.com): para buscar, escuchar adelantos y descargar. Recibe lo que escribes en el buscador y el vídeo que pides.
+  - Spotify (open.spotify.com): solo si pegas un enlace de Spotify, para leer el título y el artista de esa canción.
+  - LRCLIB (lrclib.net) y lyrics.ovh: para buscar la letra de la canción que suena (reciben título y artista).
+  - Deezer (api.deezer.com): para recomendaciones, fotos y datos de artistas (recibe nombres de artistas de tu música).
+  - Apple iTunes (itunes.apple.com): solo al usar «Arreglar etiquetas» (recibe título y artista).
+  - GitHub (github.com, api.github.com): para comprobar y descargar versiones nuevas del programa y de yt-dlp, y para descargar FFmpeg (la primera vez). No se envía ningún dato tuyo.
+  - Hugging Face / GitHub: solo si aceptas descargar el reconocedor de voz para generar letras (se descarga una vez y después funciona sin internet).
+  No se envían datos a ningún otro sitio.
+
+4.3 Cómo limitarlo
+  - Ajustes → Conexión → «Modo privado»: el programa deja de buscar por su cuenta letras, recomendaciones y datos de artistas; solo usa internet cuando tú lo pides.
+  - Ajustes → Conexión → «Modo sin conexión»: no usa internet en absoluto; sigue funcionando con tu música descargada.
+  - Las cookies del navegador son opcionales (Ajustes → Avanzado), se leen solo en tu equipo, nunca se guardan ni se envían a otro sitio que no sea YouTube.
+  - Generar letras con el reconocedor de voz ocurre por completo en tu equipo.
+
+4.4 Tus derechos Como los datos están solo en tu equipo, tú los controlas: puedes verlos, copiarlos y borrarlos cuando quieras. Para los datos que reciben los servicios de terceros mencionados, consulta sus propias políticas de privacidad.
+
+5. LICENCIA
+-----------
+Código fuente publicado bajo licencia MIT (Copyright (c) 2026 Zak208): puedes usarlo, copiarlo, modificarlo y distribuirlo con la única condición de conservar el aviso de copyright y esta licencia. Se ofrece sin garantía (ver el punto 3).
+
+El programa incluye o descarga componentes de terceros con sus propias licencias (Qt/PySide6 LGPL v3, yt-dlp Unlicense, mutagen GPL v2+, requests Apache 2.0, FFmpeg GPL v3, whisper.cpp MIT, tipografía Poppins SIL OFL). Consulta el archivo THIRD_PARTY_NOTICES.md del repositorio. El código fuente de todo está disponible en https://github.com/Zak208/Descargar_Musica y en los repositorios de cada componente.
+
+6. CONTACTO
+-----------
+Dudas, errores o peticiones: https://github.com/Zak208/Descargar_Musica/issues

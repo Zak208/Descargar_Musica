@@ -13,8 +13,8 @@ El programa usa y/o descarga los siguientes componentes. Cada uno mantiene su pr
 | [Poppins](https://fonts.google.com/specimen/Poppins) | Tipografía | SIL Open Font License 1.1 | Incluido |
 | [Inno Setup](https://jrsoftware.org/isinfo.php) | Crear el instalador | Licencia de Inno Setup | Solo al publicar versiones |
 
-Las letras se consultan en servicios públicos (LRCLIB, lyrics.ovh) y la información de artistas en Deezer, iTunes y
-Wikipedia, solo cuando el usuario no ha activado el **modo privado** ni el modo sin conexión.
+Las letras se consultan en servicios públicos (LRCLIB, lyrics.ovh) y la información de artistas en Deezer y iTunes,
+solo cuando el usuario no ha activado el **modo privado** ni el modo sin conexión.
 
 **Nota de licencias.** El código de este proyecto es MIT (ver `LICENSE`). El programa compilado incluye mutagen (GPL v2+) y
 Qt/PySide6 (LGPL v3): quien redistribuya el `.exe` debe respetar también esas licencias (el código fuente de todo está

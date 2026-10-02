@@ -3,6 +3,12 @@
 Formato: `MAYOR.MENOR.PARCHE`. MAYOR = cambios que rompen datos o uso, MENOR = funciones nuevas, PARCHE = arreglos.
 Cada versión subida a GitHub tiene su etiqueta `vX.Y.Z` (pestaña *Releases/Tags*).
 
+## 1.15.1
+**Instalador de Windows más completo** (`Descargador_Musica-Setup-vX.Y.Z.exe`, en cada Release)
+- Asistente pequeño y sencillo, como el de cualquier aplicación: bienvenida → **aviso legal, privacidad y licencia** (hay que marcar «Lo he leído y lo acepto») → **carpeta de instalación** (con «Examinar»; si eliges una carpeta con otros archivos, se instala dentro de una carpeta propia para no mezclar nada) → **dónde crear los accesos directos** (escritorio y/o menú Inicio) → instalación → «Abrir Descargador de Música».
+- `AVISO_LEGAL_Y_PRIVACIDAD.txt`: qué es el programa, uso personal y derechos de autor, sin garantía, qué datos se guardan en tu equipo, **con qué servicios se comunica y qué les envía**, cómo limitarlo (modo privado y sin conexión) y licencia. Se muestra al instalar, se copia junto al programa y tiene su acceso en el menú Inicio.
+- Imágenes propias del asistente y desinstalador que **pregunta si quieres borrar también tus listas, favoritos y ajustes** (por defecto no; tu música nunca se borra).
+
 ## 1.15.0
 **Funciones nuevas**
 - **Modo privado** (Ajustes → Conexión): la aplicación deja de buscar por su cuenta letras, recomendaciones y datos de artistas; solo usa internet cuando tú lo pides (buscar, descargar, escuchar un adelanto).
