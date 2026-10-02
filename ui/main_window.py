@@ -269,6 +269,8 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         # Panel lateral derecho «En reproducción» (oculto hasta que se abre desde la barra de reproducción)
         self.now_panel = NowPlayingPanel(self)
         self.now_panel.close_requested.connect(self.toggle_now_playing)
+        self.now_panel.full_requested.connect(self.open_full_player)
+        self.full_player = None
         self.now_panel.setVisible(False)
         self.top_hbox.addWidget(self.now_panel)
 
@@ -376,6 +378,10 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             self.clear_selection()
             event.accept()
             return
+        if key == Qt.Key_F11:
+            self.open_full_player()
+            event.accept()
+            return
         if key == Qt.Key_Space:
             press_pulse(self.btn_play_pause)          # se ve qué botón hace el atajo
             self.toggle_play_pause()
@@ -430,6 +436,33 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             return
 
         super().keyPressEvent(event)
+
+    # ---------- pantalla completa «Ahora suena» ----------
+    def open_full_player(self):
+        if not self.current_item_info:
+            self.notify("Reproduce una canción primero.")
+            return
+        if self.full_player is None:
+            from ui.nowplaying_full import NowPlayingFull
+            self.full_player = NowPlayingFull(self)
+        fp = self.full_player
+        fp.set_duration(self.player.duration())
+        fp.set_playing(self.is_playing_now())
+        fp.set_track(self.current_item_info, self._cover_color(), self.player_thumb.pixmap())
+        fp.set_position(self.player.position())
+        fp.showFullScreen()
+
+    def _full_player_visible(self) -> bool:
+        fp = getattr(self, "full_player", None)
+        try:
+            return fp is not None and fp.isVisible()
+        except RuntimeError:
+            return False
+
+    def celebrate(self, reason: str = ""):
+        """Confeti (nivel «Completas») o un destello del botón de descargas cuando pasa algo que merece la pena."""
+        from ui.celebrate import celebrate
+        celebrate(self, fallback=lambda: self.topbar.download_finished_flash())
 
     def open_lyrics(self):
         """Abre la ventana de letras. Solo puede haber una: si ya está abierta, se trae al frente."""
@@ -1609,6 +1642,10 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
                 except RuntimeError:
                     pass
         self.on_track_started()
+        if self._full_player_visible() and self.current_item_info:
+            self.full_player.set_track(self.current_item_info, None, None)
+            QTimer.singleShot(900, lambda: self._full_player_visible() and self.full_player.set_track(
+                self.current_item_info, self._cover_color(), self.player_thumb.pixmap()))
         if (not self.now_panel.isVisible() and self.current_item_info and not self.is_mini_mode
                 and not getattr(self, "_panel_user_closed", False)):
             self.set_now_playing_visible(True)     # al reproducir, el panel aparece solo (como en Spotify)
@@ -1720,6 +1757,10 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
                 return          # minimizada: no hace falta mover la barra ni la letra
         self.is_updating_seek = True
         try:
+            if hasattr(self, "visualizer"):
+                self.visualizer.set_position(position_ms)
+            if self._full_player_visible():
+                self.full_player.set_position(position_ms)
             if not self.seek_slider.isSliderDown():
                 self.seek_slider.setValue(position_ms)
             self.time_current_label.setText(self.format_time(position_ms))
@@ -1736,6 +1777,8 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             self.is_updating_seek = False
 
     def update_duration(self, duration_ms):
+        if self._full_player_visible():
+            self.full_player.set_duration(duration_ms)
         self.seek_slider.setRange(0, duration_ms)
         self.time_total_label.setText(self.format_time(duration_ms))
 
@@ -1799,6 +1842,8 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
     def handle_playback_state(self, state):
         self.update_system_status(state == QMediaPlayer.PlayingState)
         self.playing_changed.emit(state == QMediaPlayer.PlayingState)
+        if self._full_player_visible():
+            self.full_player.set_playing(state == QMediaPlayer.PlayingState)
         if getattr(self, "taskbar", None) is not None and self.taskbar.ok:
             self.taskbar.update_play_icon(icon("pause.svg" if state == QMediaPlayer.PlayingState else "play.svg",
                                                "#FFFFFF").pixmap(24, 24))
@@ -1900,6 +1945,11 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             self._eq_worker.is_cancelled = True
             self._eq_worker.wait(1500)
 
+        if getattr(self, "full_player", None) is not None:
+            try:
+                self.full_player.close()
+            except RuntimeError:
+                pass
         tooltips.uninstall()
         focusring.uninstall(self._focus_ring)
         self._set_blocked_click_filter(False)

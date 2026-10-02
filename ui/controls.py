@@ -1,7 +1,7 @@
 """Controles propios, pintados a mano y con transiciones breves: interruptor, selector con indicador deslizante,
 portada con fundido y zoom, y botón de reproducir/pausa que se transforma. En reposo no gastan nada."""
 from PySide6.QtCore import Qt, QSize, QRectF, QPointF, QVariantAnimation, QEasingCurve, Signal, QEvent
-from PySide6.QtGui import QPainter, QColor, QPainterPath, QPixmap, QFontMetrics, QPen
+from PySide6.QtGui import QPainter, QColor, QPainterPath, QPixmap, QFontMetrics, QPen, QIcon
 from PySide6.QtWidgets import QCheckBox, QWidget, QLabel, QFrame, QPushButton, QSizePolicy
 
 from ui import motion
@@ -593,3 +593,48 @@ class FollowButton(QPushButton):
             p.fillRect(QRectF(0, 0, self.width() * self._t, self.height()), c)
             p.end()
         super().paintEvent(event)
+
+
+class SpinIconButton(QPushButton):
+    """Botón de icono que gira mientras algo se está actualizando (12 fotogramas ya dibujados, 10 por segundo)."""
+
+    def __init__(self, icon_name: str, color: str = "#B3B3B3", size: int = 18, parent=None):
+        super().__init__("", parent)
+        from ui.icons import icon as _icon
+        self._pix = _icon(icon_name, color).pixmap(size * 2, size * 2)
+        self._pix.setDevicePixelRatio(2.0)
+        self._size = size
+        self._icon = _icon(icon_name, color)
+        self.setIcon(self._icon)
+        self.setIconSize(QSize(size, size))
+        self._token = None
+        self._i = 0
+
+    def start_spin(self):
+        if self._token is None and motion.enabled():
+            from ui.anim_clock import clock
+            self.setIcon(QIcon())              # el icono quieto se quita: lo dibuja el fotograma que gira
+            self._token = clock().subscribe(self._tick, 10)
+
+    def stop_spin(self):
+        if self._token is not None:
+            from ui.anim_clock import clock
+            clock().unsubscribe(self._token)
+            self._token = None
+            self.setIcon(self._icon)
+            self.update()
+
+    def _tick(self, _dt):
+        self._i = (self._i + 1) % 12
+        self.update()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if self._token is None:
+            return
+        from ui import frames
+        strip = frames.rotated_frames(self._pix, 12, tag=f"spin{self._size}{self._pix.cacheKey()}")
+        p = QPainter(self)
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
+        rect = QRectF((self.width() - self._size) / 2, (self.height() - self._size) / 2, self._size, self._size)
+        p.drawPixmap(rect, strip[self._i % 12], QRectF(strip[self._i % 12].rect()))

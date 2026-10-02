@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
 )
 
 from ui.home_shelves import make_shelf
+from ui.controls import SpinIconButton
 from ui.icons import icon
 from ui.scrolling import BackToTop, polish_scroll_area
 from ui.textfx import CountLabel, DotsLabel, WordsInLabel
@@ -49,10 +50,8 @@ def build_home_page(self):
     self.home_status_lbl = DotsLabel("")
     self.home_status_lbl.setObjectName("SectionSubtitle")
     head.addWidget(self.home_status_lbl)
-    self.btn_refresh_recs = QPushButton("")
+    self.btn_refresh_recs = SpinIconButton("refresh.svg", "#B3B3B3", 18)
     self.btn_refresh_recs.setObjectName("IconBtn")
-    self.btn_refresh_recs.setIcon(icon("refresh.svg", "#B3B3B3"))
-    self.btn_refresh_recs.setIconSize(QSize(18, 18))
     self.btn_refresh_recs.setToolTip("Actualizar recomendaciones")
     self.btn_refresh_recs.setCursor(Qt.PointingHandCursor)
     self.btn_refresh_recs.clicked.connect(lambda: self.refresh_recommendations(force=True))

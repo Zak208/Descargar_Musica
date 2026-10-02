@@ -11,7 +11,7 @@ from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from config import load_settings, save_settings
-from services import library_db, loudness_service
+from services import envelope, library_db, loudness_service
 from services.smtc_service import MediaControls
 from ui.icons import icon
 from ui.styles import accent
@@ -77,6 +77,8 @@ class PlaybackOptionsMixin:
         self._sleep_end_of_track = False
         self._ab = [None, None]
         self._loudness_worker = None
+        self._env_worker = None
+        self._env_wanted = None
         self._quitting = False
         self._sleep_timer = QTimer(self)
         self._sleep_timer.setInterval(1000)
@@ -253,6 +255,7 @@ class PlaybackOptionsMixin:
             if nxt and loudness_service.stored(nxt) is None and self._loudness_worker is None:
                 QTimer.singleShot(4000, lambda p=nxt: self._measure_loudness(p, quiet=True))
         self._apply_volume()
+        self._load_envelope(path)
         self._refresh_options_icon()
         self._update_system_info()
         self._credit_path = path
@@ -260,6 +263,47 @@ class PlaybackOptionsMixin:
         self._credit_timer.stop()
         if path and self.player.playbackState() == QMediaPlayer.PlayingState:
             self._credit_timer.start()
+
+    # ------------------------------------------- envolvente para el visualizador
+    def _load_envelope(self, path):
+        """Las barras de la barra de reproducción siguen la música: la envolvente se calcula una sola vez por canción
+        (en segundo plano) y se guarda; mientras no esté, se ve el movimiento de siempre."""
+        vis = getattr(self, "visualizer", None)
+        if vis is None:
+            return
+        vis.set_envelope(None)
+        if not path or not vis.enabled:
+            return
+        data = envelope.stored(path)
+        if data:
+            vis.set_envelope(data)
+            return
+        self._env_wanted = path
+        self._start_envelope_worker()
+
+    def _start_envelope_worker(self):
+        if self._env_worker is not None and self._env_worker.isRunning():
+            return
+        path = self._env_wanted
+        if not path:
+            return
+        worker = envelope.EnvelopeWorker(path, self)
+        worker.done.connect(self._on_envelope)
+        worker.finished.connect(self._envelope_finished)
+        self._env_worker = worker
+        worker.start()
+
+    def _envelope_finished(self):
+        self._env_worker = None
+        done_path, self._env_wanted = self._env_wanted, None
+        current = (self.current_item_info or {}).get("local_path")
+        if current and current != done_path and envelope.stored(current) is None:
+            self._env_wanted = current                # mientras tanto se cambió de canción: se calcula la de ahora
+            self._start_envelope_worker()
+
+    def _on_envelope(self, path: str, data: bytes):
+        if path == (self.current_item_info or {}).get("local_path") and hasattr(self, "visualizer"):
+            self.visualizer.set_envelope(data)
 
     def _credit_play(self):
         path = (self.current_item_info or {}).get("local_path")

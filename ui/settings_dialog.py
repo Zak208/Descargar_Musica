@@ -165,6 +165,7 @@ class SettingsDialog(InlineDialog):
         self.btn_calibrate.clicked.connect(self._calibrate)
         meter_row.addWidget(self.btn_calibrate)
         perf_lay.addLayout(meter_row)
+        self._asking_contrast = False
         self._meter = None
         self._meter_timer = QTimer(self)
         self._meter_timer.setInterval(2000)
@@ -224,7 +225,7 @@ class SettingsDialog(InlineDialog):
         acc_lay.addWidget(self.btn_restart, alignment=Qt.AlignLeft)
         self.chk_contrast = QCheckBox("Alto contraste (textos y bordes más claros)")
         self.chk_contrast.setChecked(bool(load_settings().get("high_contrast", False)))
-        self.chk_contrast.toggled.connect(lambda on: self.window_ref.set_high_contrast(on))
+        self.chk_contrast.toggled.connect(self._contrast_toggled)
         acc_lay.addWidget(self.chk_contrast)
         root.addWidget(acc_box)
 
@@ -315,6 +316,23 @@ class SettingsDialog(InlineDialog):
         outer.addLayout(footer)
 
         self.refresh_space()
+
+    def _contrast_toggled(self, on: bool):
+        """Se aplica al instante y se pregunta «¿se ve bien?»: si nadie responde en 10 s, se deshace solo."""
+        from ui.keep_change import ask_keep_change
+        self.window_ref.set_high_contrast(on)
+        if self._asking_contrast:
+            return
+        self._asking_contrast = True
+        try:
+            keep = ask_keep_change(self.window_ref, "Se ha " + ("activado" if on else "desactivado") + " el alto contraste.")
+        finally:
+            self._asking_contrast = False
+        if not keep:
+            self.chk_contrast.blockSignals(True)
+            self.chk_contrast.setChecked(not on)
+            self.chk_contrast.blockSignals(False)
+            self.window_ref.set_high_contrast(not on)
 
     # ------------------------------------------------------- animaciones y consumo
     def _motion_changed(self, key: str):
@@ -438,6 +456,7 @@ class SettingsDialog(InlineDialog):
             show_message(self, "No se pudo guardar la copia", str(e))
             return
         self.window_ref.notify(f"Copia guardada ({n} archivos)")
+        self.window_ref.celebrate("copia")
 
     def restore_backup(self):
         path, _ = QFileDialog.getOpenFileName(self, "Elegir una copia de seguridad", "", "Copia de seguridad (*.zip)")

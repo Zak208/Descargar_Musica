@@ -10,6 +10,7 @@ from services import recycle
 from services.playlist_service import PlaylistService
 from ui.animations import fade_in, expand_widget
 from ui.controls import TabStrip
+from ui.emptystate import EmptyState
 from ui.scrolling import BackToTop, polish_scroll_area
 from ui.textfx import reveal_up
 from ui.covers import list_cover_pixmap, tile_colors, MIX_COLORS, GENRE_COLORS
@@ -479,11 +480,7 @@ class ListPage(QWidget):
         self.loading.setVisible(False)
         self.content_layout.addWidget(self.loading)
 
-        self.empty_lbl = QLabel("")
-        self.empty_lbl.setObjectName("SectionSubtitle")
-        self.empty_lbl.setWordWrap(True)
-        self.empty_lbl.setAlignment(Qt.AlignCenter)
-        self.empty_lbl.setStyleSheet("padding: 40px 0px; font-size: 14px;")
+        self.empty_lbl = EmptyState()              # ilustración, mensaje y un consejo útil
         self.content_layout.addWidget(self.empty_lbl)
         self.empty_btn = QPushButton("")
         self.empty_btn.setObjectName("GiantActionBtn")

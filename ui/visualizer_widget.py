@@ -4,6 +4,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QPainter, QColor, QBrush
 from PySide6.QtWidgets import QWidget
 
+from services import envelope
 from ui.anim_clock import clock
 from ui.perf import eco, visualizer_enabled
 
@@ -29,8 +30,20 @@ class AudioVisualizerWidget(QWidget):
         if not self.enabled:
             self.hide()
 
+        self._env = None            # envolvente de la canción (graves, medios y agudos cada 0,1 s), si ya está calculada
+        self._pos = 0
         self._token = None          # suscripción al reloj compartido: solo existe mientras se anima
         self._fps = 10 if eco() else 22
+
+    def set_envelope(self, data):
+        """Con la envolvente de la canción las barras siguen sus graves y agudos de verdad; sin ella, el movimiento de antes."""
+        self._env = data or None
+
+    def set_position(self, ms: int):
+        self._pos = ms
+
+    def has_envelope(self) -> bool:
+        return self._env is not None
 
     def set_accent_color(self, hex_color: str):
         self.accent_color = QColor(hex_color)
@@ -74,7 +87,16 @@ class AudioVisualizerWidget(QWidget):
         self.phase += 0.25
         max_h = self.height() - 4
 
-        if self.is_playing:
+        levels = envelope.level_at(self._env, self._pos) if (self.is_playing and self._env) else None
+        if levels is not None:
+            low, mid, high = levels
+            last = max(1, self.num_bars - 1)
+            for i in range(self.num_bars):
+                x = i / last
+                value = low * max(0.0, 1 - 2 * x) + mid * (1 - abs(2 * x - 1)) + high * max(0.0, 2 * x - 1)
+                value *= 0.9 + 0.1 * math.sin(self.phase * 2 + i)         # un leve movimiento propio de cada barra
+                self.target_heights[i] = max(4.0, min(float(max_h), value * max_h))
+        elif self.is_playing:
             for i in range(self.num_bars):
                 # Generar pulsos rítmicos combinando seno y aleatoriedad suave
                 wave = math.sin(self.phase + (i * 0.9)) * 0.5 + 0.5

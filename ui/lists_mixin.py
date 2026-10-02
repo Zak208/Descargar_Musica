@@ -93,6 +93,8 @@ class ListsMixin:
                 self._home_dirty = False
             self.reload_current_list()
             self.refresh_tiles_state()
+            if not first:
+                self._check_library_milestone(len(items))
             if first:
                 self.refresh_recommendations()
                 self.restore_session()
@@ -100,6 +102,21 @@ class ListsMixin:
         if self._rescan_pending:
             self._rescan_pending = False
             self.rescan_library()
+
+    def _check_library_milestone(self, count: int):
+        """Al pasar de un múltiplo de 100 canciones (100, 200…), pequeña celebración."""
+        from config import load_settings, save_settings
+        settings = load_settings()
+        last = int(settings.get("library_milestone", 0) or 0)
+        reached = (count // 100) * 100
+        if reached > last and reached >= 100:
+            settings["library_milestone"] = reached
+            save_settings(settings)
+            self.notify(f"¡Ya tienes {reached} canciones en tu música!")
+            self.celebrate("hito")
+        elif reached < last:
+            settings["library_milestone"] = reached
+            save_settings(settings)
 
     def history_map(self) -> dict:
         """Historial de descargas (se lee una sola vez y se guarda en memoria)."""

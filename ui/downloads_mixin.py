@@ -153,6 +153,8 @@ class DownloadsMixin:
         if not self.batch_queue and not self._batch_workers:
             self.batch_banner_label.setText(f"¡Listo! {self.batch_total} canciones descargadas")
             self.notify("Descarga completada")
+            if self.batch_total >= 5:
+                self.celebrate("lote")
             self.refresh_sidebar_library()
         self._refresh_queue_controls()
 

@@ -181,6 +181,8 @@ class HomeMixin:
         self.home_status_lbl.animate("Preparando recomendaciones")
         self._rec_worker = RecommendationWorker(profile, followed)
         self._rec_worker.ready.connect(self._on_recommendations_ready)
+        self.btn_refresh_recs.start_spin()
+        self._rec_worker.finished.connect(self.btn_refresh_recs.stop_spin)
         self._rec_worker.finished.connect(lambda: self.home_status_lbl.setText("")
                                           if self._rec_data is not None else self.home_status_lbl.setText(
                                               "Sin conexión: no se pudieron preparar recomendaciones"))

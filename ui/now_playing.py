@@ -311,6 +311,7 @@ class LyricsBox(QFrame):
 
 class NowPlayingPanel(QFrame):
     close_requested = Signal()
+    full_requested = Signal()
 
     def __init__(self, window, parent=None):
         super().__init__(parent)
@@ -334,6 +335,15 @@ class NowPlayingPanel(QFrame):
         self.heading.setObjectName("PanelTitle")
         head.addWidget(self.heading)
         head.addStretch()
+        btn_full = QPushButton("")
+        btn_full.setObjectName("IconBtn")
+        btn_full.setIcon(icon("fullscreen.svg", "#B3B3B3"))
+        btn_full.setIconSize(QSize(16, 16))
+        btn_full.setToolTip("Pantalla completa")
+        btn_full.setProperty("shortcut", "F11")
+        btn_full.setCursor(Qt.PointingHandCursor)
+        btn_full.clicked.connect(self.full_requested.emit)
+        head.addWidget(btn_full)
         btn_close = QPushButton("")
         btn_close.setObjectName("IconBtn")
         btn_close.setIcon(icon("x.svg", "#B3B3B3"))
