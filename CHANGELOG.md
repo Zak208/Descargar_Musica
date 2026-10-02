@@ -3,6 +3,12 @@
 Formato: `MAYOR.MENOR.PARCHE`. MAYOR = cambios que rompen datos o uso, MENOR = funciones nuevas, PARCHE = arreglos.
 Cada versión subida a GitHub tiene su etiqueta `vX.Y.Z` (pestaña *Releases/Tags*).
 
+## 1.7.0
+- «Generar con el sistema»: ahora se ve que trabaja (barra con porcentaje y segundos transcurridos) y los avisos salen dentro de la ventana de letras (antes quedaban escondidos detrás de ella).
+- Las letras generadas se dividen en frases más cortas (máx. ~40 letras por línea) repartiendo el tiempo.
+- Editor de letras más sencillo: un campo de tiempo, otro de frase y «Añadir»; lista editable con doble clic, «Tiempo actual», «Pegar una letra».
+- Ventana de letras: botón de pantalla completa arriba a la derecha (F11; Esc para salir) y botón de maximizar del sistema; la letra crece con la ventana.
+
 ## 1.6.0
 - Letra: las frases ya leídas se oscurecen, la que está bajo el ratón se subraya y al pulsarla la canción salta a ese momento (panel lateral y ventana de letras).
 - Canciones sin letra: botón «Generar con el sistema» (solo descargadas; reconocimiento de voz local con whisper.cpp, se descarga la primera vez con permiso) y «Escribir la letra yo». Las generadas se marcan como tales.

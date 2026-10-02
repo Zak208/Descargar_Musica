@@ -11,6 +11,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 import zipfile
 
 import requests
@@ -116,8 +117,49 @@ def clean_generated(lines: list) -> list:
     return out
 
 
+MAX_LINE_CHARS = 34
+
+
+def _split_text(text: str, max_chars: int) -> list:
+    """Parte una frase larga en trozos de longitud parecida, cortando por comas o espacios (nunca dejando una palabra suelta)."""
+    if len(text) <= max_chars + 8:      # hasta ~42 letras cabe bien en dos renglones: no se toca
+        return [text]
+    parts = -(-len(text) // max_chars)        # trozos necesarios (redondeo hacia arriba)
+    target = len(text) / parts
+    out, start = [], 0
+    for i in range(1, parts):
+        ideal = int(round(target * i))
+        # primero una coma/punto cercano, si no el espacio más próximo al punto ideal
+        window = [m for m in range(max(start + 8, ideal - 9), min(len(text) - 6, ideal + 9)) if text[m - 1] in ",.;:!?"]
+        spaces = [m for m in range(max(start + 4, ideal - 12), min(len(text) - 3, ideal + 12)) if text[m] == " "]
+        cut = min(window, key=lambda m: abs(m - ideal)) if window else             (min(spaces, key=lambda m: abs(m - ideal)) if spaces else ideal)
+        out.append(text[start:cut].strip())
+        start = cut
+    out.append(text[start:].strip())
+    return [t for t in out if t]
+
+
+def split_long_lines(lines: list, max_chars: int = MAX_LINE_CHARS) -> list:
+    """Las frases largas se dividen en varias más cortas, repartiendo el tiempo según su longitud."""
+    out = []
+    for i, (ms, text) in enumerate(lines):
+        pieces = _split_text(text, max_chars)
+        if len(pieces) == 1:
+            out.append((ms, text))
+            continue
+        next_ms = lines[i + 1][0] if i + 1 < len(lines) else ms + 8000
+        span = min(max(next_ms - ms, 1500), max(2500, int(len(text) * 90)))   # lo que se tarda en cantarla (aprox.)
+        total = sum(len(p) for p in pieces)
+        done = 0
+        for piece in pieces:
+            out.append((ms + int(span * done / total), piece))
+            done += len(piece)
+    return out
+
+
 class TranscribeWorker(QThread):
     """Escucha un archivo de audio y guarda la letra generada (con tiempos) en el almacén de letras."""
+    progress = Signal(int)       # 0-100 mientras el reconocedor escucha
     done = Signal(str, dict)     # clave, letra
     failed = Signal(str, str)    # clave, motivo
 
@@ -153,14 +195,19 @@ class TranscribeWorker(QThread):
             threads = max(1, min(4, (os.cpu_count() or 2) // 2))
             low_priority = getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0)
             cmd = [str(cli), "-m", str(WHISPER_DIR / MODEL_NAME), "-f", wav, "-olrc", "-of", os.path.join(work, "letra"),
-                   "-l", "auto", "-t", str(threads), "-mc", "0", "-np"]
-            self._proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=low_priority)
-            try:
-                self._proc.wait(timeout=1200)
-            except subprocess.TimeoutExpired:
-                self._proc.kill()
-                self.failed.emit(self.key, "Tardó demasiado.")
-                return
+                   "-l", "auto", "-t", str(threads), "-mc", "0", "-pp"]
+            self._proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+                                          errors="ignore", creationflags=low_priority)
+            started = time.time()
+            for raw in self._proc.stderr:        # el reconocedor avisa de su avance: «progress = 35%»
+                m = re.search(r"progress\s*=\s*(\d+)%", raw)
+                if m:
+                    self.progress.emit(int(m.group(1)))
+                if time.time() - started > 1500:
+                    self._proc.kill()
+                    self.failed.emit(self.key, "Tardó demasiado.")
+                    return
+            self._proc.wait()
             if self.is_cancelled:
                 return
             lrc = os.path.join(work, "letra.lrc")
@@ -168,7 +215,7 @@ class TranscribeWorker(QThread):
                 self.failed.emit(self.key, "El reconocedor no pudo procesar la canción.")
                 return
             with open(lrc, encoding="utf-8", errors="ignore") as f:
-                lines = clean_generated(parse_lrc(f.read()))
+                lines = split_long_lines(clean_generated(parse_lrc(f.read())))
             if not lines:
                 self.failed.emit(self.key, "No se entendió ninguna palabra (puede ser una canción instrumental).")
                 return

@@ -11,7 +11,7 @@ from services.lyrics_service import LyricsWorker
 from ui.icons import icon
 from ui.lyric_line import LyricLine
 
-MIN_FONT, MAX_FONT = 20, 68
+MIN_FONT, MAX_FONT = 20, 92
 DEFAULT_COLOR = QColor("#3D5A4A")
 
 
@@ -31,7 +31,10 @@ class LyricsDialog(QDialog):
         self.font_px = 0
 
         self.setObjectName("LyricsDialog")
-        self.setMinimumSize(520, 560)
+        self.setMinimumSize(680, 560)
+        # el botón del sistema para maximizar también está disponible (además del de pantalla completa)
+        self.setWindowFlag(Qt.WindowMaximizeButtonHint, True)
+        self.setWindowFlag(Qt.WindowMinimizeButtonHint, True)
         self.resize(760, 760)
         self.init_ui()
         self._apply_color()
@@ -60,6 +63,16 @@ class LyricsDialog(QDialog):
         self.btn_edit.clicked.connect(lambda: self._call("edit_lyrics"))
         self.btn_edit.setVisible(False)
         header_layout.addWidget(self.btn_edit)
+
+        self.btn_full = QPushButton("")
+        self.btn_full.setObjectName("IconBtn")
+        self.btn_full.setIcon(icon("fullscreen.svg", "#FFFFFF"))
+        self.btn_full.setIconSize(QSize(18, 18))
+        self.btn_full.setFixedSize(32, 32)
+        self.btn_full.setCursor(Qt.PointingHandCursor)
+        self.btn_full.setToolTip("Pantalla completa (F11)")
+        self.btn_full.clicked.connect(self.toggle_fullscreen)
+        header_layout.addWidget(self.btn_full)
 
         self.btn_close = QPushButton("")
         self.btn_close.setObjectName("IconBtn")
@@ -156,11 +169,29 @@ class LyricsDialog(QDialog):
         if 0 <= self.active_index < len(self.line_widgets):
             QTimer.singleShot(0, lambda: self._center_on(self.line_widgets[self.active_index][1]))
 
+    def toggle_fullscreen(self):
+        """Pantalla completa como en Spotify: la letra se agranda con la ventana."""
+        if self.isFullScreen():
+            self.showNormal()
+        else:
+            self.showFullScreen()
+        full = self.isFullScreen()
+        self.btn_full.setIcon(icon("fullscreen_exit.svg" if full else "fullscreen.svg", "#FFFFFF"))
+        self.btn_full.setToolTip("Salir de pantalla completa (Esc)" if full else "Pantalla completa (F11)")
+
+    def keyPressEvent(self, ev):
+        if ev.key() == Qt.Key_F11:
+            self.toggle_fullscreen()
+        elif ev.key() == Qt.Key_Escape and self.isFullScreen():
+            self.toggle_fullscreen()       # Esc primero sale de pantalla completa; otra vez cierra la ventana
+        else:
+            super().keyPressEvent(ev)
+
     def _call(self, name: str):
         """Acciones de la ventana principal (generar o editar la letra)."""
         owner = self.parent()
         if owner is not None:
-            getattr(owner, name)()
+            getattr(owner, name)(self)       # se pasa a sí misma para que los avisos salgan dentro de esta ventana
 
     # ------------------------------------------------------------- datos
     def set_track(self, title: str, artist: str, color: QColor = None, force: bool = False):
@@ -203,8 +234,11 @@ class LyricsDialog(QDialog):
         self.status_label.setText(text)
         self.status_label.setVisible(True)
         self.actions.setVisible(False)
-        self.progress.setVisible(percent >= 0)
-        if percent >= 0:
+        self.progress.setVisible(percent != -1)
+        if percent == -2:
+            self.progress.setRange(0, 0)
+        elif percent >= 0:
+            self.progress.setRange(0, 100)
             self.progress.setValue(percent)
 
     def _clear(self):
@@ -258,7 +292,11 @@ class LyricsDialog(QDialog):
         info = getattr(owner, "current_item_info", None) or {}
         local = info.get("local_path")
         has_file = bool(local and os.path.isfile(local))
-        self.status_label.setText(err_msg + ("" if has_file else " Descárgala para que el sistema pueda generarla, o escríbela tú."))
+        note = getattr(owner, "_lyrics_note", "")
+        if owner is not None:
+            owner._lyrics_note = ""
+        self.status_label.setText((note + " " if note else "") + err_msg
+                                  + ("" if has_file else " Descárgala para que el sistema pueda generarla, o escríbela tú."))
         self.btn_generate.setVisible(has_file)
         self.actions.setVisible(True)
         self.btn_edit.setVisible(False)

@@ -1,6 +1,6 @@
 # Descargador de Música
 
-**Versión actual: 1.6.0** · [Historial de versiones](CHANGELOG.md) · cada versión subida tiene su etiqueta `vX.Y.Z` en GitHub
+**Versión actual: 1.7.0** · [Historial de versiones](CHANGELOG.md) · cada versión subida tiene su etiqueta `vX.Y.Z` en GitHub
 
 Aplicación de escritorio para **Windows** que combina un reproductor con aspecto de Spotify y un descargador de música:
 buscas una canción, un artista o un álbum, escuchas un adelanto y la descargas a tu equipo en MP3, M4A, FLAC o WAV,
@@ -72,7 +72,7 @@ sin cuentas ni claves.
 - **Letras**: se oscurecen las frases ya leídas, se subraya la que tienes bajo el ratón y al pulsarla la canción salta a ese
   momento. Si una canción no tiene letra, en las canciones **descargadas** puedes pulsar **«Generar con el sistema»**: el
   programa escucha la canción y escribe lo que canta (con tiempos). Queda marcada como «generada por el sistema» porque puede
-  tener errores. Con **«Editar»** (o «Escribir la letra yo») abres un editor dentro de la app para corregirla o escribir la tuya;
+  tener errores. Con **«Editar»** (o «Escribir la letra yo») abres un editor dentro de la app: un campo para el momento de la canción (o «Tiempo actual»), otro para la frase y «Añadir» la sube a la lista, donde puedes corregir cualquier línea con doble clic;
   la letra propia manda sobre cualquier otra y se puede restaurar. La primera vez, y solo si aceptas, se descarga el reconocedor
   de voz (whisper.cpp, ≈ 68 MB, con comprobación SHA-256); después funciona sin internet.
 - Conexión a internet para buscar, escuchar adelantos, descargar, letras y recomendaciones.

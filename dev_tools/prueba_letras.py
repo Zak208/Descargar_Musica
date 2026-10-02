@@ -43,6 +43,18 @@ check("borrar la del usuario", lyrics_store.load(key) is None)
 cleaned = clean_generated([(0, "[Música]"), (1000, "hola"), (2000, "hola"), (3000, "hola"), (4000, "hola"), (5000, "adiós")])
 check("se quitan marcas y bucles del reconocedor", [t for _m, t in cleaned] == ["hola", "hola", "adiós"])
 
+from services.transcribe_service import split_long_lines
+from ui.lyrics_editor import parse_time, fmt_time
+
+check("tiempos que entiende el editor", parse_time("1:23") == 83000 and parse_time("01:23.5") == 83500
+      and parse_time("[00:05.25]") == 5250 and parse_time("83") == 83000 and parse_time("zz") is None and parse_time("1:75") is None)
+check("formato de tiempo del editor", fmt_time(83500) == "01:23.50")
+long_line = "Dime que enfaza el objeto que te deja rota el corazón en pedacito y no me dejes más"
+parts = split_long_lines([(22000, long_line), (30000, "fin")])
+check("las frases largas se parten en renglones cortos", len(parts) >= 3 and all(len(t) <= 42 for _m, t in parts[:-1])
+      and [m for m, _t in parts] == sorted(m for m, _t in parts) and parts[0][0] == 22000)
+check("las frases cortas no se tocan", split_long_lines([(0, "Una frase corta")]) == [(0, "Una frase corta")])
+
 seen = []
 line = LyricLine(1000, "frase", seen.append)
 check("al pasar el ratón se subraya", (line.enterEvent(None) or True) and line.font().underline())

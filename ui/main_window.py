@@ -1,4 +1,5 @@
 import os
+import time
 import sys
 import logging
 import subprocess
@@ -328,6 +329,19 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             return ""
         return lyrics_store.key_for(info.get("title", ""), info.get("uploader", ""))
 
+    def _lyrics_host(self, origin=None):
+        """Dónde mostrar los avisos y el editor: dentro de la ventana de letras si el usuario pulsó desde ella
+        (si no, quedarían escondidos detrás), o en la ventana principal."""
+        dlg = self.lyrics_dialog
+        try:
+            if isinstance(origin, QWidget) and dlg is not None and dlg.isVisible() and origin is dlg:
+                return dlg
+        except RuntimeError:
+            self.lyrics_dialog = None
+        self.raise_()
+        self.activateWindow()
+        return self
+
     def reload_lyrics(self):
         """Vuelve a cargar la letra en el panel y en la ventana de letras (tras editarla o generarla)."""
         if self.now_panel.isVisible():
@@ -342,6 +356,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             self.lyrics_dialog = None
 
     def _lyrics_busy(self, text: str, percent: int = -1):
+        """Aviso de trabajo en las dos vistas de la letra. percent: -1 sin barra, -2 barra que avanza sin porcentaje."""
         if self.lyrics_key() != getattr(self, "_busy_key", self.lyrics_key()):
             return      # mientras tanto cambió la canción: el aviso ya no corresponde a la que se ve
         self.now_panel.lyrics.set_busy(text, percent)
@@ -352,34 +367,39 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         except RuntimeError:
             self.lyrics_dialog = None
 
-    def generate_lyrics(self):
+    def _lyrics_result(self, message: str):
+        """Resultado de generar la letra: toast en la ventana principal y nota visible también en la ventana de letras."""
+        self.notify(message)
+        self._lyrics_note = message
+
+    def generate_lyrics(self, origin=None):
         """El programa escucha la canción descargada y escribe su letra (la primera vez descarga el reconocedor de voz)."""
         info = self.current_item_info
         path = info.get("local_path") if info else None
         if not path or not os.path.isfile(path):
-            self.notify("Solo se puede generar la letra de canciones descargadas.")
+            self._lyrics_result("Solo se puede generar la letra de canciones descargadas.")
             return
         job = getattr(self, "_lyrics_job", None)
         if job is not None and job.isRunning():
-            self.notify("Ya se está generando una letra. Espera a que termine.")
+            self._lyrics_result("Ya se está generando una letra. Espera a que termine.")
             return
         self._busy_key = self.lyrics_key()
+        self._lyrics_note = ""
         if not transcribe_service.is_ready():
-            self.raise_()
-            self.activateWindow()
+            host = self._lyrics_host(origin)
             if not ask_confirm(
-                    self, "Generar letras con el sistema",
+                    host, "Generar letras con el sistema",
                     f"Para escuchar las canciones el programa necesita un reconocedor de voz (unos {transcribe_service.DOWNLOAD_MB} MB). "
                     "Se descarga una sola vez, se guarda en tu equipo y después funciona sin internet.\n\n"
                     "La letra generada puede tener errores; podrás corregirla con «Editar». ¿Descargarlo ahora?",
                     ok="Descargar"):
                 return
             setup = transcribe_service.SetupWorker(self)
-            setup.progress.connect(lambda pct: self._lyrics_busy("Descargando el reconocedor de voz…", pct))
+            setup.progress.connect(lambda pct: self._lyrics_busy(f"Descargando el reconocedor de voz… {pct}%", pct))
             setup.done.connect(lambda: self._start_transcription(path))
-            setup.failed.connect(lambda msg: (self.notify(f"No se pudo descargar: {friendly_error(msg)}"), self.reload_lyrics()))
+            setup.failed.connect(lambda msg: self._on_lyrics_generation_failed(self._busy_key, f"No se pudo descargar: {friendly_error(msg)}"))
             self._lyrics_job = setup
-            self._lyrics_busy("Descargando el reconocedor de voz…", 0)
+            self._lyrics_busy("Descargando el reconocedor de voz… 0%", 0)
             setup.start()
             return
         self._start_transcription(path)
@@ -387,23 +407,49 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
     def _start_transcription(self, path: str):
         key = self.lyrics_key()
         worker = transcribe_service.TranscribeWorker(path, key, self)
+        worker.progress.connect(self._on_transcription_progress)
         worker.done.connect(self._on_lyrics_generated)
         worker.failed.connect(self._on_lyrics_generation_failed)
         self._lyrics_job = worker
-        self._lyrics_busy("Escuchando la canción… puede tardar uno o dos minutos. Puedes seguir usando la aplicación.")
+        self._transcribe_started = time.time()
+        self._transcribe_percent = -2
+        if not hasattr(self, "_transcribe_timer"):
+            self._transcribe_timer = QTimer(self)
+            self._transcribe_timer.setInterval(1000)
+            self._transcribe_timer.timeout.connect(self._tick_transcription)
+        self._transcribe_timer.start()
+        self._tick_transcription()
         worker.start()
 
+    def _on_transcription_progress(self, pct: int):
+        self._transcribe_percent = pct
+        self._tick_transcription()
+
+    def _tick_transcription(self):
+        """Mientras el sistema escucha, se ve que está trabajando: porcentaje y segundos transcurridos."""
+        elapsed = int(time.time() - getattr(self, "_transcribe_started", time.time()))
+        pct = getattr(self, "_transcribe_percent", -2)
+        head = f"Escuchando la canción… {pct}%" if pct > 0 else "Escuchando la canción…"
+        self._lyrics_busy(f"{head} ({elapsed} s). Puedes seguir usando la aplicación.", pct if pct > 0 else -2)
+
+    def _stop_transcription_timer(self):
+        timer = getattr(self, "_transcribe_timer", None)
+        if timer is not None:
+            timer.stop()
+
     def _on_lyrics_generated(self, key: str, _data: dict):
-        self.notify("Letra generada. Revísala: puede tener errores.")
+        self._stop_transcription_timer()
+        self._lyrics_result("Letra generada. Revísala: puede tener errores.")
         if key == self.lyrics_key():
             self.reload_lyrics()
 
     def _on_lyrics_generation_failed(self, key: str, reason: str):
-        self.notify(reason or "No se pudo generar la letra.")
+        self._stop_transcription_timer()
+        self._lyrics_result(reason or "No se pudo generar la letra.")
         if key == self.lyrics_key():
             self.reload_lyrics()
 
-    def edit_lyrics(self):
+    def edit_lyrics(self, origin=None):
         """Editor de letra: sirve para escribirla desde cero o corregir la que hay (la propia queda guardada y manda)."""
         info = self.current_item_info
         if not info:
@@ -424,9 +470,8 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             else:
                 text = data.get("plain_text", "")
         stored = lyrics_store.load(key)
-        self.raise_()
-        self.activateWindow()
-        editor = LyricsEditorDialog(self, info.get("title", ""), text, player=self.player,
+        host = self._lyrics_host(origin)
+        editor = LyricsEditorDialog(host, info.get("title", ""), text, player=self.player,
                                     can_restore=bool(stored and stored.get("source") == "user"))
         if editor.exec() != 1:
             return

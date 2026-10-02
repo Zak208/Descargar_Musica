@@ -92,7 +92,7 @@ class LyricsBox(QFrame):
         self.btn_edit.setStyleSheet(link_css)
         self.btn_edit.setCursor(Qt.PointingHandCursor)
         self.btn_edit.setToolTip("Corrige la letra o escribe la tuya")
-        self.btn_edit.clicked.connect(self.window_ref.edit_lyrics)
+        self.btn_edit.clicked.connect(lambda: self.window_ref.edit_lyrics())
         head.addWidget(self.btn_edit)
         self.btn_full = QPushButton("Ver completa")
         self.btn_full.setObjectName("LinkBtn")
@@ -135,12 +135,12 @@ class LyricsBox(QFrame):
         self.btn_generate.setStyleSheet(pill)
         self.btn_generate.setCursor(Qt.PointingHandCursor)
         self.btn_generate.setToolTip("El programa escucha la canción y escribe lo que canta (solo canciones descargadas)")
-        self.btn_generate.clicked.connect(self.window_ref.generate_lyrics)
+        self.btn_generate.clicked.connect(lambda: self.window_ref.generate_lyrics())
         act.addWidget(self.btn_generate)
         self.btn_write = QPushButton("Escribir la letra yo")
         self.btn_write.setStyleSheet(pill)
         self.btn_write.setCursor(Qt.PointingHandCursor)
-        self.btn_write.clicked.connect(self.window_ref.edit_lyrics)
+        self.btn_write.clicked.connect(lambda: self.window_ref.edit_lyrics())
         act.addWidget(self.btn_write)
         self.actions.setVisible(False)
         lay.addWidget(self.actions)
@@ -207,8 +207,11 @@ class LyricsBox(QFrame):
         self.status.setText(text)
         self.status.setVisible(True)
         self.actions.setVisible(False)
-        self.progress.setVisible(percent >= 0)
-        if percent >= 0:
+        self.progress.setVisible(percent != -1)
+        if percent == -2:
+            self.progress.setRange(0, 0)         # barra que se mueve sola: se sabe que trabaja aunque no haya porcentaje
+        elif percent >= 0:
+            self.progress.setRange(0, 100)
             self.progress.setValue(percent)
 
     def _show_idle_buttons(self, show: bool):
@@ -234,7 +237,9 @@ class LyricsBox(QFrame):
         info = self.window_ref.current_item_info or {}
         local = info.get("local_path")
         has_file = bool(local and os.path.isfile(local))
-        self.status.setText("No hemos encontrado la letra de esta canción."
+        note = getattr(self.window_ref, "_lyrics_note", "")
+        self.window_ref._lyrics_note = ""
+        self.status.setText((note + " " if note else "") + "No hemos encontrado la letra de esta canción."
                             + ("" if has_file else " Descárgala para que el sistema pueda generarla, o escríbela tú."))
         self._show_idle_buttons(True)
         self.btn_edit.setVisible(False)
