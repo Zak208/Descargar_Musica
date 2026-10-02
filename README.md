@@ -1,6 +1,6 @@
 # Descargador de Música
 
-**Versión actual: 1.12.1** · [Historial de versiones](CHANGELOG.md) · cada versión subida tiene su etiqueta `vX.Y.Z` en GitHub
+**Versión actual: 1.13.0** · [Historial de versiones](CHANGELOG.md) · cada versión subida tiene su etiqueta `vX.Y.Z` en GitHub
 
 Aplicación de escritorio para **Windows** que combina un reproductor con aspecto de Spotify y un descargador de música:
 buscas una canción, un artista o un álbum, escuchas un adelanto y la descargas a tu equipo en MP3, M4A, FLAC o WAV,
@@ -108,11 +108,14 @@ informática. **Tu música descargada y tus listas funcionan también sin intern
 - Tus datos viven en `%APPDATA%\Descargador de Música`, **fuera de la carpeta del programa**: actualizar o mover el
   `.exe` nunca los borra. Hay **copia de seguridad en un clic** (y una automática cada semana), restauración,
   **«Liberar espacio»** y un **informe de problemas sin datos personales** (Ayuda).
-- **Actualizaciones**: el motor de descargas (yt-dlp) se puede actualizar por separado desde Ayuda (o solo, una vez al
-  día) para que las descargas sigan funcionando cuando YouTube cambia algo.
+- **Actualizaciones**: el motor de descargas (yt-dlp) se actualiza por separado (desde Ayuda o con el mismo botón azul de
+  abajo) para que las descargas sigan funcionando cuando YouTube cambia algo.
+- **Karaoke por palabras**: la letra sincronizada rellena cada palabra a su ritmo (sílabas y ritmo de la canción); en
+  canciones descargadas, con el reconocedor de voz instalado, se miden una vez los tiempos reales de cada palabra.
 - **La aplicación se actualiza sola desde GitHub**: cuando subes una versión nueva (etiqueta `vX.Y.Z`) y en otro ordenador
   tienes una anterior, ahí aparece un **botón azul arriba a la izquierda**: primero se descarga (se comprueba su huella
-  SHA-256) y luego pone **«Reiniciar y actualizar a la X»**. Se mira cada hora como mucho. Hace falta la 1.12 o posterior en
+  SHA-256) y luego pone **«Reiniciar y actualizar a la X»**. Con la aplicación abierta se mira cada 10 minutos, sin
+  reiniciar; al volver a abrirla avisa de a qué versión se actualizó. Hace falta la 1.12 o posterior en
   cada ordenador (la primera vez se instala a mano desde Releases).
 - **Asistente de bienvenida** de 3 pasos y **recorrido guiado** (Ayuda).
 
@@ -357,6 +360,7 @@ python dev_tools/prueba_detalles.py      # fechas «añadida», rueda lateral, g
 python dev_tools/prueba_fundido.py       # aleatorio coherente y fundido cruzado con dos reproductores (audio real)
 python dev_tools/prueba_animaciones.py   # niveles de movimiento, reposo, efectos, controles, avisos, visualizador, Windows
 python dev_tools/prueba_actualizar.py    # actualización desde GitHub: huella, instalación (se ejecuta de verdad) y botón azul
+python dev_tools/prueba_palabras.py      # karaoke por palabras: tiempos, reparto, guardado y barrido por píxeles
 python dev_tools/prueba_letra_cambio.py  # la letra del panel se ve al cambiar de canción (abre una ventana real un momento)
 ```
 

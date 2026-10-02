@@ -68,7 +68,7 @@ from ui.lyrics_dialog import LyricsDialog
 from ui.lyrics_editor import LyricsEditorDialog
 from services import lyric_align, lyrics_store, transcribe_service, session_service, backup_service
 from services import http as web
-from services import app_updater, update_service, ytdlp_loader
+from services import app_updater, update_service, ytdlp_loader, word_timing
 from ui.metadata_dialog import MetadataDialog
 from ui.equalizer_dialog import EqualizerDialog
 from ui.queue_dialog import QueueDialog
@@ -103,6 +103,10 @@ class FFmpegDownloadWorker(QThread):
             self.finished_signal.emit(True)
         except Exception:
             self.finished_signal.emit(False)
+
+
+UPDATE_POLL_MS = 10 * 60 * 1000       # cada cuánto mira si hay versión nueva mientras la aplicación está abierta
+UPDATE_MIN_GAP_S = 5 * 60             # y nunca más a menudo que esto (también al abrirla)
 
 
 class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin, DownloadsMixin, OfflineMixin,
@@ -187,13 +191,17 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self._session_timer.start()
         QTimer.singleShot(8000, backup_service.auto_backup_if_due)
         QTimer.singleShot(12000, self.check_updates)         # como mucho cada hora, solo con conexión
-        self._update_timer = QTimer(self)                     # y mientras la aplicación sigue abierta, cada 3 horas
-        self._update_timer.setInterval(3 * 3600 * 1000)
+        self._update_timer = QTimer(self)                     # y mientras la aplicación sigue abierta, cada 10 minutos
+        self._update_timer.setInterval(UPDATE_POLL_MS)         # (son dos peticiones pequeñas; una versión nueva aparece sin reiniciar)
         self._update_timer.timeout.connect(self.check_updates)
         self._update_timer.start()
         self._app_update_worker = None
         self._update_state = None
+        self._engine_state = None
+        self._engine_version = ""
+        self._engine_pct = 0
         QTimer.singleShot(1500, self._restore_pending_update)
+        QTimer.singleShot(3500, self._announce_finished_update)
         QTimer.singleShot(25000, perf.trim_memory)       # tras el arranque se devuelve a Windows lo que sobra
         self._trim_timer = QTimer(self)                   # y cada 10 minutos mientras no se esté usando
         self._trim_timer.setInterval(600_000)
@@ -600,6 +608,51 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             return
         self._start_transcription(path)
 
+    # ---------- tiempo de cada palabra (para que el karaoke siga la voz) ----------
+    _words_worker = None
+
+    def ensure_word_timing(self, follower):
+        """Aplica al karaoke los tiempos de cada palabra medidos con la voz. Si ya se midieron en esta canción se usan
+        al momento; si no, y el reconocedor de voz ya está instalado, se miden una vez en segundo plano."""
+        try:
+            info = self.current_item_info or {}
+            path = info.get("local_path")
+            lines = [(ms, lbl.text()) for ms, lbl in follower.lines]
+            if not lines or not path or not os.path.isfile(path):
+                return
+            key = self.lyrics_key()
+            cached = word_timing.load_spans(key, lines)
+            if cached is not None:
+                follower.set_spans(cached)
+                return
+            worker = self._words_worker
+            if worker is not None and worker.isRunning():
+                return
+            if not transcribe_service.is_ready():
+                return
+            worker = word_timing.WordTimingWorker(path, key, lines, self)
+            worker.done.connect(self._on_word_timing)
+            self._words_worker = worker
+            worker.start()
+        except RuntimeError:
+            pass
+
+    def _on_word_timing(self, key: str, spans: list):
+        if key != self.lyrics_key():
+            return
+        followers = [self.now_panel.lyrics.follower]
+        dlg = self.lyrics_dialog
+        try:
+            if dlg is not None:
+                followers.append(dlg.follower)
+        except RuntimeError:
+            self.lyrics_dialog = None
+        for follower in followers:
+            try:
+                follower.set_spans(spans)
+            except RuntimeError:
+                pass
+
     # ---------- sincronizar una letra con la canción (tiempos automáticos) ----------
     _align_worker = None
 
@@ -884,7 +937,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             if manual:
                 self.notify("Sin conexión: no se puede buscar actualizaciones.")
             return
-        if not manual and not update_service.due("last_update_check", 3600):
+        if not manual and not update_service.due("last_update_check", UPDATE_MIN_GAP_S):
             return
         worker = getattr(self, "_update_check", None)
         if worker is not None and worker.isRunning():
@@ -909,10 +962,10 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             if engine_new:
                 dlg.lbl_engine.setText(f"Motor de descargas (yt-dlp): versión {ytdlp_loader.active_version()} · "
                                        f"hay una nueva ({engine_new})")
-        if engine_new and load_settings().get("ytdlp_auto_update", True):
-            self.update_engine(quiet=True)
-        elif engine_new and manual:
-            self.notify(f"Hay una versión nueva del motor de descargas ({engine_new}).")
+        if engine_new:
+            self._offer_engine_update(engine_new, manual)
+        elif self._engine_state == "available":
+            self._set_engine_state(None)
         if app_new and app_updater.can_self_update():
             self._offer_app_update(app_new, manual)
         elif app_new:
@@ -947,17 +1000,60 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
 
     def _set_update_state(self, state):
         self._update_state = state
-        v = getattr(self, "_update_version", "")
+        if state == "ready":
+            self._update_version_ready = getattr(self, "_update_version", "")
+        self._refresh_update_button()
+
+    def _set_engine_state(self, state, pct: int = 0):
+        self._engine_state = state
+        self._engine_pct = pct
+        self._refresh_update_button()
+
+    def _refresh_update_button(self):
+        """Un solo botón azul para las dos clases de novedad: primero la aplicación y, si no hay, el motor de descargas."""
+        state, v = self._update_state, getattr(self, "_update_version", "")
         if state == "available":
             self.topbar.set_update_button(f"Actualizar a la {v}", True, "Descarga la versión nueva (se instala al reiniciar)")
         elif state == "downloading":
             self.topbar.set_update_button(f"Descargando la {v}…", False, "Se está descargando la versión nueva")
         elif state == "ready":
-            self._update_version_ready = v
             self.topbar.set_update_button(f"Reiniciar y actualizar a la {v}", True,
                                           "Se cierra la aplicación, se instala la versión nueva y se vuelve a abrir")
+        elif self._engine_state == "available":
+            self.topbar.set_update_button("Actualizar el descargador de canciones", True,
+                                          f"Hay una versión nueva ({self._engine_version}) del motor que descarga las canciones")
+        elif self._engine_state == "downloading":
+            self.topbar.set_update_button(f"Descargando el descargador de canciones… {self._engine_pct}%", False,
+                                          "Se está descargando la versión nueva del motor de descargas")
+        elif self._engine_state == "ready":
+            self.topbar.set_update_button("Reiniciar para usar el descargador nuevo", True,
+                                          "El motor de descargas ya está actualizado: se usará al volver a abrir la aplicación")
         else:
             self.topbar.set_update_button("")
+
+    def _offer_engine_update(self, version: str, manual: bool = False):
+        """Hay un yt-dlp más nuevo: se avisa con el botón azul (y se descarga solo si así lo tienes en Ajustes)."""
+        if self._engine_state in ("downloading", "ready"):
+            return
+        self._engine_version = version
+        if load_settings().get("ytdlp_auto_update", True) and not perf.saving_reason(self.network):
+            self.update_engine(quiet=True)
+        else:
+            self._set_engine_state("available")
+            if manual:
+                self.notify(f"Hay una versión nueva del motor de descargas ({version}): mira el botón azul de arriba a la izquierda.")
+
+    def _announce_finished_update(self):
+        """Tras actualizar y reabrir, confirma a qué versión se ha pasado."""
+        settings = load_settings()
+        previous = settings.get("last_run_version", "")
+        if previous != __version__:
+            settings["last_run_version"] = __version__
+            save_settings(settings)
+            if previous and ytdlp_loader.parse_version(__version__) > ytdlp_loader.parse_version(previous):
+                margin = (self.player_bar.height() + 24) if self.player_bar.isVisible() else 40
+                self.toast.show_message(f"Descargador de Música se ha actualizado a la versión {__version__}", bottom_margin=margin,
+                                        action=("Ver novedades", self.open_app_releases))
 
     def _start_app_download(self):
         worker = self._app_update_worker
@@ -986,6 +1082,11 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             self._start_app_download()
         elif self._update_state == "ready":
             self.restart_and_update()
+        elif self._update_state is None or self._update_state == "":
+            if self._engine_state == "available":
+                self.update_engine()
+            elif self._engine_state == "ready":
+                self.restart_app()
 
     def restart_and_update(self):
         """Cierra la aplicación, instala la versión descargada y la vuelve a abrir."""
@@ -1004,11 +1105,14 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         if worker is not None and worker.isRunning():
             return
         dlg = getattr(self, "help_dialog", None)
+        self._engine_version = tag
+        self._set_engine_state("downloading", 0)
         self._engine_worker = update_service.YtdlpUpdateWorker(tag, self)
         if dlg is not None:
             dlg.update_progress.setVisible(True)
             dlg.update_progress.setValue(0)
             self._engine_worker.progress.connect(dlg.update_progress.setValue)
+        self._engine_worker.progress.connect(lambda pct: self._set_engine_state("downloading", pct))
         self._engine_worker.done.connect(lambda v: self._on_engine_updated(v, quiet))
         self._engine_worker.failed.connect(lambda msg: self._on_engine_failed(msg, quiet))
         self._engine_worker.start()
@@ -1021,14 +1125,17 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             dlg.btn_engine.setVisible(False)
             dlg.refresh_updates()
         if ytdlp_loader.is_loaded():
-            self.notify(f"Motor de descargas actualizado a {version}: se usará al reiniciar la aplicación.")
+            self._set_engine_state("ready")             # el motor viejo sigue en uso: hasta reiniciar no cambia
+            self.notify(f"El descargador de canciones se ha actualizado a {version}: pulsa el botón azul para reiniciar y usarlo.")
         else:
+            self._set_engine_state(None)
             self.notify(f"Motor de descargas actualizado a {version}")
 
     def _on_engine_failed(self, message: str, quiet: bool):
         dlg = getattr(self, "help_dialog", None)
         if dlg is not None:
             dlg.update_progress.setVisible(False)
+        self._set_engine_state("available" if self._pending_engine else None)
         if not quiet:
             self.notify(f"No se pudo actualizar: {friendly_error(message)}")
 

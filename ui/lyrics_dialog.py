@@ -296,6 +296,9 @@ class LyricsDialog(QDialog, AmbientBackdrop):
                 self.lyrics_layout.addWidget(lbl)
                 self.line_widgets.append((ms, lbl))
             self.follower.set_lines(self.line_widgets)
+            owner = self.parent()
+            if hasattr(owner, "ensure_word_timing"):
+                owner.ensure_word_timing(self.follower)
             for delay in (0, 80, 300):
                 QTimer.singleShot(delay, self._ensure_layout)
             if self.player is not None:      # se coloca en la línea que toca ahora mismo

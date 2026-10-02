@@ -5,6 +5,7 @@ from bisect import bisect_right
 
 from PySide6.QtCore import QEasingCurve, QPropertyAnimation
 
+from services import word_timing
 from ui import motion
 from ui.lyric_line import GapDots
 
@@ -22,6 +23,7 @@ class LyricsFollower:
         self.scroll = scroll_area
         self.lines = []                 # [(ms, LyricLine)]
         self.times = []
+        self.spans = []                 # por frase: [(inicio, fin, car_inicio, car_fin)] de cada palabra
         self.active = -1
         self._pre = -1
         self._anim = QPropertyAnimation(scroll_area.verticalScrollBar(), b"value", scroll_area)
@@ -38,6 +40,14 @@ class LyricsFollower:
         self._pre = -1
         self.dots.hide()
         self._anim.stop()
+        self.spans = word_timing.estimate([(ms, lbl.text()) for ms, lbl in self.lines]) if self.lines else []
+
+    def set_spans(self, spans: list) -> bool:
+        """Cambia los tiempos estimados de cada palabra por otros (medidos con la voz). Solo si encajan con las frases."""
+        if len(spans) != len(self.lines):
+            return False
+        self.spans = list(spans)
+        return True
 
     def clear(self):
         self.set_lines([])
@@ -56,8 +66,8 @@ class LyricsFollower:
             if new >= 0:
                 self.center(self.lines[new][1])
         if new >= 0:
-            start = self.times[new]
-            self.lines[new][1].set_fill((ms - start) / self._duration(new))
+            label = self.lines[new][1]
+            label.set_fill(word_timing.fraction_at(self.spans[new], len(label.text()), ms))
         nxt = new + 1
         if nxt < n:
             remaining = self.times[nxt] - ms
@@ -65,11 +75,6 @@ class LyricsFollower:
                 self._pre = nxt                             # se empieza a desplazar antes de que suene
                 self.center(self.lines[nxt][1])
         self._update_gap(ms, new)
-
-    def _duration(self, i: int) -> int:
-        text = self.lines[i][1].text()
-        nxt = self.times[i + 1] if i + 1 < len(self.lines) else self.times[i] + 4000
-        return max(300, min(nxt - self.times[i], estimated_length(text)))
 
     def _restyle(self, old: int, new: int):
         n = len(self.lines)
@@ -92,7 +97,8 @@ class LyricsFollower:
         if active < 0:
             start, end = 0, self.times[0]
         elif active + 1 < n:
-            start = self.times[active] + estimated_length(self.lines[active][1].text())
+            words = self.spans[active] if active < len(self.spans) else []
+            start = words[-1][1] if words else self.times[active] + estimated_length(self.lines[active][1].text())
             end = self.times[active + 1]
         else:
             self.dots.hide()

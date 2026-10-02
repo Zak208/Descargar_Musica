@@ -274,6 +274,8 @@ class LyricsBox(QFrame):
                 self._lines.append((ms, lbl))
         self._plain = bool(lines) and not synced
         self.follower.set_lines(self._lines)
+        if synced:
+            self.window_ref.ensure_word_timing(self.follower)
         for delay in (0, 80, 300):             # comprueba que las frases tienen altura (ver _ensure_layout)
             QTimer.singleShot(delay, self._ensure_layout)
         self.scroll.verticalScrollBar().setValue(0)

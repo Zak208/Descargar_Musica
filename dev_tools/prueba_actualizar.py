@@ -155,7 +155,10 @@ if sys.platform == "win32":
     script = app_updater.build_script(staged, target, 99999999, "run.cmd", stage_work)
     proc = subprocess.Popen(["cmd", "/c", str(script)], creationflags=subprocess.CREATE_NO_WINDOW)
     proc.wait(timeout=60)
-    time.sleep(1.0)
+    for _ in range(100):                     # el programa se abre aparte: se espera a que escriba su resultado
+        if (target / "resultado.txt").exists() and (target / "resultado.txt").read_text().strip():
+            break
+        time.sleep(0.1)
     check("el script copia los archivos nuevos sobre los viejos", (target / "_internal" / "lib.dll").read_text() == "lib nueva y más grande"
           and (target / "_internal" / "extra.dll").exists())
     check("y vuelve a abrir el programa", (target / "resultado.txt").exists() and "nuevo" in (target / "resultado.txt").read_text())
@@ -194,6 +197,65 @@ app_updater.can_self_update = lambda: True
 w._start_app_download = lambda: started.append(1)
 w._offer_app_update("1.15.0")
 check("al detectar una versión nueva empieza a descargarse sola", started == [1] or w._update_state in ("available", "ready"))
+
+# ---------------------------------------------------------------- el motor de descargas (yt-dlp) también usa el botón azul
+from services import ytdlp_loader, update_service
+from config import load_settings, save_settings
+
+w._set_update_state(None)
+check("sin novedades el botón vuelve a esconderse", not w.topbar.btn_update.isVisible())
+s = load_settings()
+s["ytdlp_auto_update"] = False
+save_settings(s)
+w._on_update_result("", "2099.01.01", False)
+check("una versión nueva del descargador de canciones enseña el botón azul", w.topbar.btn_update.isVisible()
+      and "descargador de canciones" in w.topbar.btn_update.text() and w.topbar.btn_update.isEnabled())
+w._start_app_download = lambda: w._set_update_state("available")
+w._on_update_result("1.15.0", "2099.01.01", False)
+check("si hay también una de la aplicación, manda la de la aplicación", "1.15.0" in w.topbar.btn_update.text())
+w._set_update_state(None)
+check("y al terminar con ella vuelve el aviso del motor", "descargador de canciones" in w.topbar.btn_update.text())
+
+engine_calls = []
+w.update_engine = lambda quiet=False: engine_calls.append(quiet)
+w.topbar.btn_update.click()
+check("al pulsarlo se descarga el motor nuevo", engine_calls == [False])
+
+w._set_engine_state("downloading", 40)
+check("mientras descarga enseña el porcentaje y no se puede pulsar", "40%" in w.topbar.btn_update.text() and not w.topbar.btn_update.isEnabled())
+ytdlp_loader.is_loaded = lambda: True
+w._on_engine_updated("2099.01.01", True)
+check("si el motor ya estaba en uso pide reiniciar", "Reiniciar" in w.topbar.btn_update.text() and w.topbar.btn_update.isEnabled())
+restarted = []
+w.restart_app = lambda: restarted.append(1)
+w.topbar.btn_update.click()
+check("al pulsarlo la aplicación se reinicia", restarted == [1])
+ytdlp_loader.is_loaded = lambda: False
+w._on_engine_updated("2099.01.01", True)
+check("si el motor aún no se había usado no hace falta reiniciar", not w.topbar.btn_update.isVisible())
+
+s = load_settings()
+s["ytdlp_auto_update"] = True
+save_settings(s)
+w._engine_state = None
+engine_calls.clear()
+w._on_update_result("", "2099.02.02", False)
+check("con la descarga automática activada se descarga sola y se avisa", engine_calls == [True])
+
+check("la aplicación comprueba si hay novedades al menos cada 10 minutos", w._update_timer.interval() <= 10 * 60 * 1000)
+
+# tras actualizar y reabrir se confirma la versión
+s = load_settings()
+s["last_run_version"] = "0.1.0"
+save_settings(s)
+shown = []
+w.toast.show_message = lambda text, **kw: shown.append(text)
+w._announce_finished_update()
+check("al abrir una versión más nueva se avisa de que se actualizó", shown and __version__ in shown[0])
+shown.clear()
+w._announce_finished_update()
+check("y solo una vez", not shown)
+check("la ventana lleva la versión en su título", __version__ in w.windowTitle())
 
 http.get = real_get
 print("FIN", flush=True)

@@ -21,6 +21,20 @@ def _parse_pad(pad: str):
     return nums[0], (nums[1] if len(nums) > 1 else nums[0])
 
 
+def _x_at(line, pos: float) -> float:
+    """Posición horizontal (en píxeles) de un punto del texto de la línea, con decimales: así el barrido sigue el ancho
+    real de cada letra y no avanza a un ritmo uniforme por carácter."""
+    end = line.textStart() + line.textLength()
+    i = int(pos)
+    x0 = line.cursorToX(min(i, end))
+    x0 = x0[0] if isinstance(x0, tuple) else x0
+    if i >= end or pos <= i:
+        return float(x0)
+    x1 = line.cursorToX(min(i + 1, end))
+    x1 = x1[0] if isinstance(x1, tuple) else x1
+    return float(x0 + (x1 - x0) * (pos - i))
+
+
 class LyricLine(QLabel):
     def __init__(self, ms: int, text: str, on_seek=None, size: int = 19, pad: str = "0px", parent=None):
         super().__init__(text, parent)
@@ -100,7 +114,7 @@ class LyricLine(QLabel):
     def set_fill(self, fraction: float):
         """Parte de la frase ya cantada (barrido de izquierda a derecha); solo se repinta esta línea."""
         fraction = max(0.0, min(1.0, fraction))
-        if abs(fraction - self._fill) >= 0.012:
+        if abs(fraction - self._fill) >= 0.006:
             self._fill = fraction
             self.update()
 
@@ -182,15 +196,13 @@ class LyricLine(QLabel):
             bright = QColor(base)
             bright.setAlphaF(1.0)
             p.setPen(bright)
-            chars = max(1, len(text))
-            done = self._fill * chars
+            done = self._fill * max(1, len(text))
             for line in lines:
                 start, length = line.textStart(), max(1, line.textLength())
-                part = max(0.0, min(1.0, (done - start) / length))
-                if part <= 0:
+                if done <= start:
                     continue
                 p.save()
-                p.setClipRect(QRectF(0, line.y(), line.naturalTextWidth() * part + 2, line.height() + 2))
+                p.setClipRect(QRectF(0, line.y(), _x_at(line, min(done, start + length)) + 1, line.height() + 2))
                 layout.draw(p, QPointF(0, 0))
                 p.restore()
         else:

@@ -3,6 +3,18 @@
 Formato: `MAYOR.MENOR.PARCHE`. MAYOR = cambios que rompen datos o uso, MENOR = funciones nuevas, PARCHE = arreglos.
 Cada versión subida a GitHub tiene su etiqueta `vX.Y.Z` (pestaña *Releases/Tags*).
 
+## 1.13.0
+**Letra tipo karaoke que sigue la voz palabra a palabra**
+- Antes la frase se rellenaba a velocidad uniforme por letra desde que empezaba hasta un tiempo estimado, y las palabras no coincidían con el cantante. Ahora cada palabra tiene su propio tiempo: se reparte el de la frase según las sílabas de cada palabra, usando el ritmo medio de esa canción (la última palabra de la frase se alarga) y respetando que la frase acaba antes de que empiece la siguiente.
+- El relleno se pinta por píxeles según el ancho real de cada letra (antes se repartía por igual entre las letras, así una «i» y una «m» avanzaban lo mismo).
+- **Tiempos medidos con la voz** (canciones descargadas, si ya tienes instalado el reconocedor de voz de «Generar letra»): la primera vez que suena una canción con letra sincronizada, el reconocedor la escucha una sola vez en segundo plano (prioridad baja) y mide cuándo canta cada palabra; se guarda en tu equipo y desde ahí el karaoke sigue la voz de verdad, también sin conexión. Si editas la letra se vuelve a medir.
+
+**Actualizaciones**
+- El **descargador de canciones (yt-dlp)** también avisa ahora con el botón azul de arriba a la izquierda: «Actualizar el descargador de canciones», con porcentaje al descargar y «Reiniciar para usar el descargador nuevo» si el anterior ya estaba en uso. Si tienes la actualización automática del motor activada, se descarga solo y el botón te dice cuándo reiniciar. Si hay a la vez una versión nueva de la aplicación, manda esta.
+- La aplicación abierta mira si hay novedades **cada 10 minutos** (antes cada 3 horas) y no más de una vez cada 5, sin reiniciar nada.
+- Al abrir la aplicación ya actualizada aparece un aviso: «se ha actualizado a la versión X» con «Ver novedades».
+- Pruebas nuevas: `prueba_palabras.py` y más comprobaciones en `prueba_actualizar.py`.
+
 ## 1.12.1
 **Arreglos**
 - **La letra del panel lateral desaparecía al cambiar de canción**: cuando la letra llegaba de internet (tardaba un poco) las frases se colocaban con altura 0 y no se veía nada, sobre todo al pasar rápido de una canción a otra. Ahora se comprueba y se recolocan. Lo mismo en la ventana de letras. Prueba nueva: `prueba_letra_cambio.py` (reproduce el fallo con ventana real).
