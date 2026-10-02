@@ -1,6 +1,6 @@
 # Descargador de Música
 
-**Versión actual: 1.15.1** · [Historial de versiones](CHANGELOG.md) · cada versión subida tiene su etiqueta `vX.Y.Z` en GitHub
+**Versión actual: 1.16.0** · [Historial de versiones](docs/CHANGELOG.md) · cada versión subida tiene su etiqueta `vX.Y.Z` en GitHub
 
 Aplicación de escritorio para **Windows** que combina un reproductor con aspecto de Spotify y un descargador de música:
 buscas una canción, un artista o un álbum, escuchas un adelanto y la descargas a tu equipo en MP3, M4A, FLAC o WAV,
@@ -122,7 +122,7 @@ informática. **Tu música descargada y tus listas funcionan también sin intern
 
 ## Licencia
 
-Código bajo licencia [MIT](LICENSE). Los componentes de terceros que usa están en [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Para colaborar: [CONTRIBUTING.md](CONTRIBUTING.md).
+Código bajo licencia [MIT](LICENSE). Los componentes de terceros que usa están en [THIRD_PARTY_NOTICES.md](docs/THIRD_PARTY_NOTICES.md). Para colaborar: [CONTRIBUTING.md](docs/CONTRIBUTING.md).
 
 ## Requisitos
 
@@ -131,12 +131,17 @@ Código bajo licencia [MIT](LICENSE). Los componentes de terceros que usa están
 - Conexión a internet para buscar, escuchar adelantos, descargar y recomendaciones. **Sin ella** sigues escuchando y
   organizando tu música descargada.
 - **FFmpeg** (convierte el audio y aplica el ecualizador). No hace falta instalarlo a mano: si no lo encuentra,
-  la aplicación lo descarga sola la primera vez. Si prefieres tenerlo ya, copia `ffmpeg.exe` en una carpeta `bin/` junto
-  a `main.py` (`ffprobe.exe` no hace falta).
+  la aplicación lo descarga sola la primera vez. Si prefieres tenerlo ya, copia `ffmpeg.exe` en una carpeta `bin/` en la carpeta principal
+  del proyecto (`ffprobe.exe` no hace falta).
 
 ## Instalación y ejecución
 
 **Como una aplicación más de Windows (lo normal):** en [Releases](https://github.com/Zak208/Descargar_Musica/releases) descarga `Descargador_Musica-Setup-vX.Y.Z.exe` y ábrelo. Es un asistente pequeño como el de cualquier programa: te enseña el **aviso legal y de privacidad** (hay que aceptarlo), te pregunta **en qué carpeta instalarlo** y **dónde crear los accesos directos** (escritorio y/o menú Inicio). Se instala solo para tu usuario (sin permisos de administrador) y aparece en **Configuración de Windows → Aplicaciones → Aplicaciones instaladas**, desde donde se desinstala (el desinstalador te pregunta si quieres borrar también tus listas y ajustes). Después se actualiza sola con el botón azul.
+
+**Crear tú mismo el instalador (un solo archivo):** haz doble clic en **`lanzador.bat`**, en la carpeta principal. Prepara las
+librerías, compila el programa, comprueba que funciona, crea el instalador y lo abre. El resultado queda ahí mismo, en la
+carpeta principal: `Descargador_Musica-Setup-vX.Y.Z.exe`. (La primera vez tarda unos minutos y, si falta, ofrece descargar
+Inno Setup, el programa gratuito que crea instaladores.) Con `lanzador.bat /sin-abrir` lo crea sin abrirlo.
 
 **Desde el código:**
 
@@ -148,7 +153,7 @@ python -m venv venv
 venv\Scripts\activate          # en PowerShell: .\venv\Scripts\Activate.ps1
 
 pip install -r requirements.txt
-python main.py
+python src/main.py
 ```
 
 Las canciones se guardan por defecto en `Música\Canciones_YouTube` (se puede cambiar en **Ajustes**). Ejecutando desde el
@@ -156,14 +161,16 @@ código, los datos se guardan en la carpeta `app_data/` del proyecto.
 
 ## Crear el ejecutable (.exe)
 
+Lo normal es `lanzador.bat` (ver arriba), que hace todo. Si prefieres hacerlo a mano:
+
 ```bash
-pip install -r requirements-build.txt
-python -m PyInstaller --noconfirm --distpath dist_app --workpath build_tmp Descargar_Musica.spec
+pip install -r empaquetado/requirements-build.txt
+python -m PyInstaller --noconfirm --distpath dist_app --workpath build_tmp empaquetado/Descargar_Musica.spec
 ```
 
-También puedes hacer doble clic en `compilar_exe.bat`. El resultado queda en `dist_app\Descargar_Musica\` (≈ 270 MB con
-FFmpeg; copia esa carpeta completa a otro equipo para usarla). Si existe `bin/ffmpeg.exe`, se incluye dentro (sin
-`ffprobe.exe`, que no hace falta y ocupa ~145 MB); si no, la app descargará FFmpeg al abrirse.
+El resultado queda en `dist_app\Descargar_Musica\` (≈ 270 MB con FFmpeg; copia esa carpeta completa a otro equipo para
+usarla). Si existe `bin/ffmpeg.exe`, se incluye dentro (sin `ffprobe.exe`, que no hace falta y ocupa ~145 MB); si no, la app
+descargará FFmpeg al abrirse.
 
 Para comprobar que el ejecutable ha quedado bien (iconos, tipografía, índice SQLite, yt-dlp, control multimedia, FFmpeg y
 ausencia de ventanas sueltas; trabaja con datos temporales, nunca con los tuyos):
@@ -243,15 +250,28 @@ La aplicación detecta si hay internet (con un aviso de Qt, sin consultar nada c
 ## Estructura del proyecto
 
 ```
-main.py                    punto de entrada (y --selftest)
-config.py                  rutas, ajustes y escritura segura de JSON
-version.py                 número de versión (también en CHANGELOG.md) y versión de yt-dlp incluida
-CHANGELOG.md               qué trae cada versión
-Descargar_Musica.spec      configuración de PyInstaller
-compilar_exe.bat           atajo para compilar
-.github/workflows/         publicación automática de versiones (compila el .exe y lo sube a GitHub)
-requirements*.txt          dependencias (ejecución / compilación)
-assets/                    iconos SVG, logo y tipografía Poppins
+lanzador.bat               compila, crea el instalador (aquí mismo) y lo abre
+README.md · LICENSE        este archivo y la licencia
+requirements.txt           dependencias para ejecutar desde el código
+pyproject.toml             configuración de ruff (análisis del código) y pytest
+src/                       TODO el código de la aplicación
+    main.py                  punto de entrada (y --selftest)
+    config.py                rutas, ajustes y lectura/escritura segura de JSON
+    version.py               número de versión y versión de yt-dlp incluida
+    assets/                  iconos SVG, logo, icono de la aplicación y tipografía Poppins
+empaquetado/               crear el .exe y el instalador
+    Descargar_Musica.spec    configuración de PyInstaller
+    Descargador.iss          asistente de instalación (Inno Setup) · imagen_*.bmp sus imágenes
+    requirements-build.txt   dependencias para compilar · requirements.lock.txt versiones exactas probadas
+    crear_icono.py, crear_imagenes_instalador.py   generan el icono y las imágenes del instalador
+docs/                      CHANGELOG.md, CONTRIBUTING.md, THIRD_PARTY_NOTICES.md, AVISO_LEGAL_Y_PRIVACIDAD.txt
+pruebas/                   pruebas automáticas (prueba_*.py), ejecutar_pruebas.py y test_pruebas.py (pytest)
+.github/workflows/         publicación automática de versiones y comprobaciones en cada subida
+```
+
+Dentro de `src/`:
+
+```
 services/                  lógica sin interfaz
     catalog_service.py       búsqueda en iTunes (artistas, álbumes, canciones)
     youtube_service.py       búsqueda, adelanto y descarga con yt-dlp (versiones, comprobación y reintentos)
@@ -300,7 +320,6 @@ ui/                        interfaz
     scrolling.py, toast.py, tooltips.py, focusring.py, osd.py, sliders.py   desplazamiento, avisos, ayudas, foco, avisos del teclado
     winext.py                barra de título, barra de tareas y «siempre encima» de Windows (ctypes, opcional)
     styles.py, covers.py ... estilos, portadas, iconos
-dev_tools/                 pruebas automáticas y medición de arranque
 ```
 
 ## Datos que guarda y privacidad
@@ -345,7 +364,7 @@ de una en una y con prioridad baja, procesos hijos (ffmpeg…) con prioridad baj
 minimizada, un único reloj de animación que se para solo (0 temporizadores en reposo; medido ≈ 0,8 % de CPU en reposo y
 ≈ 1,6 % reproduciendo con animaciones «Suaves»), efectos gráficos que se retiran al terminar, listas que solo crean las filas visibles, recomendaciones que no se piden solas con batería baja o datos medidos,
 y detección de equipo modesto (4 GB o menos / 2 núcleos o menos: descargas de una en una y visualizador apagado).
-`python dev_tools/medir_arranque.py` mide CPU y memoria del arranque.
+`python pruebas/medir_arranque.py` mide CPU y memoria del arranque.
 
 ## Pruebas
 
@@ -353,27 +372,27 @@ Se ejecutan sin abrir ventanas, desde la raíz del proyecto, con una carpeta de 
 ajustes; algunas usan internet y tu carpeta de música y limpian lo que crean):
 
 ```bash
-python dev_tools/prueba_base.py          # datos fuera del programa, copia de seguridad, espacio, sesión, ayuda y recorrido
-python dev_tools/prueba_sin_conexion.py  # banner, tarjetas oscurecidas, Inicio local, búsqueda local, descargas pendientes
-python dev_tools/prueba_consumo.py       # sesión web compartida, límite de memoria, tareas pesadas, equipo modesto
-python dev_tools/prueba_comodidad.py     # deshacer, papelera, arrastrar y soltar, teclado, pegar enlaces, alto contraste
-python dev_tools/prueba_reproductor.py   # volumen igualado, temporizador, velocidad, tramo, fundido, control multimedia
-python dev_tools/prueba_biblioteca.py    # repetidas, etiquetas, listas automáticas, selección múltiple, reordenar
-python dev_tools/prueba_descargas.py     # versión correcta, reintentos, carpetas, cola con pausa, espacio, actualización de yt-dlp
-python dev_tools/prueba_sincronizar.py   # tiempos de la letra (con una sincronización real si hay reconocedor de voz)
-python dev_tools/prueba_letras.py        # letras: artista, propias/generadas, estados de las frases
-python dev_tools/prueba_filas.py         # filas estilo Spotify, menú, panel «En reproducción», ecualizador
-python dev_tools/prueba_interfaz.py      # ventanas internas, búsqueda, álbumes, orden, vigilancia de la carpeta...
-python dev_tools/prueba_listas.py        # listas, artistas, sin recargas
-python dev_tools/prueba_detalles.py      # fechas «añadida», rueda lateral, géneros, ventanas sueltas
-python dev_tools/prueba_fundido.py       # aleatorio coherente y fundido cruzado con dos reproductores (audio real)
-python dev_tools/prueba_animaciones.py   # niveles de movimiento, reposo, efectos, controles, avisos, visualizador, Windows
-python dev_tools/prueba_actualizar.py    # actualización desde GitHub: huella, instalación (se ejecuta de verdad) y botón azul
-python dev_tools/ejecutar_pruebas.py     # todas las pruebas seguidas (código de salida 1 si alguna falla)
-python dev_tools/prueba_calidad.py      # M3U, limpieza de títulos, modo privado, acceso a YouTube, ajustes nuevos
-python dev_tools/prueba_robustez.py     # JSON a la vez/estropeados, favoritos, copias, enlaces, biblioteca, descargas, una sola copia
-python dev_tools/prueba_palabras.py      # karaoke por palabras: tiempos, reparto, guardado y barrido por píxeles
-python dev_tools/prueba_letra_cambio.py  # la letra del panel se ve al cambiar de canción (abre una ventana real un momento)
+python pruebas/prueba_base.py          # datos fuera del programa, copia de seguridad, espacio, sesión, ayuda y recorrido
+python pruebas/prueba_sin_conexion.py  # banner, tarjetas oscurecidas, Inicio local, búsqueda local, descargas pendientes
+python pruebas/prueba_consumo.py       # sesión web compartida, límite de memoria, tareas pesadas, equipo modesto
+python pruebas/prueba_comodidad.py     # deshacer, papelera, arrastrar y soltar, teclado, pegar enlaces, alto contraste
+python pruebas/prueba_reproductor.py   # volumen igualado, temporizador, velocidad, tramo, fundido, control multimedia
+python pruebas/prueba_biblioteca.py    # repetidas, etiquetas, listas automáticas, selección múltiple, reordenar
+python pruebas/prueba_descargas.py     # versión correcta, reintentos, carpetas, cola con pausa, espacio, actualización de yt-dlp
+python pruebas/prueba_sincronizar.py   # tiempos de la letra (con una sincronización real si hay reconocedor de voz)
+python pruebas/prueba_letras.py        # letras: artista, propias/generadas, estados de las frases
+python pruebas/prueba_filas.py         # filas estilo Spotify, menú, panel «En reproducción», ecualizador
+python pruebas/prueba_interfaz.py      # ventanas internas, búsqueda, álbumes, orden, vigilancia de la carpeta...
+python pruebas/prueba_listas.py        # listas, artistas, sin recargas
+python pruebas/prueba_detalles.py      # fechas «añadida», rueda lateral, géneros, ventanas sueltas
+python pruebas/prueba_fundido.py       # aleatorio coherente y fundido cruzado con dos reproductores (audio real)
+python pruebas/prueba_animaciones.py   # niveles de movimiento, reposo, efectos, controles, avisos, visualizador, Windows
+python pruebas/prueba_actualizar.py    # actualización desde GitHub: huella, instalación (se ejecuta de verdad) y botón azul
+python pruebas/ejecutar_pruebas.py     # todas las pruebas seguidas (código de salida 1 si alguna falla)
+python pruebas/prueba_calidad.py      # M3U, limpieza de títulos, modo privado, acceso a YouTube, ajustes nuevos
+python pruebas/prueba_robustez.py     # JSON a la vez/estropeados, favoritos, copias, enlaces, biblioteca, descargas, una sola copia
+python pruebas/prueba_palabras.py      # karaoke por palabras: tiempos, reparto, guardado y barrido por píxeles
+python pruebas/prueba_letra_cambio.py  # la letra del panel se ve al cambiar de canción (abre una ventana real un momento)
 ```
 
 ## Solución de problemas
@@ -390,10 +409,10 @@ python dev_tools/prueba_letra_cambio.py  # la letra del panel se ve al cambiar d
 
 ## Publicar una versión
 
-1. Sube el número en `version.py`, añade la sección en `CHANGELOG.md` y actualiza «Versión actual» arriba.
+1. Sube el número en `src/version.py`, añade la sección en `docs/CHANGELOG.md` y actualiza «Versión actual» arriba.
 2. `git commit`, `git tag -a vX.Y.Z -m "..."` y `git push origin HEAD --tags`.
 3. GitHub Actions (`.github/workflows/release.yml`) compila el `.exe` en Windows, lo comprueba con `--selftest` y
-   publica la versión con el `.zip` adjunto y las notas sacadas del `CHANGELOG.md`.
+   publica la versión con el `.zip` adjunto y las notas sacadas de `docs/CHANGELOG.md`.
 
 ## Créditos y licencias de terceros
 

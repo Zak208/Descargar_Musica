@@ -2,6 +2,7 @@
 [tool.ruff]
 line-length = 140
 target-version = "py312"
+src = ["src"]
 extend-exclude = ["venv", "dist_app", "dist_nuevo", "build_tmp", "app_data"]
 
 [tool.ruff.lint]
@@ -16,8 +17,10 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"dev_tools/*" = ["F401", "E402", "B", "SIM", "UP", "C4"]
-"main.py" = ["E402"]
+"pruebas/*" = ["F401", "E402", "B", "SIM", "UP", "C4"]
+"empaquetado/*" = ["F401", "E402", "B", "SIM", "UP", "C4"]
+"src/main.py" = ["E402"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["pruebas"]
+python_files = ["test_*.py"]

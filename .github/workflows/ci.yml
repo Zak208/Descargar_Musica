@@ -28,9 +28,9 @@ jobs:
           pip install -r requirements.txt ruff
 
       - name: Análisis del código (ruff)
-        run: ruff check ui services config.py main.py version.py
+        run: ruff check src
 
       - name: Pruebas automáticas
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python dev_tools/ejecutar_pruebas.py
+        run: python pruebas/ejecutar_pruebas.py

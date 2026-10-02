@@ -34,4 +34,4 @@ Thumbs.db
 app.lock
 *.corrupto-*
 *.restaurando
-installer/Output/
+/Descargador_Musica-Setup-*.exe

@@ -32,23 +32,23 @@ jobs:
       - name: Instalar dependencias
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements-build.txt ruff
+          pip install -r empaquetado/requirements-build.txt ruff
 
       - name: Comprobar que la etiqueta coincide con version.py
         if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
         run: |
-          $ver = (Select-String -Path version.py -Pattern '__version__ = "([^"]+)"').Matches[0].Groups[1].Value
+          $ver = (Select-String -Path src/version.py -Pattern '__version__ = "([^"]+)"').Matches[0].Groups[1].Value
           $tag = "${{ github.ref_name }}".TrimStart("v")
           if ($ver -ne $tag) { throw "La etiqueta ($tag) no coincide con version.py ($ver): la actualización automática entraría en bucle" }
 
       - name: Revisar el código (ruff)
         run: |
-          python -m compileall -q ui services config.py main.py version.py
-          ruff check ui services config.py main.py version.py
+          python -m compileall -q src
+          ruff check src
 
       - name: Compilar
-        run: python -m PyInstaller --noconfirm --distpath dist_app --workpath build_tmp Descargar_Musica.spec
+        run: python -m PyInstaller --noconfirm --distpath dist_app --workpath build_tmp empaquetado/Descargar_Musica.spec
 
       - name: Comprobar el programa compilado
         shell: pwsh
@@ -66,7 +66,7 @@ jobs:
       - name: Empaquetar
         shell: pwsh
         run: |
-          $ver = (Select-String -Path version.py -Pattern '__version__ = "([^"]+)"').Matches[0].Groups[1].Value
+          $ver = (Select-String -Path src/version.py -Pattern '__version__ = "([^"]+)"').Matches[0].Groups[1].Value
           $zip = "Descargar_Musica-v$ver-windows.zip"
           Compress-Archive -Path "dist_app\Descargar_Musica" -DestinationPath $zip
           # huella SHA-256 publicada junto al .zip: la aplicación la comprueba antes de actualizarse sola
@@ -85,14 +85,13 @@ jobs:
             choco install innosetup -y --no-progress
             $path = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           }
-          & $path "/DAppVersion=$env:VERSION" installer\Descargador.iss
+          & $path "/DAppVersion=$env:VERSION" empaquetado\Descargador.iss      # deja Descargador_Musica-Setup-vX.Y.Z.exe en la carpeta principal
           if ($LASTEXITCODE -ne 0) { throw "No se pudo crear el instalador" }
-          Move-Item "installer\Output\Descargador_Musica-Setup-v$env:VERSION.exe" .
 
       - name: Notas de esta versión
         shell: pwsh
         run: |
-          $text = Get-Content CHANGELOG.md -Raw
+          $text = Get-Content docs/CHANGELOG.md -Raw
           $m = [regex]::Match($text, "(?s)## $([regex]::Escape($env:VERSION))\r?\n(.*?)(\r?\n## |\z)")
           $notes = if ($m.Success) { $m.Groups[1].Value.Trim() } else { "Versión $env:VERSION" }
           Set-Content -Path release_notes.md -Value $notes -Encoding utf8
