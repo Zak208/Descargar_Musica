@@ -5,7 +5,7 @@ import logging
 import subprocess
 
 from PySide6.QtCore import (
-    Qt, QUrl, QSize, QThread, QTimer, Signal, QPropertyAnimation, QEasingCurve, QObject, QEvent
+    Qt, QUrl, QSize, QThread, QTimer, Signal, QPropertyAnimation, QEasingCurve, QObject, QEvent, QByteArray, QProcess
 )
 from PySide6.QtGui import QPixmap, QImage, QIcon, QDesktopServices
 from PySide6.QtWidgets import (
@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput, QMediaDevices
 
 from config import (
-    get_download_dir, set_download_dir, set_audio_quality, get_theme, set_theme
+    get_download_dir, set_download_dir, set_audio_quality, get_theme, set_theme, load_settings, save_settings
 )
 from services.youtube_service import (
     PreviewAudioWorker, is_youtube_url
@@ -36,6 +36,7 @@ from ui.lists_mixin import ListsMixin
 from ui.home_mixin import HomeMixin
 from ui.search_mixin import SearchMixin
 from ui.downloads_mixin import DownloadsMixin
+from ui.offline_mixin import OfflineMixin
 from ui.artist_page import ArtistProfilePage
 from ui.album_page import AlbumDetailsPage
 from ui.list_page import ListPage
@@ -48,7 +49,8 @@ from ui.topbar import TopBar
 from ui.downloads_panel import DownloadsTracker, DownloadsPanel
 from ui.animations import pop_icon
 from ui.dialogs import ask_text, ask_confirm, show_message
-from ui.imageloader import prune_disk_cache
+from ui.imageloader import prune_disk_cache, clear_memory_cache
+from ui import perf
 from ui.friendly import friendly_error
 from ui.common import resource_path
 from ui.song_card import SongResultCard, square_cover
@@ -59,10 +61,14 @@ from ui.home_page import build_home_page
 from ui.player_bar import build_player_bar
 from ui.lyrics_dialog import LyricsDialog
 from ui.lyrics_editor import LyricsEditorDialog
-from services import lyrics_store, transcribe_service
+from services import lyrics_store, transcribe_service, session_service, backup_service
+from services import http as web
 from ui.metadata_dialog import MetadataDialog
 from ui.equalizer_dialog import EqualizerDialog
 from ui.queue_dialog import QueueDialog
+from ui.help_dialog import HelpDialog
+from ui.tour import TourOverlay
+from ui.welcome import WelcomeDialog
 
 class ThemeEventFilter(QObject):
     """Adapta al tema activo los estilos en línea (colores fijos) de cada widget cuando se muestra.
@@ -91,9 +97,10 @@ class FFmpegDownloadWorker(QThread):
             self.finished_signal.emit(False)
 
 
-class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin, DownloadsMixin):
+class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin, DownloadsMixin, OfflineMixin):
     def __init__(self):
         super().__init__()
+        web.warm_up()          # prepara en segundo plano la conexión segura compartida (ahorra CPU en cada petición)
         self.setWindowTitle(f"Descargador de Música {__version__}")
         self.setWindowIcon(QIcon(resource_path("assets/logo.jpg")))
         self.resize(1360, 860)
@@ -128,6 +135,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
 
         # Historial, contexto de reproducción y biblioteca (ver playback_mixin / lists_mixin)
         self.init_playback_state()
+        self.init_offline_state()
         self.init_lists_state()
         self.init_home_state()
         self.init_search_state()
@@ -156,6 +164,22 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self._download_info_reset.setSingleShot(True)
         self._download_info_reset.timeout.connect(self.update_header_info)
         self.init_ui()
+        self.restore_geometry_early()
+        self._reload_pending_keys()
+        if self.is_offline():                       # por si se abre ya sin conexión (o con el modo sin conexión activado)
+            QTimer.singleShot(0, lambda: self._on_connectivity(False))
+        else:
+            QTimer.singleShot(7000, self.resume_pending_downloads)
+        self._session_timer = QTimer(self)             # mientras suena algo, se apunta el punto en que va (cada 20 s)
+        self._session_timer.setInterval(20000)
+        self._session_timer.timeout.connect(lambda: self.player_bar.isVisible() and self.save_session())
+        self._session_timer.start()
+        QTimer.singleShot(8000, backup_service.auto_backup_if_due)
+        QTimer.singleShot(25000, perf.trim_memory)       # tras el arranque se devuelve a Windows lo que sobra
+        self._trim_timer = QTimer(self)                   # y cada 10 minutos mientras no se esté usando
+        self._trim_timer.setInterval(600_000)
+        self._trim_timer.timeout.connect(self._trim_if_idle)
+        self._trim_timer.start()
         self.check_ffmpeg_and_update()
         QTimer.singleShot(0, self._fit_minimum_size)
         QTimer.singleShot(150, self.rescan_library)          # lee la biblioteca en segundo plano
@@ -188,6 +212,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self.content_layout.setContentsMargins(28, 22, 28, 20)
         self.content_layout.setSpacing(18)
         self.top_hbox.addWidget(self.content_widget, stretch=1)
+        self.build_offline_banner(self.content_layout)
 
         # Panel lateral derecho «En reproducción» (oculto hasta que se abre desde la barra de reproducción)
         self.now_panel = NowPlayingPanel(self)
@@ -515,6 +540,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         else:
             for w in extras:
                 w.setVisible(True)
+            self.visualizer.setVisible(self.visualizer.enabled)
             self.info_widget.setMaximumWidth(280)
             self.seek_slider.setMaximumWidth(560)
             self.topbar.setVisible(True)
@@ -544,10 +570,27 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self.rescan_library()
 
     def changeEvent(self, event):
-        """Al volver a la ventana, si hay un enlace de YouTube/Spotify copiado, lo ofrece en el buscador."""
+        """Al volver a la ventana, si hay un enlace de YouTube/Spotify copiado, lo ofrece en el buscador.
+        Minimizada, la aplicación deja de animar y libera memoria."""
         if event.type() == QEvent.ActivationChange and self.isActiveWindow():
             self._suggest_clipboard_link()
+        elif event.type() == QEvent.WindowStateChange:
+            self._set_background(self.isMinimized())
         super().changeEvent(event)
+
+    def _set_background(self, background: bool):
+        self._in_background = background
+        if hasattr(self, "visualizer"):
+            self.visualizer.set_window_active(not background)
+        if background:
+            QTimer.singleShot(45_000, self._trim_if_idle)      # si sigue minimizada, se libera memoria
+        else:
+            self.update_position(self.player.position())
+
+    def _trim_if_idle(self):
+        if getattr(self, "_in_background", False) or not self.isActiveWindow():
+            clear_memory_cache()
+            perf.trim_memory()
 
     def _suggest_clipboard_link(self):
         try:
@@ -588,6 +631,57 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
     def open_settings(self):
         self.settings_dialog.refresh_download_dir()
         self.settings_dialog.exec()
+
+    def open_help(self):
+        if getattr(self, "help_dialog", None) is None:
+            self.help_dialog = HelpDialog(self)
+        self.help_dialog.exec()
+
+    def restart_app(self):
+        """Cierra y vuelve a abrir la aplicación (por ejemplo, tras restaurar una copia de seguridad)."""
+        args = [] if getattr(sys, "frozen", False) else list(sys.argv)
+        QProcess.startDetached(sys.executable, args)
+        self.close()
+        QApplication.quit()
+
+    # ---------- primer uso y recorrido ----------
+    def maybe_show_welcome(self):
+        """Solo la primera vez que alguien abre la aplicación sin datos: asistente de 3 pasos y recorrido."""
+        settings = load_settings()
+        if settings.get("first_run_done"):
+            return
+        has_data = bool(settings.get("theme") or settings.get("quality") or settings.get("download_dir")
+                        or self.library_items() or PlaylistService.get_playlists() or PlaylistService.get_favorites())
+        settings["first_run_done"] = True       # se marca antes: así nunca se repite, aunque algo falle
+        save_settings(settings)
+        if has_data:
+            return
+        dlg = WelcomeDialog(self)
+        dlg.exec()
+        if dlg.start_tour:
+            self.start_tour()
+
+    def start_tour(self):
+        """Recorrido guiado: resalta cada parte de la aplicación y la explica en una burbuja."""
+        steps = [
+            (lambda: self.topbar.search, "Busca aquí",
+             "Escribe una canción, un artista o un álbum. También puedes pegar un enlace de YouTube o Spotify."),
+            (lambda: self.btn_nav_library, "Tu biblioteca",
+             "Aquí están tus listas y los artistas que sigues. Con el «+» creas una lista nueva."),
+            (lambda: self.btn_nav_home, "Inicio",
+             "Te recomienda música parecida a la que ya tienes y te deja volver a lo último que escuchaste."),
+            (lambda: self.topbar.btn_downloads, "Descargas",
+             "Aquí ves lo que se está descargando ahora mismo."),
+            (None, "Cuando suene una canción",
+             "Abajo verás los controles. El «+» la guarda en tus listas, el micrófono muestra la letra y el botón de "
+             "panel abre «En reproducción» con la portada, la letra y la información del artista."),
+            (lambda: self.btn_nav_settings, "Ajustes",
+             "Cambia la calidad, la carpeta, los colores, libera espacio o haz una copia de seguridad."),
+            (lambda: self.btn_nav_help, "Ayuda",
+             "Si algo no va bien o quieres repetir este recorrido, lo encuentras aquí."),
+        ]
+        self.tour = TourOverlay(self, steps)
+        self.tour.start()
 
     def on_quality_changed(self):
         selected_code = self.quality_combo.currentData()
@@ -797,6 +891,9 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             else:
                 self.notify("No encontramos ese archivo. Puede que lo hayas movido o borrado.")
             return
+        if self.is_offline():
+            self.notify("Sin conexión: esta canción no está descargada.")
+            return
 
         url = item_info['url']
         title = item_info.get('title', 'Desconocido')
@@ -890,8 +987,9 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
                 return
             self.rescan_library()
 
-    def play_local_file(self, path: str):
-        """Reproduce un audio local (desde la biblioteca lateral o las tarjetas de inicio)."""
+    def play_local_file(self, path: str, autoplay: bool = True, start_ms: int = 0):
+        """Reproduce un audio local (desde la biblioteca lateral o las tarjetas de inicio).
+        Con autoplay=False solo lo deja cargado y en pausa (en el punto start_ms)."""
         if not path or not os.path.isfile(path):
             return
         if not path.lower().endswith(('.mp3', '.m4a', '.wav', '.flac', '.ogg', '.wma')):
@@ -915,7 +1013,8 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self.player_title.setText(title)
         self.player_artist.setText(artist)
         self.update_player_heart_icon()
-        self.notify_track_changed(title, artist)
+        if autoplay:
+            self.notify_track_changed(title, artist)
         self._refresh_lyrics_if_open()
         self._on_track_changed()
 
@@ -928,18 +1027,103 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         else:
             self.player_thumb.setPixmap(QPixmap(resource_path(os.path.join("assets", "icons", "music.svg"))).scaled(48, 48, Qt.KeepAspectRatio, Qt.SmoothTransformation))
 
-        self.player_status.setText("Reproduciendo")
+        self.player_status.setText("Reproduciendo" if autoplay else "Pausado")
         self.btn_play_pause.setEnabled(True)
 
         self._current_audio_device = QMediaDevices.defaultAudioOutput()
         self.audio_output.setDevice(self._current_audio_device)
         self.player.setSource(QUrl.fromLocalFile(path))
-        self.player.play()
+        if autoplay:
+            self.player.play()
+        else:
+            self.player.pause()
+            if start_ms > 0:
+                self._seek_when_loaded(start_ms)
 
         # Ecualizador: se empieza con el original y se cambia a la versión ajustada cuando está lista
         self._eq_source_path = path
         self._eq_active_render = None
         self._apply_eq_if_needed()
+
+    def _seek_when_loaded(self, ms: int):
+        """Coloca la canción en `ms` en cuanto el reproductor la tiene cargada (sin hacerla sonar)."""
+        def on_status(status):
+            if status in (QMediaPlayer.LoadedMedia, QMediaPlayer.BufferedMedia):
+                try:
+                    self.player.mediaStatusChanged.disconnect(on_status)
+                except (RuntimeError, TypeError):
+                    pass
+                self.player.setPosition(ms)
+        self.player.mediaStatusChanged.connect(on_status)
+
+    # ---------- seguir donde lo dejaste ----------
+    def _session_snapshot(self) -> dict:
+        data = {
+            "volume": self.volume_slider.value(),
+            "shuffle": self.is_shuffle_enabled,
+            "loop": self.is_loop_enabled,
+            "panel_open": self.now_panel.isVisible() or (self.is_mini_mode and getattr(self, "_panel_was_open", False)),
+            "page": self.stacked_widget.currentIndex(),
+            "list": list(self._current_list) if self._current_list and self.stacked_widget.currentIndex() == 4 else None,
+        }
+        if not self.is_mini_mode:
+            data["geometry"] = bytes(self.saveGeometry().toBase64()).decode("ascii")
+        info = self.current_item_info
+        if info and info.get("local_path") and self.player_bar.isVisible():
+            data["track"] = info["local_path"]
+            data["position"] = int(self.player.position())
+            data["context"] = session_service.local_paths(self._context, session_service.MAX_CONTEXT)
+            data["queue"] = session_service.local_paths(self.playback_queue, session_service.MAX_QUEUE)
+        return data
+
+    def save_session(self):
+        if not getattr(self, "_session_restored", False):
+            return      # aún no se leyó la sesión anterior: no se debe pisar
+        try:
+            session_service.save(self._session_snapshot())
+        except Exception as e:
+            logging.warning(f"No se pudo guardar la sesión: {e}")
+
+    def restore_geometry_early(self):
+        """Tamaño y posición de la ventana de la última vez (antes de mostrarla)."""
+        geo = session_service.load().get("geometry")
+        if geo:
+            try:
+                self.restoreGeometry(QByteArray.fromBase64(geo.encode("ascii")))
+            except Exception:
+                pass
+
+    def restore_session(self):
+        """Vuelve a poner el volumen y la canción que sonaba (en pausa, en el punto en que iba) y su cola."""
+        if getattr(self, "_session_restored", False):
+            return
+        self._session_restored = True      # a partir de aquí ya se puede guardar la sesión sin pisar la anterior
+        data = session_service.load()
+        if not data:
+            return
+        try:
+            if "volume" in data:
+                self.volume_slider.setValue(max(0, min(100, int(data["volume"]))))
+            if data.get("shuffle") and not self.is_shuffle_enabled:
+                self.toggle_shuffle()
+            if data.get("loop") and not self.is_loop_enabled:
+                self.toggle_loop()
+            self._panel_user_closed = not data.get("panel_open", True)
+            by_path = {it["local_path"]: it for it in self.library_items()}
+            as_items = lambda paths: [by_path[p] for p in paths if p in by_path]
+            track = data.get("track")
+            if track and os.path.isfile(track):
+                self.set_context(as_items(data.get("context", [])))
+                self.playback_queue = as_items(data.get("queue", []))
+                self._resume_pending = True
+                self.play_local_file(track, autoplay=False, start_ms=int(data.get("position", 0) or 0))
+            lst = data.get("list")
+            if lst and self.stacked_widget.currentIndex() == 0:
+                self.open_list(lst[0], lst[1])
+            elif data.get("page") == 5 and self.stacked_widget.currentIndex() == 0:
+                self.open_library()
+        except Exception as e:
+            logging.warning(f"No se pudo restaurar la sesión: {e}")
 
     # ---------- ayudas de reproducción ----------
     @staticmethod
@@ -1107,6 +1291,10 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self._apply_eq_if_needed()
 
     def update_position(self, position_ms):
+        if getattr(self, "_in_background", False):
+            dlg = self.lyrics_dialog
+            if not (dlg is not None and dlg.isVisible()):
+                return          # minimizada: no hace falta mover la barra ni la letra
         self.is_updating_seek = True
         try:
             if not self.seek_slider.isSliderDown():
@@ -1246,6 +1434,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
 
     def closeEvent(self, event):
         logging.info("Cerrando aplicación...")
+        self.save_session()
 
         if hasattr(self, 'catalog_worker') and self.catalog_worker and self.catalog_worker.isRunning():
             self.catalog_worker.is_cancelled = True

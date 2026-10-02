@@ -1,5 +1,7 @@
 """Descargas: listas y álbumes en paralelo, descargas sueltas, información de la barra superior y 'álbum como lista'."""
 from config import get_download_dir, get_audio_quality, get_parallel_downloads
+from services import pending_downloads
+from services.network_service import is_network_error
 from services.playlist_service import PlaylistService
 from services.youtube_service import DownloadWorker
 from ui.common import _ACTIVE_THREADS
@@ -46,12 +48,18 @@ class DownloadsMixin:
         self.topbar.set_info(f"{n} canciones en tu música" if n != 1 else "1 canción en tu música")
 
     # ------------------------------------------------------------- lotes
-    def start_batch_download(self, items: list):
-        """Descarga varias canciones a la vez (hasta 3 en paralelo)."""
+    def start_batch_download(self, items: list, from_pending: bool = False):
+        """Descarga varias canciones a la vez (hasta 3 en paralelo). Sin conexión quedan pendientes."""
         self.batch_queue = [item for item in items if not item.get('already_downloaded')
                             and not self.resolve_local(item)]
         if not self.batch_queue:
-            self.notify("Ya tienes todas estas canciones descargadas.")
+            if not from_pending:
+                self.notify("Ya tienes todas estas canciones descargadas.")
+            return
+        if self.is_offline():
+            n = self.queue_download(self.batch_queue)
+            self.batch_queue = []
+            self.notify(f"Sin conexión: {len(items)} canciones quedan pendientes y se descargarán cuando vuelva internet.")
             return
 
         self.batch_total = len(self.batch_queue)
@@ -84,14 +92,29 @@ class DownloadsMixin:
 
     def on_parallel_worker_finished(self, result: dict, worker):
         _ACTIVE_THREADS.discard(worker)
+        self._settle_pending(result, worker.item_info)
         self.batch_active_workers -= 1
         self.batch_completed_count += 1
         self.batch_banner_label.setText(f"Descargando… {self.batch_completed_count} de {self.batch_total}")
         self.download_next_parallel_worker()   # la biblioteca se actualiza una sola vez, al terminar el lote
 
     # ------------------------------------------------ canciones sueltas
+    def _settle_pending(self, result: dict, info: dict):
+        """Si se descargó, deja de estar pendiente; si falló por falta de internet, queda pendiente."""
+        if result.get("success"):
+            pending_downloads.remove(info)
+            self._reload_pending_keys()
+        elif is_network_error(result.get("error")):
+            self.queue_download(info)
+
     def quick_download(self, info: dict, on_done=None):
-        """Descarga una canción directamente (sin pasar por la lista de resultados)."""
+        """Descarga una canción directamente (sin pasar por la lista de resultados). Sin conexión queda pendiente."""
+        if self.is_offline():
+            self.queue_download(info)
+            self.notify(f"Sin conexión: «{info.get('title', 'canción')}» se descargará cuando vuelva internet.")
+            if on_done is not None:
+                on_done({"success": False, "queued": True})
+            return
         worker = DownloadWorker(info, str(get_download_dir()), get_audio_quality())
         self.downloads.track(worker, info)
         _ACTIVE_THREADS.add(worker)
@@ -101,6 +124,7 @@ class DownloadsMixin:
 
     def _quick_download_done(self, result: dict, worker, info: dict, callback=None):
         _ACTIVE_THREADS.discard(worker)
+        self._settle_pending(result, info)
         if result.get("success"):
             self.notify(f"«{info.get('title', 'Canción')}» descargada")
             self.refresh_sidebar_library()

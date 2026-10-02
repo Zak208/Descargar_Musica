@@ -16,7 +16,11 @@ from ui.loading import LoadingBlock
 from ui.overlay import InlineDialog
 from ui.track_row import TrackRow, IDX_COL, ROW_COVER, ALBUM_COL, DATE_COL, ICON_COL, DUR_COL, ROW_SPACING
 
-KIND_TITLES = {"favorites": "LISTA", "downloads": "LISTA", "playlist": "PLAYLIST", "mix": "MIX PARA TI", "genre": "GÉNERO"}
+KIND_TITLES = {"favorites": "LISTA", "downloads": "LISTA", "playlist": "PLAYLIST", "mix": "MIX PARA TI", "genre": "GÉNERO",
+               "localmix": "MIX DE TU MÚSICA", "smart": "LISTA AUTOMÁTICA", "artist_local": "TUS CANCIONES DE",
+               "album_local": "ÁLBUM EN TU MÚSICA"}
+LOCAL_KINDS = ("downloads", "artist_local", "album_local", "localmix", "smart")   # solo tienen canciones descargadas
+TAB_KINDS = ("favorites", "playlist", "mix", "genre")                              # listas con «Todas / Descargadas / Sin descargar»
 
 # Formas de ordenar una lista (clave -> texto del menú)
 SORT_OPTIONS = {
@@ -402,6 +406,12 @@ class ListPage(QWidget):
         self.empty_lbl.setAlignment(Qt.AlignCenter)
         self.empty_lbl.setStyleSheet("padding: 40px 0px; font-size: 14px;")
         self.content_layout.addWidget(self.empty_lbl)
+        self.empty_btn = QPushButton("")
+        self.empty_btn.setObjectName("GiantActionBtn")
+        self.empty_btn.setCursor(Qt.PointingHandCursor)
+        self.empty_btn.clicked.connect(self._empty_action)
+        self.content_layout.addWidget(self.empty_btn, alignment=Qt.AlignHCenter)
+        self.empty_btn.setVisible(False)
 
         self.tracks_widget = QWidget()
         self.tracks_container = QVBoxLayout(self.tracks_widget)
@@ -434,8 +444,10 @@ class ListPage(QWidget):
 
     def _apply_header(self, kind: str, list_id, name: str):
         """Cabecera de la lista: portada, colores y título. Solo repinta lo que cambió."""
-        if kind == "mix":
+        if kind in ("mix", "localmix"):
             c1 = MIX_COLORS[int(list_id or 0) % len(MIX_COLORS)][0]
+        elif kind in ("artist_local", "album_local", "smart"):
+            c1 = MIX_COLORS[sum(ord(ch) for ch in str(list_id)) % len(MIX_COLORS)][0]
         elif kind == "genre":
             c1 = GENRE_COLORS[int(list_id or 0) % len(GENRE_COLORS)]
         else:
@@ -456,8 +468,8 @@ class ListPage(QWidget):
             self.title_lbl.setText(name)
         self.btn_add.setVisible(kind == "playlist")
         self.btn_more.setVisible(kind == "playlist")
-        self.btn_save.setVisible(kind in ("mix", "genre"))
-        self.tabs_box.setVisible(kind == "favorites")
+        self.btn_save.setVisible(kind in ("mix", "genre", "localmix", "smart", "artist_local", "album_local"))
+        self.tabs_box.setVisible(kind in TAB_KINDS)
 
     def load(self, kind: str, list_id, name: str, tracks: list):
         """Abre una lista desde cero (al navegar a ella). Muestra primero una animación de carga."""
@@ -468,7 +480,8 @@ class ListPage(QWidget):
         self.search.blockSignals(True)
         self.search.clear()
         self.search.blockSignals(False)
-        self.tab = "all"
+        # sin conexión se empieza viendo solo lo descargado (lo demás está apagado)
+        self.tab = "downloaded" if (kind in TAB_KINDS and self.window_ref.is_offline()) else "all"
         self.sort_key, self.sort_desc = ("added", True) if kind in ("favorites", "downloads") else ("custom", False)
         self._materialized = ROW_BATCH
         self._clear_cards()
@@ -507,7 +520,7 @@ class ListPage(QWidget):
     # ------------------------------------------------------ orden y filtros
     def _visible_items(self) -> list:
         items = self.items
-        if self.kind == "favorites":
+        if self.kind in TAB_KINDS:
             if self.tab == "downloaded":
                 items = [i for i in items if i.get("local_path")]
             elif self.tab == "pending":
@@ -519,6 +532,12 @@ class ListPage(QWidget):
         if self.sort_key != "custom" or self.sort_desc:
             items = sorted(items, key=lambda i: _sort_value(self.sort_key, i), reverse=self.sort_desc)
         return items
+
+    def on_connectivity(self, offline: bool):
+        """Al perder (o recuperar) la conexión, la lista pasa a mostrar solo lo descargado (o vuelve a mostrar todo)."""
+        if self.kind in TAB_KINDS:
+            self.tab = "downloaded" if offline else "all"
+            self._materialized = ROW_BATCH
 
     def set_tab(self, key: str):
         self.tab = key
@@ -639,7 +658,7 @@ class ListPage(QWidget):
         total = len(self.items)
         downloaded = sum(1 for i in self.items if i.get("local_path"))
         pending = total - downloaded
-        if self.kind == "favorites":
+        if self.kind in TAB_KINDS:
             self.tab_buttons["all"].setText(f"Todas ({total})")
             self.tab_buttons["downloaded"].setText(f"Descargadas ({downloaded})")
             self.tab_buttons["pending"].setText(f"Sin descargar ({pending})")
@@ -649,13 +668,16 @@ class ListPage(QWidget):
         duration = format_total(sum(int(i.get("duration_secs", 0) or 0) for i in self.items))
         if duration:
             parts.append(duration)
-        if self.kind != "downloads":
-            parts.append(f"{downloaded} descargadas")
+        if self.kind not in LOCAL_KINDS:
+            parts.append(f"{downloaded} de {total} disponibles sin conexión" if self.window_ref.is_offline()
+                         else f"{downloaded} descargadas")
         self.meta_lbl.setText("  ·  ".join(parts))
         # En "Descargadas" no hay nada que descargar, así que el botón desaparece
-        hide_download = self.kind == "downloads" or (self.kind == "favorites" and self.tab == "downloaded")
+        hide_download = self.kind in LOCAL_KINDS or (self.kind in TAB_KINDS and self.tab == "downloaded")
         self.btn_download.setVisible(not hide_download)
         self.btn_download.setEnabled(pending > 0)
+        self.btn_download.setToolTip("Sin conexión: quedarán pendientes y se descargarán cuando vuelva internet"
+                                     if self.window_ref.is_offline() else "Descargar las canciones que aún no tienes")
         self.btn_play.setEnabled(bool(full))
         self.btn_shuffle.setEnabled(bool(full))
         self.columns.setVisible(bool(full))
@@ -663,15 +685,37 @@ class ListPage(QWidget):
         if not full and not loading:
             self.empty_lbl.setText(self._empty_message())
         self.empty_lbl.setVisible(not full and not loading)
+        label = self._empty_action_label() if (not full and not loading) else ""
+        self.empty_btn.setText(label)
+        self.empty_btn.setVisible(bool(label))
+
+    def _empty_action_label(self) -> str:
+        if self.search.text().strip():
+            return ""
+        if self.kind == "playlist":
+            return "Añadir canciones"
+        if self.kind in ("favorites", "downloads") and not self.raw_tracks:
+            return "Buscar música"
+        return ""
+
+    def _empty_action(self):
+        if self.kind == "playlist":
+            self.add_songs()
+        else:
+            self.window_ref.focus_search()
 
     def _empty_message(self) -> str:
         if self.search.text().strip():
             return "No hay canciones que coincidan con tu búsqueda."
+        if self.kind in TAB_KINDS and self.raw_tracks:       # la lista tiene canciones, pero el filtro no deja ninguna
+            if self.tab == "downloaded":
+                return ("Sin conexión: ninguna canción de esta lista está descargada."
+                        if self.window_ref.is_offline() else "Aún no tienes canciones descargadas en esta lista.")
+            return "Todas las canciones de esta lista están descargadas."
+        if self.kind in LOCAL_KINDS and self.kind != "downloads":
+            return "No hay canciones descargadas aquí todavía."
         if self.kind == "favorites":
-            if self.raw_tracks:
-                return ("Aún no tienes canciones descargadas entre tus favoritas."
-                        if self.tab == "downloaded" else "Todas tus canciones favoritas están descargadas.")
-            return "Aún no hay canciones aquí. Pulsa el corazón en cualquier canción para guardarla."
+            return "Aún no hay canciones aquí. Pulsa el «+» en cualquier canción para guardarla."
         if self.kind == "downloads":
             return "Todavía no has descargado música. Busca una canción y pulsa «Descargar»."
         return "Esta lista está vacía. Pulsa «Añadir canciones» para elegir entre tu música descargada."

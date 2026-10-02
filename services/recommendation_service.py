@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
 import requests
+from services import http
 from PySide6.QtCore import QThread, Signal
 
 from config import RECOMMENDATIONS_FILE, atomic_write_json
@@ -41,7 +42,7 @@ def primary_artist(name: str) -> str:
 
 def _get(url: str, **params) -> dict:
     try:
-        r = requests.get(url, params=params, timeout=8, headers={"User-Agent": "DescargadorMusica/1.0 (github.com/Zak208/Descargar_Musica)"})
+        r = http.get(url, params=params, timeout=8, headers={"User-Agent": "DescargadorMusica/1.0 (github.com/Zak208/Descargar_Musica)"})
         if r.status_code == 200:
             return r.json()
     except Exception as e:
@@ -415,11 +416,52 @@ class ArtistInfoWorker(QThread):
                     return text if len(text) <= 520 else text[:520].rsplit(" ", 1)[0] + "…"
         return ""
 
+    CACHE_DAYS = 30
+
+    @staticmethod
+    def _cache_path():
+        from config import APP_DATA_DIR
+        return APP_DATA_DIR / "artistas_info.json"
+
+    @classmethod
+    def _load_cache(cls) -> dict:
+        try:
+            with open(cls._cache_path(), "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    @classmethod
+    def _store(cls, key: str, info: dict):
+        try:
+            from config import atomic_write_json
+            cache = cls._load_cache()
+            cache[key] = dict(info, ts=time.time())
+            if len(cache) > 300:     # se conservan los 300 más recientes
+                for old in sorted(cache, key=lambda k: cache[k].get("ts", 0))[:len(cache) - 300]:
+                    cache.pop(old, None)
+            atomic_write_json(cls._cache_path(), cache)
+        except Exception:
+            pass
+
     def run(self):
+        from services import network_service
+        key = self.name.strip().lower()
+        cached = self._load_cache().get(key)
+        fresh = bool(cached) and time.time() - cached.get("ts", 0) < self.CACHE_DAYS * 86400
+        if cached and (fresh or not network_service.is_online()):
+            self.ready.emit({k: v for k, v in cached.items() if k != "ts"})     # al instante y sin internet
+            return
         info = {"name": self.name, "picture": "", "fans": 0, "bio": ""}
+        if not network_service.is_online():
+            self.ready.emit(info)
+            return
         artist = RecommendationWorker._find_artist(self.name)
         if artist:
             info["picture"] = artist.get("picture_big") or artist.get("picture_medium") or ""
             info["fans"] = int(artist.get("nb_fan", 0) or 0)
         info["bio"] = self._wikipedia(self.name)
+        if info["picture"] or info["bio"]:
+            self._store(key, info)
         self.ready.emit(info)

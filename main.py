@@ -2,6 +2,10 @@ import sys
 import os
 import multiprocessing
 
+if "--selftest" in sys.argv:     # la autocomprobación trabaja con datos temporales: nunca toca los del usuario
+    import tempfile
+    os.environ.setdefault("DESCARGADOR_DATA_DIR", tempfile.mkdtemp(prefix="descargador_selftest_"))
+
 from ui.common import hide_subprocess_windows
 hide_subprocess_windows()
 
@@ -28,7 +32,8 @@ if sys.stdin is None: sys.stdin = DummyStream()
 
 
 # Configurar logging a un archivo
-log_path = os.path.join(os.path.dirname(sys.executable if getattr(sys, 'frozen', False) else __file__), "app_descargas.log")
+from config import APP_DATA_DIR
+log_path = str(APP_DATA_DIR / "app_descargas.log")   # junto a tus datos (no en la carpeta del programa)
 from logging.handlers import RotatingFileHandler
 
 _handler = RotatingFileHandler(log_path, maxBytes=1_000_000, backupCount=2, encoding="utf-8")

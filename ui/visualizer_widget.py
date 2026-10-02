@@ -4,7 +4,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QPainter, QColor, QBrush
 from PySide6.QtWidgets import QWidget
 
-from ui.perf import eco
+from ui.perf import eco, visualizer_enabled
 
 
 class AudioVisualizerWidget(QWidget):
@@ -20,9 +20,13 @@ class AudioVisualizerWidget(QWidget):
         self.target_heights = [4.0] * num_bars
         self.is_playing = False
         self.phase = 0.0
+        self.enabled = visualizer_enabled()
+        self.paused_by_window = False       # ventana minimizada: no se anima
 
         self.setFixedSize(34, 22)
         self.setStyleSheet("background: transparent;")
+        if not self.enabled:
+            self.hide()
 
         self.timer = QTimer(self)
         self.timer.setInterval(100 if eco() else 45)
@@ -32,10 +36,26 @@ class AudioVisualizerWidget(QWidget):
         self.accent_color = QColor(hex_color)
         self.update()
 
+    def set_enabled(self, enabled: bool):
+        self.enabled = bool(enabled)
+        self.setVisible(self.enabled)
+        if not self.enabled:
+            self.timer.stop()
+        elif self.is_playing:
+            self.set_playing(True)
+
+    def set_window_active(self, active: bool):
+        """Con la ventana minimizada se detiene la animación (y se retoma al volver)."""
+        self.paused_by_window = not active
+        if not active:
+            self.timer.stop()
+        elif self.is_playing and self.enabled:
+            self.timer.start()
+
     def set_playing(self, playing: bool):
         self.is_playing = playing
         if playing:
-            if not self.timer.isActive():
+            if self.enabled and not self.paused_by_window and not self.timer.isActive():
                 self.timer.start()
         else:
             # Desvanecer barras al pausar

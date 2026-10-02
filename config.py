@@ -15,8 +15,58 @@ else:
 DEFAULT_MUSIC_DIR = Path(os.path.expanduser("~")) / "Music" / "Canciones_YouTube"
 DEFAULT_MUSIC_DIR.mkdir(parents=True, exist_ok=True)
 
-# Directorio de datos de la app (historial, configuración, ffmpeg portátil)
-APP_DATA_DIR = APP_DIR / "app_data"
+# Directorio de datos de la app (listas, ajustes, letras, cachés...).
+#   * Programa compilado (.exe): %APPDATA%\Descargador de Música  → actualizar o mover el .exe nunca borra tus datos.
+#   * Desde el código: la carpeta app_data del proyecto (como siempre).
+#   * La variable DESCARGADOR_DATA_DIR lo cambia (las pruebas automáticas la usan para no tocar tus datos).
+LEGACY_DATA_DIR = APP_DIR / "app_data"
+DATA_DIR_NAME = "Descargador de Música"
+
+
+def _resolve_data_dir() -> Path:
+    custom = os.environ.get("DESCARGADOR_DATA_DIR")
+    if custom:
+        return Path(custom)
+    if getattr(sys, 'frozen', False):
+        return Path(os.environ.get("APPDATA") or Path.home()) / DATA_DIR_NAME
+    return LEGACY_DATA_DIR
+
+
+def _migrate_legacy_data(new_dir: Path) -> None:
+    """Versiones anteriores guardaban los datos junto al .exe. La primera vez se pasan a la carpeta nueva
+    (lo pequeño se copia, lo pesado se mueve) y la carpeta antigua queda intacta."""
+    import shutil
+    old = LEGACY_DATA_DIR
+    if new_dir == old or not old.is_dir() or (new_dir / ".migrado").exists():
+        return
+    if any((new_dir / n).exists() for n in ("settings.json", "playlists.json", "favoritos.json")):
+        return
+    new_dir.mkdir(parents=True, exist_ok=True)
+    for child in old.iterdir():
+        target = new_dir / child.name
+        if target.exists():
+            continue
+        try:
+            if child.is_dir():
+                if child.name in ("whisper", "ffmpeg", "img_cache", "eq_cache"):
+                    shutil.move(str(child), str(target))
+                else:
+                    shutil.copytree(child, target)
+            else:
+                shutil.copy2(child, target)
+        except Exception:
+            pass
+    try:
+        (new_dir / ".migrado").write_text("Datos traídos de la carpeta del programa.", encoding="utf-8")
+    except OSError:
+        pass
+
+
+APP_DATA_DIR = _resolve_data_dir()
+try:
+    _migrate_legacy_data(APP_DATA_DIR)
+except Exception:
+    pass
 APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 COVERS_DIR = APP_DATA_DIR / "covers"
@@ -118,6 +168,9 @@ def set_theme(theme_name: str):
 def get_parallel_downloads() -> int:
     """Obtiene el número de descargas simultáneas en paralelo (por defecto 3)."""
     settings = load_settings()
-    return int(settings.get("parallel_downloads", 3))
+    if "parallel_downloads" in settings:
+        return int(settings["parallel_downloads"])
+    from ui.perf import default_parallel_downloads      # equipo modesto: de una en una
+    return default_parallel_downloads()
 
 

@@ -2,6 +2,7 @@ import re
 import json
 import logging
 import requests
+from services import http
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,7 @@ def get_spotify_track_info(url: str) -> dict | None:
         if not match:
             # Probar vía oEmbed
             oembed_url = f"https://open.spotify.com/oembed?url={url}"
-            r = requests.get(oembed_url, timeout=5)
+            r = http.get(oembed_url, timeout=5)
             if r.status_code == 200:
                 data = r.json()
                 title = data.get("title", "")
@@ -43,7 +44,7 @@ def get_spotify_track_info(url: str) -> dict | None:
         track_id = match.group(1)
         embed_url = f"https://open.spotify.com/embed/track/{track_id}"
         headers = {"User-Agent": "Mozilla/5.0"}
-        r = requests.get(embed_url, headers=headers, timeout=6)
+        r = http.get(embed_url, headers=headers, timeout=6)
         if r.status_code == 200:
             data_match = re.search(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', r.text)
             if data_match:
@@ -62,7 +63,7 @@ def get_spotify_track_info(url: str) -> dict | None:
                 if not thumb:
                     try:
                         oembed_url = f"https://open.spotify.com/oembed?url={url}"
-                        r_oe = requests.get(oembed_url, timeout=3)
+                        r_oe = http.get(oembed_url, timeout=3)
                         if r_oe.status_code == 200:
                             thumb = r_oe.json().get("thumbnail_url", "")
                     except Exception:
@@ -91,7 +92,7 @@ def get_spotify_collection_tracks(url: str) -> dict | None:
         embed_url = f"https://open.spotify.com/embed/{col_type}/{col_id}"
         headers = {"User-Agent": "Mozilla/5.0"}
 
-        r = requests.get(embed_url, headers=headers, timeout=8)
+        r = http.get(embed_url, headers=headers, timeout=8)
         if r.status_code != 200:
             return None
 

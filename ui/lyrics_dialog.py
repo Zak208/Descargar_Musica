@@ -225,7 +225,8 @@ class LyricsDialog(QDialog):
                 pass
         owner = self.parent()
         store_key = owner.lyrics_key() if owner is not None and hasattr(owner, "lyrics_key") else ""
-        self.worker = LyricsWorker(self.title, self.artist, store_key)
+        info = getattr(owner, "current_item_info", None) or {}
+        self.worker = LyricsWorker(self.title, self.artist, store_key, info.get("local_path") or "")
         self.worker.lyrics_ready.connect(lambda data, k=key: self.on_lyrics_loaded(data, k))
         self.worker.lyrics_error.connect(lambda msg, k=key: self.on_lyrics_error(msg, k))
         self.worker.start()

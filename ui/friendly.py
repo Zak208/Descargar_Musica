@@ -8,6 +8,11 @@ def friendly_error(raw) -> str:
     if any(k in text for k in ("getaddrinfo", "urlopen", "connection", "timed out", "timeout",
                                "network", "name or service", "temporary failure", "unreachable",
                                "max retries", "ssl")):
+        try:
+            from services import network_service
+            network_service.note_failure()      # comprueba si de verdad se perdió la conexión
+        except Exception:
+            pass
         return "No hay conexión a internet. Revisa tu conexión e inténtalo de nuevo."
     if any(k in text for k in ("private video", "unavailable", "removed", "not available",
                                "copyright", "blocked", "no longer available", "terminated")):

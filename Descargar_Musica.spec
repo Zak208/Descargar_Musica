@@ -4,8 +4,10 @@
 import os
 
 datas = [('config.py', '.'), ('services', 'services'), ('ui', 'ui'), ('assets', 'assets')]
-if os.path.isdir('bin'):   # ffmpeg.exe y ffprobe.exe (opcional: si no están, la app descarga ffmpeg la primera vez)
-    datas.append(('bin', 'bin'))
+# ffmpeg.exe (opcional: si no está, la app lo descarga la primera vez). ffprobe.exe NO se incluye: no hace falta
+# (las conversiones funcionan solo con ffmpeg) y ocupa unos 145 MB.
+if os.path.isfile('bin/ffmpeg.exe'):
+    datas.append(('bin/ffmpeg.exe', 'bin'))
 
 a = Analysis(
     ['main.py'],

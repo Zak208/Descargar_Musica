@@ -1,18 +1,20 @@
-"""Ventana de Ajustes: formato/calidad, destino de descargas, organización y tema visual."""
+"""Ventana de Ajustes: calidad, destino de descargas, espacio, copia de seguridad, rendimiento y tema visual."""
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox,
-    QFrame, QGridLayout, QCheckBox
+    QFrame, QGridLayout, QCheckBox, QScrollArea, QWidget, QFileDialog
 )
 
 from config import (
     get_download_dir, get_audio_quality
 )
+from services import backup_service, quality, storage_service
+from ui.dialogs import ask_confirm, show_message
 from ui.styles import THEME_CONFIGS
 from ui.icons import icon
 from version import __version__
 from ui.overlay import InlineDialog
-from ui.perf import eco, set_eco
+from ui.perf import eco, set_eco, visualizer_enabled, set_visualizer
 
 
 def _group(title: str, hint: str = "") -> tuple[QFrame, QVBoxLayout]:
@@ -32,35 +34,60 @@ def _group(title: str, hint: str = "") -> tuple[QFrame, QVBoxLayout]:
     return frame, lay
 
 
+def _button(text: str, icon_name: str | None = None) -> QPushButton:
+    b = QPushButton(" " + text if icon_name else text)
+    b.setObjectName("SidebarSecondaryBtn")
+    if icon_name:
+        b.setIcon(icon(icon_name))
+        b.setIconSize(QSize(16, 16))
+    b.setCursor(Qt.PointingHandCursor)
+    b.setMinimumHeight(36)
+    return b
+
+
 class SettingsDialog(InlineDialog):
     """Contenedor de los controles de ajustes. La ventana principal conecta sus señales."""
 
     def __init__(self, current_theme: str, parent=None):
         super().__init__(parent, auto_delete=False)
+        self.window_ref = parent
         self.setWindowTitle("Ajustes")
-        self.setMinimumWidth(560)
+        self.setMinimumWidth(600)
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(24, 22, 24, 22)
-        root.setSpacing(14)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(24, 22, 24, 22)
+        outer.setSpacing(12)
 
         header = QLabel("Ajustes")
         header.setObjectName("SectionTitle")
-        root.addWidget(header)
+        outer.addWidget(header)
+
+        # Los grupos van en una zona con desplazamiento: así la ventana nunca se sale de la pantalla
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setMinimumHeight(420)
+        scroll.setMaximumHeight(560)
+        body = QWidget()
+        body.setObjectName("SettingsBody")
+        body.setStyleSheet("#SettingsBody { background: transparent; }")
+        root = QVBoxLayout(body)
+        root.setContentsMargins(0, 0, 8, 0)
+        root.setSpacing(14)
+        scroll.setWidget(body)
+        outer.addWidget(scroll, stretch=1)
 
         # --- Formato y calidad ---
         fmt_box, fmt_lay = _group(
             "Calidad de la música",
-            "Si dudas, deja «Alta calidad». «Fidelidad original» conserva el audio tal como llega de internet. "
+            "Si dudas, deja «Alta calidad». Verás cuánto ocupa una canción de unos 4 minutos. "
             "Sin pérdida y Estudio no suenan mejor (el audio de origen ya viene comprimido): solo ocupan más."
         )
         row = QHBoxLayout()
         self.quality_combo = QComboBox()
-        self.quality_combo.addItem("Alta calidad (recomendado)", "320")
-        self.quality_combo.addItem("Calidad normal (ocupa menos espacio)", "192")
-        self.quality_combo.addItem("Fidelidad original (sin recomprimir)", "m4a")
-        self.quality_combo.addItem("Sin pérdida · FLAC (ocupa mucho)", "flac")
-        self.quality_combo.addItem("Estudio · WAV (ocupa muchísimo)", "wav")
+        for key, *_rest in quality.QUALITIES:
+            self.quality_combo.addItem(quality.label(key), key)
         idx = self.quality_combo.findData(get_audio_quality())
         if idx >= 0:
             self.quality_combo.setCurrentIndex(idx)
@@ -84,14 +111,9 @@ class SettingsDialog(InlineDialog):
         self.lbl_download_dir.setTextInteractionFlags(Qt.TextSelectableByMouse)
         dest_lay.addWidget(self.lbl_download_dir)
 
-        self.btn_change_dir = QPushButton(" Cambiar carpeta...")
-        self.btn_change_dir.setObjectName("SidebarSecondaryBtn")
-        self.btn_change_dir.setIcon(icon("folder.svg"))
-        self.btn_change_dir.setIconSize(QSize(16, 16))
-        self.btn_change_dir.setCursor(Qt.PointingHandCursor)
-        self.btn_change_dir.setMinimumHeight(36)
+        self.btn_change_dir = _button("Cambiar carpeta...", "folder.svg")
         dest_lay.addWidget(self.btn_change_dir, alignment=Qt.AlignLeft)
-
+        self.dest_extra_lay = dest_lay      # otros ajustes de descargas se añaden aquí (ver downloads_options)
         root.addWidget(dest_box)
 
         # --- Rendimiento ---
@@ -103,7 +125,47 @@ class SettingsDialog(InlineDialog):
         self.chk_eco.setChecked(eco())
         self.chk_eco.toggled.connect(set_eco)
         perf_lay.addWidget(self.chk_eco)
+        self.chk_visualizer = QCheckBox("Barras animadas junto a la canción que suena")
+        self.chk_visualizer.setChecked(visualizer_enabled())
+        self.chk_visualizer.toggled.connect(set_visualizer)
+        perf_lay.addWidget(self.chk_visualizer)
+        self.perf_extra_lay = perf_lay
         root.addWidget(perf_box)
+
+        # --- Conexión ---
+        net_box, net_lay = _group(
+            "Conexión",
+            "Sin internet la aplicación sigue funcionando con tu música descargada y tus listas. "
+            "Con el modo sin conexión puedes forzarlo para no gastar datos.")
+        self.chk_offline = QCheckBox("Modo sin conexión (no usar internet)")
+        net_lay.addWidget(self.chk_offline)
+        root.addWidget(net_box)
+
+        # --- Espacio ---
+        space_box, space_lay = _group(
+            "Espacio que ocupa la aplicación",
+            "Aquí puedes liberar espacio sin perder tu música, tus listas ni tus letras.")
+        self.space_grid = QGridLayout()
+        self.space_grid.setHorizontalSpacing(10)
+        self.space_grid.setVerticalSpacing(4)
+        space_lay.addLayout(self.space_grid)
+        root.addWidget(space_box)
+
+        # --- Copia de seguridad ---
+        bk_box, bk_lay = _group(
+            "Copia de seguridad",
+            "Guarda en un archivo tus listas, favoritos, artistas que sigues, ajustes y letras. "
+            "Además, la aplicación hace una copia automática cada semana.")
+        bk_row = QHBoxLayout()
+        self.btn_backup = _button("Guardar una copia...", "download.svg")
+        self.btn_backup.clicked.connect(self.save_backup)
+        self.btn_restore = _button("Restaurar una copia...", "refresh.svg")
+        self.btn_restore.clicked.connect(self.restore_backup)
+        bk_row.addWidget(self.btn_backup)
+        bk_row.addWidget(self.btn_restore)
+        bk_row.addStretch()
+        bk_lay.addLayout(bk_row)
+        root.addWidget(bk_box)
 
         # --- Apariencia ---
         look_box, look_lay = _group("Colores de la aplicación", "Elige el color principal. Se cambia al instante.")
@@ -140,21 +202,25 @@ class SettingsDialog(InlineDialog):
         self.theme_name_lbl = QLabel(THEME_CONFIGS.get(current_theme, {}).get("name", ""))
         self.theme_name_lbl.setObjectName("SettingsHint")
         look_lay.addWidget(self.theme_name_lbl)
+        self.look_extra_lay = look_lay
         root.addWidget(look_box)
+        root.addStretch(1)
 
+        footer = QHBoxLayout()
         version_lbl = QLabel(f"Descargador de Música · versión {__version__}")
         version_lbl.setObjectName("SettingsHint")
-        root.addWidget(version_lbl)
-
-        close_row = QHBoxLayout()
-        close_row.addStretch()
+        footer.addWidget(version_lbl)
+        footer.addStretch()
         btn_close = QPushButton("Cerrar")
         btn_close.setObjectName("GiantActionBtn")
         btn_close.setCursor(Qt.PointingHandCursor)
         btn_close.clicked.connect(self.accept)
-        close_row.addWidget(btn_close)
-        root.addLayout(close_row)
+        footer.addWidget(btn_close)
+        outer.addLayout(footer)
 
+        self.refresh_space()
+
+    # ------------------------------------------------------------- tema
     def _pick_theme(self, key: str):
         for k, sw in self.swatches.items():
             sw.setChecked(k == key)
@@ -165,3 +231,77 @@ class SettingsDialog(InlineDialog):
 
     def refresh_download_dir(self):
         self.lbl_download_dir.setText(str(get_download_dir()))
+        self.refresh_space()
+
+    # ------------------------------------------------------------ espacio
+    def refresh_space(self):
+        while self.space_grid.count():
+            w = self.space_grid.takeAt(0).widget()
+            if w is not None:
+                w.setParent(None)
+                w.deleteLater()
+        rows = storage_service.usage()
+        total = sum(r["bytes"] for r in rows)
+        for i, r in enumerate(rows):
+            if r["bytes"] == 0 and not r["clearable"]:
+                continue
+            name = QLabel(r["name"])
+            name.setToolTip(r["hint"])
+            name.setStyleSheet("background: transparent;")
+            size = QLabel(storage_service.format_bytes(r["bytes"]))
+            size.setObjectName("SettingsHint")
+            size.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            self.space_grid.addWidget(name, i, 0)
+            self.space_grid.addWidget(size, i, 1)
+            if r["clearable"] and r["bytes"] > 0:
+                btn = _button("Liberar")
+                btn.setMinimumHeight(28)
+                btn.clicked.connect(lambda _=False, k=r["key"], n=r["name"]: self._free(k, n))
+                self.space_grid.addWidget(btn, i, 2)
+        self.space_grid.setColumnStretch(0, 1)
+        n = self.space_grid.rowCount()
+        tot = QLabel(f"Total: {storage_service.format_bytes(total)}")
+        tot.setObjectName("SettingsHint")
+        self.space_grid.addWidget(tot, n, 0, 1, 3)
+
+    def _free(self, key: str, name: str):
+        freed = storage_service.clear(key)
+        if self.window_ref is not None and hasattr(self.window_ref, "notify"):
+            self.window_ref.notify(f"Liberados {storage_service.format_bytes(freed)} ({name})")
+            if key in ("biblioteca",):
+                self.window_ref.rescan_library()
+        self.refresh_space()
+
+    # ------------------------------------------------------ copia de seguridad
+    def save_backup(self):
+        path, _ = QFileDialog.getSaveFileName(self, "Guardar copia de seguridad", backup_service.default_backup_name(),
+                                              "Copia de seguridad (*.zip)")
+        if not path:
+            return
+        try:
+            n = backup_service.create_backup(path)
+        except Exception as e:
+            show_message(self, "No se pudo guardar la copia", str(e))
+            return
+        self.window_ref.notify(f"Copia guardada ({n} archivos)")
+
+    def restore_backup(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Elegir una copia de seguridad", "", "Copia de seguridad (*.zip)")
+        if not path:
+            return
+        info = backup_service.inspect_backup(path)
+        if info is None:
+            show_message(self, "Ese archivo no sirve", "No es una copia de seguridad de esta aplicación.")
+            return
+        if not ask_confirm(self, "Restaurar la copia",
+                           "Se sustituirán tus listas, favoritos, artistas, ajustes y letras por los de la copia. "
+                           "Antes se guarda una copia de lo que tienes ahora, por si te arrepientes.\n\n"
+                           "La aplicación se reiniciará. ¿Continuar?", ok="Restaurar"):
+            return
+        try:
+            backup_service.restore_backup(path)
+        except Exception as e:
+            show_message(self, "No se pudo restaurar", str(e))
+            return
+        self.accept()
+        self.window_ref.restart_app()

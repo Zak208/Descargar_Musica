@@ -15,6 +15,7 @@ import time
 import zipfile
 
 import requests
+from services import http
 from PySide6.QtCore import QThread, Signal
 
 from config import APP_DATA_DIR
@@ -51,7 +52,7 @@ def _download(url: str, dest, expected_sha: str, progress, base: float, span: fl
     """Descarga `url` a `dest` (con barra de progreso) y comprueba su SHA-256."""
     tmp = str(dest) + ".part"
     sha = hashlib.sha256()
-    with requests.get(url, headers=HEADERS, stream=True, timeout=30) as r:
+    with http.get(url, headers=HEADERS, stream=True, timeout=30) as r:
         r.raise_for_status()
         total = int(r.headers.get("content-length", 0)) or 1
         done = 0
@@ -179,6 +180,11 @@ class TranscribeWorker(QThread):
                 pass
 
     def run(self):
+        from services.heavy import heavy_task
+        with heavy_task():
+            self._transcribe()
+
+    def _transcribe(self):
         ffmpeg = FFmpegService.get_ffmpeg_path()
         cli = engine_path()
         if not ffmpeg or cli is None or not (WHISPER_DIR / MODEL_NAME).is_file():

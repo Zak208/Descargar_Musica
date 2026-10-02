@@ -133,6 +133,12 @@ class SearchMixin:
         if not query:
             self.notify("Escribe qué canción o artista quieres buscar.")
             return
+        if self.is_offline():
+            if is_youtube_url(query) or is_spotify_url(query):
+                self.notify("Para descargar desde un enlace necesitas conexión. Pega el enlace cuando vuelva internet.")
+                return
+            self.local_search(query)
+            return
         self.switch_to_page(1)
         self.clear_results_container()
         for worker in (self._catalog_worker, self._direct_worker):

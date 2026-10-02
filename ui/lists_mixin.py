@@ -94,6 +94,8 @@ class ListsMixin:
             self.refresh_tiles_state()
             if first:
                 self.refresh_recommendations()
+                self.restore_session()
+                QTimer.singleShot(900, self.maybe_show_welcome)
         if self._rescan_pending:
             self._rescan_pending = False
             self.rescan_library()
@@ -316,6 +318,18 @@ class ListsMixin:
             return playlists[list_id].get("name", "Playlist"), playlists[list_id].get("tracks", []), list_id
         if kind == "genre" and self._custom_mix:
             return self._custom_mix["name"], self._custom_mix["tracks"], int(list_id or 0)
+        if kind == "artist_local":
+            return str(list_id), self.local_artist_items(str(list_id)), str(list_id)
+        if kind == "album_local":
+            return str(list_id), self.local_album_items(str(list_id)), str(list_id)
+        if kind == "localmix":
+            idx = int(list_id if list_id is not None else 0)
+            if 0 <= idx < len(self._local_mixes):
+                return self._local_mixes[idx]["name"], self._local_mixes[idx]["tracks"], idx
+            return None
+        if kind == "smart":
+            found = self.smart_list_items(str(list_id))
+            return (found[0], found[1], str(list_id)) if found else None
         if kind == "mix":
             mixes = (self._rec_data or {}).get("mixes", [])
             idx = int(list_id if list_id is not None else 0)
@@ -370,7 +384,11 @@ class ListsMixin:
     # ----------------------------------------------------------- reproducción
     def play_list(self, items: list, start, shuffle: bool = False):
         """Reproduce una lista: 'siguiente' y 'anterior' se mueven solo dentro de ella."""
+        if self.is_offline():
+            items = [i for i in items if self.playable(i)]      # sin conexión solo suena lo descargado
         if not items:
+            if self.is_offline():
+                self.notify("Sin conexión: en esta lista no hay canciones descargadas.")
             return
         import random
         self.set_context(items)
@@ -452,7 +470,13 @@ class ListsMixin:
         menu.exec(global_pos)
 
     def open_album_by_name(self, artist: str, album: str):
-        """Localiza el álbum de una canción y abre su página."""
+        """Localiza el álbum de una canción y abre su página (sin conexión, muestra lo que tienes descargado de él)."""
+        if self.is_offline():
+            if self.local_album_items(album):
+                self.open_list("album_local", album)
+            else:
+                self.notify("Sin conexión: no se puede abrir la página de este álbum.")
+            return
         self.notify("Buscando el álbum...")
         self._album_resolver = AlbumResolver(artist, album)
         self._album_resolver.found.connect(self.open_album_details)

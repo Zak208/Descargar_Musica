@@ -1,6 +1,6 @@
 # Descargador de Música
 
-**Versión actual: 1.7.0** · [Historial de versiones](CHANGELOG.md) · cada versión subida tiene su etiqueta `vX.Y.Z` en GitHub
+**Versión actual: 1.8.0** · [Historial de versiones](CHANGELOG.md) · cada versión subida tiene su etiqueta `vX.Y.Z` en GitHub
 
 Aplicación de escritorio para **Windows** que combina un reproductor con aspecto de Spotify y un descargador de música:
 buscas una canción, un artista o un álbum, escuchas un adelanto y la descargas a tu equipo en MP3, M4A, FLAC o WAV,
@@ -78,7 +78,7 @@ sin cuentas ni claves.
 - Conexión a internet para buscar, escuchar adelantos, descargar, letras y recomendaciones.
 - **FFmpeg** (convierte el audio y aplica el ecualizador). No hace falta instalarlo a mano: si no lo encuentra,
   la aplicación lo descarga sola la primera vez (carpeta `app_data/ffmpeg`).
-  Si prefieres tenerlo ya, copia `ffmpeg.exe` y `ffprobe.exe` en una carpeta `bin/` junto a `main.py`.
+  Si prefieres tenerlo ya, copia `ffmpeg.exe` en una carpeta `bin/` junto a `main.py` (`ffprobe.exe` no hace falta).
 
 ## Instalación y ejecución
 
@@ -104,7 +104,7 @@ python -m PyInstaller --noconfirm --distpath dist_app --workpath build_tmp Desca
 
 También puedes hacer doble clic en `compilar_exe.bat`. El resultado queda en `dist_app\Descargar_Musica\`
 (copia esa carpeta completa a otro equipo para usarla; empieza con los datos vacíos).
-Si existe la carpeta `bin/` con `ffmpeg.exe` y `ffprobe.exe`, se incluye dentro; si no, la app descargará FFmpeg al abrirse.
+Si existe `bin/ffmpeg.exe`, se incluye dentro (sin `ffprobe.exe`, que no hace falta y ocupa ~145 MB); si no, la app descargará FFmpeg al abrirse.
 
 Para comprobar que el ejecutable ha quedado bien (iconos, tipografía, librerías, FFmpeg y ausencia de ventanas sueltas):
 
@@ -249,7 +249,7 @@ python dev_tools/prueba_filas.py        # filas estilo Spotify, menú, panel «E
 
 - **No suena el adelanto / no descarga**: comprueba tu conexión. YouTube cambia a menudo; actualiza yt-dlp con
   `pip install -U yt-dlp` (si usas el `.exe`, vuelve a compilarlo con la versión nueva).
-- **«Falta un componente de audio»**: FFmpeg no se pudo descargar. Copia `ffmpeg.exe` y `ffprobe.exe` en `bin/` o en `app_data/ffmpeg/`.
+- **«Falta un componente de audio»**: FFmpeg no se pudo descargar. Copia `ffmpeg.exe` en `bin/` o en `app_data/ffmpeg/`.
 - **No aparecen los iconos o el texto se ve distinto**: ejecuta `Descargar_Musica.exe --selftest` y revisa `selftest.log`.
 - **La app va justa de recursos**: activa el *modo ahorro* en Ajustes.
 - **Errores**: se anotan en `app_descargas.log` junto al programa.

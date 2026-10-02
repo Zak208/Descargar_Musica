@@ -102,6 +102,12 @@ class TopBar(QWidget):
         self._timer.stop()
         self.search_submitted.emit(self.search.text().strip())
 
+    def set_offline(self, offline: bool):
+        """Sin conexión la búsqueda mira solo en tu música (y responde más deprisa porque no hay red de por medio)."""
+        self.search.setPlaceholderText("Buscar en tu música descargada" if offline
+                                       else "¿Qué quieres escuchar? Busca o pega un enlace")
+        self._timer.setInterval(350 if offline else 900)
+
     def set_text(self, text: str, silent: bool = True):
         self.search.blockSignals(silent)
         self.search.setText(text)

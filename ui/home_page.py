@@ -54,6 +54,36 @@ def build_home_page(self):
     head.addWidget(self.btn_refresh_recs)
     self.home_layout.addLayout(head)
 
+    # Aviso de «sin conexión» (solo se ve cuando no hay internet)
+    self.home_offline_box = QFrame()
+    self.home_offline_box.setObjectName("OfflineBox")
+    ol = QHBoxLayout(self.home_offline_box)
+    ol.setContentsMargins(22, 18, 22, 18)
+    ol.setSpacing(18)
+    off_icon = QLabel()
+    off_icon.setPixmap(icon("offline.svg", "#FFD166", 64).pixmap(44, 44))
+    off_icon.setStyleSheet("background: transparent;")
+    ol.addWidget(off_icon)
+    off_texts = QVBoxLayout()
+    off_texts.setSpacing(4)
+    off_title = QLabel("Estás sin conexión")
+    off_title.setStyleSheet("font-size: 20px; font-weight: 800; background: transparent;")
+    off_body = QLabel("No pasa nada: tu música descargada y tus listas funcionan igual. "
+                      "Las recomendaciones, la búsqueda en internet y las descargas esperarán a que vuelva la conexión.")
+    off_body.setObjectName("SectionSubtitle")
+    off_body.setWordWrap(True)
+    off_body.setStyleSheet("background: transparent;")
+    off_texts.addWidget(off_title)
+    off_texts.addWidget(off_body)
+    ol.addLayout(off_texts, stretch=1)
+    self.btn_offline_retry = QPushButton("Reintentar")
+    self.btn_offline_retry.setObjectName("GiantActionBtn")
+    self.btn_offline_retry.setCursor(Qt.PointingHandCursor)
+    self.btn_offline_retry.clicked.connect(lambda: self.offline_banner._retry())
+    ol.addWidget(self.btn_offline_retry)
+    self.home_offline_box.setVisible(False)
+    self.home_layout.addWidget(self.home_offline_box)
+
     # Resumen de tu música
     self.home_stats_lbl = QLabel("")
     self.home_stats_lbl.setObjectName("SectionSubtitle")
@@ -68,6 +98,8 @@ def build_home_page(self):
     self.home_layout.addWidget(self.home_quick_box)
 
     # Secciones (todas empiezan ocultas)
+    self.home_local_mixes_box, self.home_local_mixes_row = _section(
+        self, "Mixes de tu música", 292, "Hechos con lo que tienes descargado: funcionan sin internet")
     self.home_mixes_box, self.home_mixes_row = _section(
         self, "Mixes hechos para ti", 292, "Creados a partir de la música que tienes y de lo que sigues")
     self.home_recents_box, self.home_recents_layout = _section(self, "Añadidas recientemente", 258)

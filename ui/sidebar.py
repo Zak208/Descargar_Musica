@@ -88,7 +88,8 @@ def build_sidebar(self):
     self.btn_nav_home = nav_button("Inicio", "home.svg", lambda: self.switch_to_page(0))
     self.btn_nav_downloads = nav_button("Abrir carpeta de música", "folder.svg", self.open_music_folder)
     self.btn_nav_settings = nav_button("Ajustes", "settings.svg", self.open_settings)
-    for b in (self.btn_nav_home, self.btn_nav_downloads, self.btn_nav_settings):
+    self.btn_nav_help = nav_button("Ayuda", "info.svg", self.open_help)
+    for b in (self.btn_nav_home, self.btn_nav_downloads, self.btn_nav_settings, self.btn_nav_help):
         nav_lay.addWidget(b)
     outer.addWidget(nav_panel)
 
@@ -156,5 +157,7 @@ def build_sidebar(self):
     self.theme_combo.currentIndexChanged.connect(self.on_theme_changed)
     self.btn_change_dir.clicked.connect(self.choose_custom_download_dir)
     self.btn_format_info.clicked.connect(self.show_format_info_dialog)
+    self.settings_dialog.chk_offline.setChecked(self.network.forced_offline)
+    self.settings_dialog.chk_offline.toggled.connect(self.network.set_forced_offline)
 
     self.top_hbox.addWidget(self.sidebar)

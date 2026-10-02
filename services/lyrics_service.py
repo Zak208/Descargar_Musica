@@ -1,6 +1,8 @@
 import re
+import time
 import logging
 import requests
+from services import http
 from PySide6.QtCore import QThread, Signal
 
 logger = logging.getLogger(__name__)
@@ -86,14 +88,14 @@ def _lrclib_get(artist: str, title: str) -> dict | None:
     params = {"track_name": title}
     if artist:
         params["artist_name"] = artist
-    r = requests.get("https://lrclib.net/api/get", params=params, headers=HEADERS, timeout=6)
+    r = http.get("https://lrclib.net/api/get", params=params, headers=HEADERS, timeout=6)
     if r.status_code == 200:
         return _build_result(r.json(), title, artist)
     return None
 
 
 def _lrclib_search(query: str, title: str, artist: str) -> dict | None:
-    r = requests.get("https://lrclib.net/api/search", params={"q": query}, headers=HEADERS, timeout=8)
+    r = http.get("https://lrclib.net/api/search", params={"q": query}, headers=HEADERS, timeout=8)
     if r.status_code != 200:
         return None
     results = r.json()
@@ -127,7 +129,7 @@ def _lrclib_search(query: str, title: str, artist: str) -> dict | None:
 def _lyrics_ovh(artist: str, title: str) -> dict | None:
     if not artist:
         return None
-    r = requests.get(
+    r = http.get(
         f"https://api.lyrics.ovh/v1/{requests.utils.quote(artist, safe='')}/{requests.utils.quote(title, safe='')}",
         headers=HEADERS, timeout=8,
     )
@@ -155,7 +157,7 @@ def _same_artist(wanted: str, found: str) -> bool:
     return any(x in y or y in x for x in w for y in f)
 
 
-def fetch_lyrics(title: str, artist: str = "") -> dict | None:
+def fetch_lyrics(title: str, artist: str = "", max_seconds: float | None = None) -> dict | None:
     """Busca la letra probando varias combinaciones y varias fuentes (LRCLIB y lyrics.ovh).
     Solo se acepta si el artista de la letra coincide con el de la canción."""
     known = "" if artist in ("Artista Desconocido", "Artista", "Música Local", "Música local") else _clean(artist)
@@ -170,7 +172,10 @@ def fetch_lyrics(title: str, artist: str = "") -> dict | None:
 
     allowed = {_norm(known)} | {_norm(a) for a, _t in pairs if a}
     allowed.discard("")
+    started = time.time()
     for attempt in attempts:
+        if max_seconds is not None and time.time() - started > max_seconds:
+            break
         try:
             result = attempt()
             if result and (not allowed or any(_same_artist(a, result.get("artist", "")) for a in allowed)):
@@ -181,30 +186,47 @@ def fetch_lyrics(title: str, artist: str = "") -> dict | None:
 
 
 class LyricsWorker(QThread):
-    """Busca la letra: primero la que escribió el usuario, luego internet y, si no hay, la generada por el sistema."""
+    """Busca la letra. Orden: la que escribió el usuario, la copia ya guardada, la del propio archivo, internet
+    (si hay conexión) y, por último, la generada por el sistema."""
     lyrics_ready = Signal(dict)
     lyrics_error = Signal(str)
 
-    def __init__(self, title: str, artist: str = "", store_key: str = "", parent=None):
+    def __init__(self, title: str, artist: str = "", store_key: str = "", local_path: str = "", parent=None):
         super().__init__(parent)
         self.title = title
         self.artist = artist
         self.store_key = store_key
+        self.local_path = local_path
         self.is_cancelled = False
 
     def run(self):
-        from services import lyrics_store
+        from services import lyrics_store, network_service
         stored = lyrics_store.load(self.store_key) if self.store_key else None
-        if stored and stored.get("source") == "user":
+        source = stored.get("source") if stored else None
+        if stored and source in ("user", "online"):
             self.lyrics_ready.emit(lyrics_store.to_result(stored, self.title, self.artist))
             return
-        result = fetch_lyrics(self.title, self.artist)
+        embedded = lyrics_store.read_embedded(self.local_path) if self.local_path else None
+        if embedded:
+            embedded["title"], embedded["artist"] = self.title, self.artist
+            self.lyrics_ready.emit(embedded)
+            return
+        result = fetch_lyrics(self.title, self.artist) if network_service.is_online() else None
         if self.is_cancelled:
             return
         if result:
             result["source"] = "online"
+            if self.store_key:
+                try:
+                    lyrics_store.save_online(self.store_key, result)
+                except Exception:
+                    pass
+            if self.local_path:
+                lyrics_store.write_embedded(self.local_path, result)
             self.lyrics_ready.emit(result)
         elif stored:
             self.lyrics_ready.emit(lyrics_store.to_result(stored, self.title, self.artist))
         else:
-            self.lyrics_error.emit("No hemos encontrado la letra de esta canción.")
+            offline = not network_service.is_online()
+            self.lyrics_error.emit("Sin conexión: esta canción no tiene letra guardada todavía." if offline
+                                   else "No hemos encontrado la letra de esta canción.")

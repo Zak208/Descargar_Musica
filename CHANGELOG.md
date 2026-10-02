@@ -3,6 +3,39 @@
 Formato: `MAYOR.MENOR.PARCHE`. MAYOR = cambios que rompen datos o uso, MENOR = funciones nuevas, PARCHE = arreglos.
 Cada versión subida a GitHub tiene su etiqueta `vX.Y.Z` (pestaña *Releases/Tags*).
 
+## 1.8.0
+**Datos seguros y copia de seguridad**
+- Tus datos ahora viven en `%APPDATA%\Descargador de Música` (antes, junto al `.exe`): actualizar o mover el programa nunca los borra. La primera vez se traen solos desde la carpeta antigua.
+- Copia de seguridad en un clic (Ajustes) y restauración; además, copia automática semanal (las 5 últimas).
+- Informe de problemas sin datos personales y botón «Reparar la aplicación» (Ayuda).
+- «Liberar espacio»: Ajustes muestra cuánto ocupa cada cosa y deja vaciar lo que se reconstruye solo.
+
+**Seguir donde lo dejaste**
+- Se recuerdan el volumen, la canción (y el punto en que iba), la cola, la lista abierta, aleatorio/repetir, el panel y el tamaño de la ventana.
+
+**Sin conexión**
+- La aplicación detecta si hay internet (sin gastar recursos) y avisa con un banner; se recupera sola al volver.
+- Sin conexión, las canciones no descargadas se oscurecen y no se pueden seleccionar; «siguiente» solo salta a las descargadas.
+- Inicio sin conexión: aviso amable, tus listas, «Mixes de tu música» y recientes. La búsqueda pasa a buscar solo en tu música.
+- Las listas muestran «N de M disponibles sin conexión» y empiezan viendo solo lo descargado.
+- Artistas y álbumes sin conexión abren tus canciones de ese artista o álbum.
+- Las descargas pedidas sin conexión (o que fallan por la red) quedan pendientes y se reanudan solas al volver internet.
+- Las letras y la información de los artistas ya vistos se guardan para verlos sin conexión; la letra viaja dentro del archivo de cada canción descargada.
+- Modo sin conexión manual en Ajustes.
+
+**Mucho menos consumo**
+- Una sesión web compartida con conexiones reutilizadas: el arranque pasa de ≈ 20-40 s de CPU a ≈ 1,7 s (12-24 veces menos).
+- Índice de la biblioteca en SQLite (más rápido y ligero con miles de canciones); lee género y año.
+- Tareas pesadas de una en una, procesos hijos (ffmpeg…) con prioridad baja, caché de imágenes con tope de memoria y limpieza de memoria al minimizar o tras el arranque.
+- Minimizada, la aplicación deja de animar. Con batería baja o datos medidos no pide recomendaciones nuevas solas.
+- En equipos modestos (≤ 4 GB o ≤ 2 núcleos) las descargas van de una en una y el visualizador empieza apagado (opción en Ajustes).
+- El programa compilado ya no incluye ffprobe (≈ 145 MB menos).
+
+**Más sencilla**
+- Asistente de bienvenida de 3 pasos y recorrido guiado por la aplicación; botón «Ayuda» con atajos de teclado.
+- La calidad de música se explica con lo que ocupa una canción; nueva opción «Ahorrar espacio» (128 kbps).
+- Pantallas vacías con un botón para empezar.
+
 ## 1.7.0
 - «Generar con el sistema»: ahora se ve que trabaja (barra con porcentaje y segundos transcurridos) y los avisos salen dentro de la ventana de letras (antes quedaban escondidos detrás de ella).
 - Las letras generadas se dividen en frases más cortas (máx. ~40 letras por línea) repartiendo el tiempo.

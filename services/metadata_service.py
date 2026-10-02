@@ -1,5 +1,6 @@
 import os
 import requests
+from services import http
 import logging
 from pathlib import Path
 from mutagen.id3 import ID3, TIT2, TPE1, TALB, APIC, ID3NoHeaderError
@@ -24,7 +25,7 @@ class MetadataService:
             mime_type = "image/jpeg"
             if thumbnail_url:
                 try:
-                    res = requests.get(thumbnail_url, timeout=10)
+                    res = http.get(thumbnail_url, timeout=10)
                     if res.status_code == 200:
                         image_data = res.content
                         mime_type = "image/png" if thumbnail_url.lower().endswith(".png") else "image/jpeg"

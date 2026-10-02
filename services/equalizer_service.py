@@ -121,6 +121,11 @@ class EqRenderWorker(QThread):
         self.is_cancelled = False
 
     def run(self):
+        from services.heavy import heavy_task
+        with heavy_task():
+            self._render()
+
+    def _render(self):
         ffmpeg = FFmpegService.get_ffmpeg_path()
         if not ffmpeg:
             self.failed.emit("ffmpeg")

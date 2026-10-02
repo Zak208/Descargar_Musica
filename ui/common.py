@@ -36,7 +36,10 @@ def hide_subprocess_windows():
     original_init = subprocess.Popen.__init__
 
     def init_sin_ventana(self, *args, **kwargs):
-        kwargs["creationflags"] = kwargs.get("creationflags", 0) | subprocess.CREATE_NO_WINDOW
+        flags = kwargs.get("creationflags", 0) | subprocess.CREATE_NO_WINDOW
+        if not flags & (subprocess.HIGH_PRIORITY_CLASS | subprocess.IDLE_PRIORITY_CLASS | subprocess.REALTIME_PRIORITY_CLASS):
+            flags |= subprocess.BELOW_NORMAL_PRIORITY_CLASS     # ffmpeg y compañía ceden ante lo que estés usando
+        kwargs["creationflags"] = flags
         original_init(self, *args, **kwargs)
 
     subprocess.Popen.__init__ = init_sin_ventana

@@ -2,6 +2,7 @@ import os
 import shutil
 import zipfile
 import requests
+from services import http
 import logging
 from config import FFMPEG_DIR, APP_DIR
 
@@ -65,7 +66,7 @@ class FFmpegService:
             if progress_callback:
                 progress_callback("Descargando componentes de audio (FFmpeg)...")
                 
-            response = requests.get(url, stream=True, timeout=30)
+            response = http.get(url, stream=True, timeout=30)
             response.raise_for_status()
             
             total_size = int(response.headers.get('content-length', 0))
@@ -85,7 +86,7 @@ class FFmpegService:
                 
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 for member in zip_ref.namelist():
-                    if member.endswith("ffmpeg.exe") or member.endswith("ffprobe.exe"):
+                    if member.endswith("ffmpeg.exe"):          # ffprobe no hace falta: ahorra ~145 MB de disco
                         filename = os.path.basename(member)
                         target_file = FFMPEG_DIR / filename
                         with zip_ref.open(member) as source, open(target_file, "wb") as target:

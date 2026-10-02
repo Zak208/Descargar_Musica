@@ -1,5 +1,6 @@
 import logging
 import requests
+from services import http
 from PySide6.QtCore import QThread, Signal
 
 logger = logging.getLogger(__name__)
@@ -16,7 +17,7 @@ def get_artist_avatar(artist_name: str) -> str:
         return _AVATAR_CACHE[clean_name]
 
     try:
-        r = requests.get('https://api.deezer.com/search/artist', params={'q': clean_name}, timeout=4)
+        r = http.get('https://api.deezer.com/search/artist', params={'q': clean_name}, timeout=4)
         if r.status_code == 200:
             data = r.json().get('data', [])
             if data and isinstance(data, list):
@@ -62,7 +63,7 @@ class CatalogSearchWorker(QThread):
 
             # 1. Buscar artistas (iTunes con deduplicación rigurosa)
             try:
-                r_art = requests.get(
+                r_art = http.get(
                     'https://itunes.apple.com/search',
                     params={'term': self.query, 'entity': 'musicArtist', 'limit': max(15, self.limits['artists'] * 2)},
                     timeout=5
@@ -106,7 +107,7 @@ class CatalogSearchWorker(QThread):
 
             # 2. Buscar canciones (iTunes con deduplicación)
             try:
-                r_tracks = requests.get(
+                r_tracks = http.get(
                     'https://itunes.apple.com/search',
                     params={'term': self.query, 'entity': 'song', 'limit': min(200, self.limits['tracks'] + 10)},
                     timeout=5
@@ -143,7 +144,7 @@ class CatalogSearchWorker(QThread):
 
             # 3. Buscar álbumes (iTunes con deduplicación)
             try:
-                r_alb = requests.get(
+                r_alb = http.get(
                     'https://itunes.apple.com/search',
                     params={'term': self.query, 'entity': 'album', 'limit': min(200, self.limits['albums'] + 8)},
                     timeout=5
@@ -200,7 +201,7 @@ class ArtistDetailsWorker(QThread):
             top_tracks = []
             seen_song_names = set()
             try:
-                r_songs = requests.get(
+                r_songs = http.get(
                     'https://itunes.apple.com/lookup',
                     params={'id': self.artist_id, 'entity': 'song', 'limit': 15},
                     timeout=6
@@ -236,7 +237,7 @@ class ArtistDetailsWorker(QThread):
             albums = []
             seen_album_names = set()
             try:
-                r_albums = requests.get(
+                r_albums = http.get(
                     'https://itunes.apple.com/lookup',
                     params={'id': self.artist_id, 'entity': 'album', 'limit': 30},
                     timeout=6
@@ -287,7 +288,7 @@ class AlbumDetailsWorker(QThread):
 
     def run(self):
         try:
-            r = requests.get(
+            r = http.get(
                 'https://itunes.apple.com/lookup',
                 params={'id': self.album_id, 'entity': 'song'},
                 timeout=6

@@ -106,14 +106,18 @@ class PlaybackMixin:
         if self.player.position() > RESTART_THRESHOLD_MS:
             self._restart_current()
             return
-        if self._history:
+        while self._history:
+            entry = self._history.pop()
+            if not self.playable(entry["info"]):      # sin conexión se saltan las que no están descargadas
+                continue
             self._forward.append(self._snapshot())
-            self._play_navigating(self._history.pop())
+            self._play_navigating(entry)
             return
         pos = self._context_position()
-        if pos > 0:
-            self._play_entry(self._context[pos - 1])
-            return
+        for i in range(pos - 1, -1, -1):
+            if self.playable(self._context[i]):
+                self._play_entry(self._context[i])
+                return
         self._restart_current()
 
     def _restart_current(self):
@@ -125,21 +129,29 @@ class PlaybackMixin:
         """Siguiente: primero la cola manual, luego lo que se dejó atrás con 'anterior', luego la lista."""
         if not self.current_item_info:
             return
-        if self.playback_queue:
-            self._play_entry(self.playback_queue.pop(0))
-            return
-        if self._forward:
+        while self.playback_queue:
+            nxt = self.playback_queue.pop(0)
+            if self.playable(nxt):
+                self._play_entry(nxt)
+                return
+        while self._forward:
+            entry = self._forward.pop()
+            if not self.playable(entry["info"]):
+                continue
             self._history.append(self._snapshot())
-            self._play_navigating(self._forward.pop())
+            self._play_navigating(entry)
             return
         pos = self._context_position()
         if self.is_shuffle_enabled and len(self._context) > 1:
-            options = [t for i, t in enumerate(self._context) if i != pos]
-            self._play_entry(random.choice(options))
-            return
-        if 0 <= pos < len(self._context) - 1:
-            self._play_entry(self._context[pos + 1])
-            return
+            options = [t for i, t in enumerate(self._context) if i != pos and self.playable(t)]
+            if options:
+                self._play_entry(random.choice(options))
+                return
+        elif pos >= 0:
+            nxt = self.first_playable_index(self._context, pos + 1)
+            if nxt >= 0:
+                self._play_entry(self._context[nxt])
+                return
         # Fin de la lista: se detiene pero el reproductor sigue visible
         self.player.stop()
         self.player_status.setText("Fin de la lista")

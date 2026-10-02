@@ -1,6 +1,8 @@
 """Inicio estilo Spotify: accesos rápidos, recientes, recomendaciones según tu música y artistas seguidos."""
 import logging
 
+from ui import perf
+
 
 from services.artist_service import ArtistService
 from services.playlist_service import PlaylistService
@@ -30,6 +32,25 @@ class HomeMixin:
         """Rellena lo que depende de tu biblioteca: accesos rápidos, recientes y artistas que sigues."""
         if not hasattr(self, "home_recents_layout"):
             return
+
+        offline = self.is_offline()
+        self.home_offline_box.setVisible(offline)
+        if offline:
+            self.home_status_lbl.setText("")
+
+        # Mixes hechos con tu música descargada (sirven con y sin conexión)
+        self.refresh_local_mixes()
+        clear_layout(self.home_local_mixes_row)
+        for i, mix in enumerate(self._local_mixes):
+            tile = MixTile(mix, i)
+            tile.clicked.connect(lambda _m, idx=i: self.open_list("localmix", idx))
+            self.home_local_mixes_row.addWidget(tile)
+        self.home_local_mixes_box.setVisible(bool(self._local_mixes))
+        if offline:      # lo que necesita internet se esconde
+            for box in (self.home_mixes_box, self.home_releases_box, self.home_artists_box, self.home_tracks_box,
+                        self.home_charts_box, self.home_genres_box):
+                box.setVisible(False)
+            clear_layout(self.home_because_layout)
 
         # Recientes
         clear_layout(self.home_recents_layout)
@@ -88,6 +109,8 @@ class HomeMixin:
     # ------------------------------------------------------ recomendaciones
     def refresh_recommendations(self, force: bool = False):
         """Analiza tu música y prepara las recomendaciones (con caché para que Inicio abra al instante)."""
+        if self.is_offline():
+            return          # sin conexión no se piden recomendaciones: Inicio muestra tu música
         try:
             profile = build_taste_profile(self.library_items(), PlaylistService.get_favorites(),
                                           ArtistService.get_followed())
@@ -105,6 +128,10 @@ class HomeMixin:
             stale = load_stale_cache()
             if stale and self._rec_data is None:
                 self._render_recommendations(stale)   # algo que ver mientras se actualiza
+            reason = perf.saving_reason(self.network)
+            if stale and reason:
+                self.home_status_lbl.setText(f"Recomendaciones sin actualizar ({reason})")
+                return          # con batería baja o datos medidos no se piden recomendaciones nuevas solas
 
         if self._rec_worker is not None and self._rec_worker.isRunning():
             return
@@ -123,6 +150,8 @@ class HomeMixin:
 
     def _render_recommendations(self, data: dict):
         self._rec_data = data
+        if self.is_offline():
+            return
 
         def tracks_shelf(box, row, tracks):
             clear_layout(row)
@@ -192,6 +221,13 @@ class HomeMixin:
 
     def open_artist_by_name(self, artist: dict):
         """Abre el perfil de un artista; si solo se conoce su nombre, lo localiza antes."""
+        if self.is_offline():
+            name = artist.get("name", "")
+            if self.local_artist_items(name):
+                self.open_list("artist_local", name)      # sin conexión: tus canciones de ese artista
+            else:
+                self.notify("Sin conexión: no se puede abrir el perfil de este artista.")
+            return
         art_id = str(artist.get("id", ""))
         if art_id.isdigit():
             self.open_artist_profile(int(art_id), artist.get("name", ""), artist.get("avatar", ""))

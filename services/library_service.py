@@ -1,22 +1,21 @@
 """Biblioteca de música local: búsqueda de archivos, lectura de etiquetas con caché y vigilancia de la carpeta.
 
 Para gastar poca memoria y CPU:
-  * las etiquetas (título, artista, álbum, duración) se leen una sola vez por archivo y se guardan en un JSON;
+  * las etiquetas (título, artista, álbum, duración, género, año) se leen una sola vez por archivo y se guardan en SQLite;
   * solo se vuelven a leer los archivos nuevos o modificados;
   * se vigila la carpeta con QFileSystemWatcher (casi sin coste) en lugar de un modelo completo de archivos.
 """
-import json
 import logging
 import os
 
 from PySide6.QtCore import QObject, QThread, QTimer, Signal, QFileSystemWatcher
 
-from config import APP_DATA_DIR, get_download_dir, atomic_write_json
+from config import get_download_dir
+from services import library_db
 
 logger = logging.getLogger(__name__)
 
 AUDIO_EXTS = ('.mp3', '.m4a', '.wav', '.flac', '.ogg', '.wma')
-CACHE_FILE = APP_DATA_DIR / "biblioteca_cache.json"
 MAX_WATCHED_DIRS = 40
 
 
@@ -46,8 +45,8 @@ def scan_files(root: str) -> list:
 
 
 def read_basic_tags(path: str) -> dict:
-    """Título, artista, álbum y duración (sin cargar la carátula)."""
-    out = {"title": "", "artist": "", "album": "", "duration": 0}
+    """Título, artista, álbum, duración, género, año y número de pista (sin cargar la carátula)."""
+    out = {"title": "", "artist": "", "album": "", "duration": 0, "genre": "", "year": 0, "track_no": 0}
     try:
         import mutagen
         audio = mutagen.File(path, easy=True)
@@ -55,25 +54,21 @@ def read_basic_tags(path: str) -> dict:
             if audio.info is not None:
                 out["duration"] = int(getattr(audio.info, "length", 0) or 0)
             tags = audio.tags or {}
-            for key, field in (("title", "title"), ("artist", "artist"), ("album", "album")):
+            for key in ("title", "artist", "album", "genre"):
                 values = tags.get(key)
                 if values:
-                    out[field] = str(values[0])
+                    out[key] = str(values[0])
+            date = tags.get("date") or tags.get("originaldate")
+            if date:
+                digits = "".join(ch for ch in str(date[0])[:4] if ch.isdigit())
+                out["year"] = int(digits) if len(digits) == 4 else 0
+            number = tags.get("tracknumber")
+            if number:
+                head = str(number[0]).split("/")[0].strip()
+                out["track_no"] = int(head) if head.isdigit() else 0
     except Exception:
         pass
     return out
-
-
-def _load_cache() -> dict:
-    try:
-        if CACHE_FILE.exists():
-            with open(CACHE_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, dict):
-                return data
-    except Exception:
-        pass
-    return {}
 
 
 def build_item(path: str, mtime: float, tags: dict) -> dict:
@@ -83,6 +78,9 @@ def build_item(path: str, mtime: float, tags: dict) -> dict:
         "title": tags.get("title") or os.path.splitext(os.path.basename(path))[0],
         "uploader": tags.get("artist") or "Música local",
         "album": tags.get("album") or "",
+        "genre": tags.get("genre") or "",
+        "year": int(tags.get("year") or 0),
+        "track_no": int(tags.get("track_no") or 0),
         "duration_secs": secs,
         "duration_str": f"{secs // 60}:{secs % 60:02d}" if secs else "",
         "url": path,
@@ -94,25 +92,28 @@ def build_item(path: str, mtime: float, tags: dict) -> dict:
 
 
 def load_items_sync(root: str | None = None) -> list:
-    """Biblioteca completa, de la más reciente a la más antigua. Usa la caché de etiquetas."""
+    """Biblioteca completa, de la más reciente a la más antigua. Solo se leen las etiquetas de los archivos
+    nuevos o modificados (el resto sale del índice SQLite)."""
     root = root or str(get_download_dir())
-    cache = _load_cache()
-    new_cache = {}
-    items = []
-    for path, mtime in sorted(scan_files(root), key=lambda x: x[1], reverse=True):
-        entry = cache.get(path)
-        if entry and entry.get("mtime") == mtime:
-            tags = entry
+    library_db.import_old_json()
+    known = library_db.load_all()
+    found = scan_files(root)
+    items, upserts = [], []
+    for path, mtime in sorted(found, key=lambda x: x[1], reverse=True):
+        row = known.get(path)
+        if row and row["mtime"] == mtime and (row.get("tagver") or 0) >= library_db.TAG_VERSION:
+            tags = row
         else:
             tags = read_basic_tags(path)
-            tags["mtime"] = mtime
-        new_cache[path] = tags
+            upserts.append(dict(tags, path=path, mtime=mtime, tagver=library_db.TAG_VERSION))
         items.append(build_item(path, mtime, tags))
-    if new_cache != cache:
+    present = {p for p, _m in found}
+    removed = [p for p in known if p not in present and p.startswith(root)]
+    if upserts or removed:
         try:
-            atomic_write_json(CACHE_FILE, new_cache)
+            library_db.apply_changes(upserts, removed)
         except Exception as e:
-            logger.warning(f"No se pudo guardar la caché de la biblioteca: {e}")
+            logger.warning(f"No se pudo guardar el índice de la biblioteca: {e}")
     return items
 
 
@@ -126,7 +127,10 @@ class LibraryScanWorker(QThread):
 
     def run(self):
         self.setPriority(QThread.LowPriority)
-        self.ready.emit(load_items_sync(self.root))
+        from services.heavy import heavy_task
+        with heavy_task():
+            items = load_items_sync(self.root)
+        self.ready.emit(items)
 
 
 class LibraryWatcher(QObject):

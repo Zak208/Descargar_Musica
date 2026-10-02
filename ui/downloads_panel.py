@@ -4,6 +4,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QProgressBar, QScrollArea, QWidget, QFrame
 )
 
+from services import pending_downloads
 from ui.friendly import friendly_error
 from ui.overlay import InlineDialog
 from ui.widgets import ElidedLabel
@@ -135,6 +136,7 @@ class DownloadsPanel(InlineDialog):
                          anchor=lambda: anchor_button.mapTo(window, QPoint(anchor_button.width() - 400,
                                                                            anchor_button.height() + 8)))
         self.tracker = tracker
+        self.window_ref = window
         self.setFixedWidth(400)
         self._rows: dict = {}
 
@@ -153,6 +155,26 @@ class DownloadsPanel(InlineDialog):
         self.btn_clear.clicked.connect(self.tracker.clear_finished)
         head.addWidget(self.btn_clear)
         root.addLayout(head)
+
+        # Pendientes (descargas que esperan a que vuelva internet)
+        self.pending_box = QFrame()
+        self.pending_box.setObjectName("OfflineBanner")
+        pl = QHBoxLayout(self.pending_box)
+        pl.setContentsMargins(12, 8, 8, 8)
+        pl.setSpacing(8)
+        self.pending_lbl = QLabel("")
+        self.pending_lbl.setWordWrap(True)
+        self.pending_lbl.setStyleSheet("background: transparent; font-size: 12px; font-weight: 600;")
+        pl.addWidget(self.pending_lbl, stretch=1)
+        self.pending_now = QPushButton("Descargar ahora")
+        self.pending_now.setCursor(Qt.PointingHandCursor)
+        self.pending_now.clicked.connect(self._pending_now)
+        pl.addWidget(self.pending_now)
+        self.pending_cancel = QPushButton("Cancelar")
+        self.pending_cancel.setCursor(Qt.PointingHandCursor)
+        self.pending_cancel.clicked.connect(self._pending_cancel)
+        pl.addWidget(self.pending_cancel)
+        root.addWidget(self.pending_box)
 
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
@@ -179,6 +201,24 @@ class DownloadsPanel(InlineDialog):
         if self.isVisible():
             self.refresh()
 
+    def refresh_pending(self):
+        n = pending_downloads.count()
+        self.pending_box.setVisible(n > 0)
+        if n:
+            offline = self.window_ref.is_offline()
+            self.pending_lbl.setText(f"{n} canción{'es' if n != 1 else ''} esperando: "
+                                     + ("se descargarán cuando vuelva internet." if offline else "listas para descargarse."))
+            self.pending_now.setVisible(not offline)
+
+    def _pending_now(self):
+        self.window_ref.resume_pending_downloads()
+
+    def _pending_cancel(self):
+        pending_downloads.clear()
+        self.window_ref._reload_pending_keys()
+        self.window_ref.refresh_download_marks()
+        self.refresh_pending()
+
     def refresh(self):
         entries = self.tracker.entries
         for key in [k for k in self._rows if k not in entries]:
@@ -198,6 +238,7 @@ class DownloadsPanel(InlineDialog):
                     self.body_layout.removeWidget(row)
                     self.body_layout.insertWidget(pos, row)
             row.update_from(entry)
+        self.refresh_pending()
         self.empty.setVisible(not entries)
         self.btn_clear.setVisible(any(e["state"] not in ACTIVE_STATES for e in entries.values()))
         self.scroll.setFixedHeight(max(70, min(380, self.body.sizeHint().height() + 6)))

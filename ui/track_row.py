@@ -8,7 +8,7 @@ import os
 
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QSizePolicy
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QSizePolicy, QWidget
 
 from services.playlist_service import PlaylistService
 from ui.formatting import format_added
@@ -47,10 +47,13 @@ class TrackRow(QFrame):
         self._playing = False
         self._downloading = False
         self._thumb_loader = None
+        self._blocked = False       # sin conexión y sin descargar: oscurecida y no se puede usar
+        self._veil = None
         self._detect_downloaded()
         self.setProperty("selected", False)
         self.init_ui()
         self.refresh_state()
+        self.apply_offline()
 
     # ------------------------------------------------------------------ datos
     def _detect_downloaded(self):
@@ -179,9 +182,14 @@ class TrackRow(QFrame):
             self.heart_btn.setIcon(save_icon(False, color) if active else _EMPTY)
 
         local = bool(self.item_info.get("local_path"))
+        pending = (not local) and getattr(self.parent_window, "is_pending", lambda _i: False)(self.item_info)
         if local:
             self.dl_btn.setIcon(icon("check_circle.svg", accent()))
             self.dl_btn.setToolTip("Descargada en tu equipo")
+            self.dl_btn.setEnabled(False)
+        elif pending and not self._downloading:
+            self.dl_btn.setIcon(icon("clock.svg", "#FFD166"))
+            self.dl_btn.setToolTip("Pendiente: se descargará cuando vuelva internet")
             self.dl_btn.setEnabled(False)
         elif self._downloading:
             self.dl_btn.setIcon(icon("clock.svg", accent()))
@@ -196,6 +204,37 @@ class TrackRow(QFrame):
 
     def update_heart_state(self):
         self.refresh_state()
+
+    # ------------------------------------------------------------ sin conexión
+    def apply_offline(self):
+        """Sin internet, las canciones no descargadas se oscurecen y no se pueden seleccionar ni reproducir."""
+        checker = getattr(self.parent_window, "offline_blocks", None)
+        blocked = bool(checker(self.item_info)) if checker else False
+        if blocked == self._blocked:
+            return
+        self._blocked = blocked
+        self.setEnabled(not blocked)
+        if blocked:
+            if self._veil is None:
+                self._veil = QWidget(self)
+                self._veil.setObjectName("OfflineVeil")
+                self._veil.setAttribute(Qt.WA_StyledBackground, True)
+                self._veil.setAttribute(Qt.WA_TransparentForMouseEvents)
+            self._veil.setGeometry(self.rect())
+            self._veil.show()
+            self._veil.raise_()
+            self.setToolTip("Sin conexión: esta canción no está descargada")
+            if getattr(self.parent_window, "_selected_row", None) is self:
+                self.set_selected(False)
+        else:
+            if self._veil is not None:
+                self._veil.hide()
+            self.setToolTip("")
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self._veil is not None and self._blocked:
+            self._veil.setGeometry(self.rect())
 
     def set_number(self, number: int):
         if number != self.number:

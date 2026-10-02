@@ -9,15 +9,19 @@ import threading
 from collections import OrderedDict
 
 import requests
+from services import http
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Qt, Signal, QTimer, QRectF
 from PySide6.QtGui import QImage, QPixmap, QPainter, QPainterPath
 
 from config import APP_DATA_DIR
-from ui.perf import image_scale
+from ui.perf import image_scale, eco
 
 CACHE_DIR = APP_DATA_DIR / "img_cache"
 DISK_LIMIT_MB = 60
 MEMORY_ENTRIES = 90
+MEMORY_BYTES_ECO = 20 * 1024 * 1024       # tope de memoria para imágenes ya vistas (modo ahorro)
+MEMORY_BYTES = 48 * 1024 * 1024
+_memory_bytes = 0
 
 _pool = QThreadPool()
 _pool.setMaxThreadCount(3)
@@ -33,11 +37,29 @@ def _memory_get(key):
     return pix
 
 
+def _pix_bytes(pix) -> int:
+    return pix.width() * pix.height() * 4
+
+
 def _memory_put(key, pix):
+    """Guarda la imagen en memoria; se descartan las más antiguas al pasar de cierto número o de cierto peso."""
+    global _memory_bytes
+    old = _memory.pop(key, None)
+    if old is not None:
+        _memory_bytes -= _pix_bytes(old)
     _memory[key] = pix
-    _memory.move_to_end(key)
-    while len(_memory) > MEMORY_ENTRIES:
-        _memory.popitem(last=False)
+    _memory_bytes += _pix_bytes(pix)
+    budget = MEMORY_BYTES_ECO if eco() else MEMORY_BYTES
+    while _memory and (len(_memory) > MEMORY_ENTRIES or _memory_bytes > budget):
+        _k, dropped = _memory.popitem(last=False)
+        _memory_bytes -= _pix_bytes(dropped)
+
+
+def clear_memory_cache():
+    global _memory_bytes
+    with _lock:
+        _memory.clear()
+        _memory_bytes = 0
 
 
 def prune_disk_cache():
@@ -104,7 +126,10 @@ class _Task(QRunnable):
                 return cached.read_bytes()
         except OSError:
             pass
-        r = requests.get(self.source, timeout=7)
+        from services import network_service
+        if not network_service.is_online():
+            return None          # sin conexión no se espera a que caduque cada petición: las imágenes ya vistas salen de la caché
+        r = http.get(self.source, timeout=7)
         if r.status_code != 200:
             return None
         try:
@@ -124,7 +149,10 @@ class _Task(QRunnable):
                     result = _shape(img, self.w, self.h, self.scale, self.circular, self.radius)
         except Exception:
             result = None
-        self.signals.done.emit(result)
+        try:
+            self.signals.done.emit(result)
+        except RuntimeError:
+            pass          # la tarjeta que pidió la imagen ya se cerró: no hace falta avisar a nadie
 
 
 class _BaseLoader(QObject):

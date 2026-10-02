@@ -10,6 +10,7 @@ from PySide6.QtCore import QThread, Signal
 from services.ffmpeg_service import FFmpegService
 from services.metadata_service import MetadataService
 from config import HISTORY_FILE, get_download_dir, get_audio_quality
+from services import quality as quality_service
 
 logger = logging.getLogger(__name__)
 history_lock = threading.Lock()
@@ -321,40 +322,8 @@ class DownloadWorker(QThread):
         base_name = sanitize_filename(f"{artist} - {title}")
         format_code = (self.quality or '320').lower()
 
-        postprocessors = []
-        if format_code == 'm4a':
-            final_ext = "m4a"
-            # Extracción directa del contenedor AAC nativo sin recodificar
-            postprocessors.append({
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'm4a',
-            })
-        elif format_code == 'flac':
-            final_ext = "flac"
-            postprocessors.append({
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'flac',
-            })
-        elif format_code == 'wav':
-            final_ext = "wav"
-            postprocessors.append({
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'wav',
-            })
-        elif format_code == '192':
-            final_ext = "mp3"
-            postprocessors.append({
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '192',
-            })
-        else:  # Predeterminado: 320 kbps MP3
-            final_ext = "mp3"
-            postprocessors.append({
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '320',
-            })
+        final_ext = quality_service.encoder(format_code)[2]
+        postprocessors = [quality_service.postprocessor(format_code)]
 
         out_template = str(target_dir / f"{base_name}.%(ext)s")
 
@@ -399,6 +368,7 @@ class DownloadWorker(QThread):
                 )
 
             if os.path.exists(final_file):
+                self._embed_lyrics(final_file, title, artist)
                 save_to_history(video_id, f"{artist} - {title}", final_file)
 
             self.finished_signal.emit({
@@ -419,6 +389,21 @@ class DownloadWorker(QThread):
                 'mp3_path': None,
                 'error': str(e)
             })
+
+    @staticmethod
+    def _embed_lyrics(path: str, title: str, artist: str):
+        """Busca la letra y la guarda dentro del archivo (así funciona sin internet y viaja con la canción).
+        Si no hay letra o falla, no pasa nada."""
+        try:
+            from services import lyrics_service, lyrics_store, network_service
+            if not network_service.is_online():
+                return
+            result = lyrics_service.fetch_lyrics(title, artist, max_seconds=8)
+            if result:
+                lyrics_store.write_embedded(path, result)
+                lyrics_store.save_online(lyrics_store.key_for(title, artist), result)
+        except Exception as e:
+            logger.info(f"No se pudo guardar la letra en el archivo: {e}")
 
     def _on_progress(self, d):
         if self.is_cancelled:

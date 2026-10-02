@@ -186,7 +186,8 @@ class LyricsBox(QFrame):
                 self._worker.lyrics_error.disconnect()
             except (RuntimeError, TypeError):
                 pass
-        self._worker = LyricsWorker(title, artist, self.window_ref.lyrics_key())
+        info = self.window_ref.current_item_info or {}
+        self._worker = LyricsWorker(title, artist, self.window_ref.lyrics_key(), info.get("local_path") or "")
         self._worker.lyrics_ready.connect(lambda data, k=key: self._on_ready(data, k))
         self._worker.lyrics_error.connect(lambda msg, k=key: self._on_error(msg, k))
         self._worker.start()

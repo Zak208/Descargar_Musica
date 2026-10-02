@@ -1,6 +1,7 @@
 import faulthandler; faulthandler.dump_traceback_later(100, exit=True)
 import os, sys, time
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
+import _aislar  # noqa: F401  (datos temporales: no se tocan los del usuario)
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from PySide6.QtWidgets import QApplication
 app = QApplication([])

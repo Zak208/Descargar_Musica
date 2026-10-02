@@ -220,6 +220,25 @@ QLabel#PanelArtistLink {
 QLabel#PanelArtistLink:hover {
     color: #FFFFFF;
 }
+QFrame#OfflineBanner {
+    background-color: rgba(255, 209, 102, 0.14);
+    border: 1px solid rgba(255, 209, 102, 0.45);
+    border-radius: 10px;
+}
+QFrame#OfflineBox {
+    background-color: #181818;
+    border: 1px solid #2A2A2A;
+    border-radius: 14px;
+}
+QWidget#OfflineVeil {
+    background-color: rgba(18, 18, 18, 165);
+    border-radius: 8px;
+}
+QFrame#TourBubble {
+    background-color: #282828;
+    border: 1px solid #4A4A4A;
+    border-radius: 14px;
+}
 QFrame#SavePopup {
     background-color: #282828;
     border: 1px solid #3A3A3A;
@@ -889,6 +908,23 @@ QCheckBox::indicator:checked {
     background-color: #1ED760;
     border-color: #1ED760;
     image: url(assets/icons/check_black.svg);
+}
+
+QRadioButton {
+    color: #E0E0E0;
+    font-size: 13px;
+    spacing: 10px;
+}
+QRadioButton::indicator {
+    width: 16px;
+    height: 16px;
+    border-radius: 9px;
+    border: 2px solid #727272;
+    background-color: transparent;
+}
+QRadioButton::indicator:checked {
+    border: 5px solid #1ED760;
+    background-color: #121212;
 }
 
 /* BOTÓN GRANDE DE REPRODUCIR LISTA */
