@@ -22,10 +22,28 @@ def _yt():
 
 
 
+YOUTUBE_HOSTS = ("youtube.com", "youtu.be", "youtube-nocookie.com")
+
+
+def _host_of(text: str) -> str:
+    from urllib.parse import urlparse
+    text = text.strip()
+    if "://" not in text:
+        text = "https://" + text
+    try:
+        return (urlparse(text).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
 def is_youtube_url(text: str) -> bool:
-    """Verifica si el texto introducido es un enlace de YouTube."""
-    text = text.strip().lower()
-    return "youtube.com/" in text or "youtu.be/" in text
+    """Verifica si el texto introducido es un enlace de YouTube (el servidor tiene que ser de YouTube, no basta con
+    que el texto lo mencione)."""
+    text = text.strip()
+    if not text or " " in text:
+        return False
+    host = _host_of(text)
+    return any(host == h or host.endswith("." + h) for h in YOUTUBE_HOSTS) and "/" in text.split("://", 1)[-1]
 
 
 def is_playlist_url(text: str) -> bool:
@@ -34,10 +52,18 @@ def is_playlist_url(text: str) -> bool:
     return is_youtube_url(text) and ("list=" in text or "/playlist" in text)
 
 
+MAX_NAME_LEN = 120
+RESERVED_NAMES = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
+
+
 def sanitize_filename(name: str) -> str:
     """Elimina caracteres ilegales en nombres de archivo de Windows."""
-    sanitized = re.sub(r'[<>:"/\\|?*]', '_', name)
+    sanitized = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', name)
     sanitized = re.sub(r'\s+', ' ', sanitized).strip('. ')
+    if len(sanitized) > MAX_NAME_LEN:                    # rutas de Windows demasiado largas
+        sanitized = sanitized[:MAX_NAME_LEN].rstrip('. ')
+    if sanitized.split('.')[0].upper() in RESERVED_NAMES:   # CON, NUL, COM1... no se pueden usar como nombre
+        sanitized = "_" + sanitized
     return sanitized or "Audio"
 
 
@@ -395,7 +421,25 @@ class DownloadWorker(QThread):
         return not is_network_error(text)       # sin internet no sirve probar con otra versión
 
     # ---------------------------------------------------------------- run
+    def cancel(self):
+        """Cancela esta descarga (se corta en cuanto yt-dlp avisa del siguiente progreso)."""
+        self.is_cancelled = True
+
     def run(self):
+        """Pase lo que pase (ruta imposible, sin permisos...) se avisa del resultado: si no, la cola se quedaba esperando."""
+        try:
+            self._run()
+        except Exception as e:
+            logger.error(f"Error preparando la descarga de {self.item_info.get('url')}: {e}")
+            self.finished_signal.emit({
+                'success': False,
+                'video_id': self.item_info.get('id'),
+                'title': self.item_info.get('title', ''),
+                'mp3_path': None,
+                'error': str(e) or "No se pudo preparar la descarga.",
+            })
+
+    def _run(self):
         url = self.item_info['url']
         video_id = self.item_info['id']
         title = self.item_info['title']
@@ -413,7 +457,7 @@ class DownloadWorker(QThread):
         format_code = (self.quality or '320').lower()
         final_ext = quality_service.encoder(format_code)[2]
         postprocessors = [quality_service.postprocessor(format_code)]
-        out_template = str(target_dir / f"{base_name}.%(ext)s")
+        out_template = str(target_dir / f"{base_name.replace('%', '%%')}.%(ext)s")   # el % es especial para yt-dlp
         final_file = str(target_dir / f"{base_name}.{final_ext}")
 
         ydl_opts = {

@@ -57,7 +57,7 @@ from ui.dialogs import ask_text, ask_confirm, show_message
 from ui.imageloader import prune_disk_cache, clear_memory_cache
 from ui import perf
 from ui.friendly import friendly_error
-from ui.common import resource_path
+from ui.common import resource_path, _ACTIVE_THREADS
 from ui.song_card import SongResultCard, square_cover
 from ui.track_row import TrackRow
 from ui.now_playing import NowPlayingPanel, PANEL_WIDTH, cover_color
@@ -99,8 +99,8 @@ class FFmpegDownloadWorker(QThread):
 
     def run(self):
         try:
-            FFmpegService.download_ffmpeg_portable(lambda msg: self.progress_signal.emit(msg))
-            self.finished_signal.emit(True)
+            ok = FFmpegService.download_ffmpeg_portable(lambda msg: self.progress_signal.emit(msg))
+            self.finished_signal.emit(bool(ok))
         except Exception:
             self.finished_signal.emit(False)
 
@@ -627,7 +627,9 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
                 return
             worker = self._words_worker
             if worker is not None and worker.isRunning():
-                return
+                if worker.key == key:
+                    return
+                worker.cancel()                 # otra canción: lo que se estaba midiendo ya no interesa
             if not transcribe_service.is_ready():
                 return
             worker = word_timing.WordTimingWorker(path, key, lines, self)
@@ -1144,10 +1146,15 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
 
     def restart_app(self):
         """Cierra y vuelve a abrir la aplicación (por ejemplo, tras restaurar una copia de seguridad)."""
-        args = [] if getattr(sys, "frozen", False) else list(sys.argv)
-        QProcess.startDetached(sys.executable, args)
+        args = [] if getattr(sys, "frozen", False) else [a for a in sys.argv if a != "--reiniciando"]
+        QProcess.startDetached(sys.executable, args + ["--reiniciando"])     # la nueva espera a que esta termine de cerrar
+        self._quitting = True
         self.close()
         QApplication.quit()
+
+    def bring_to_front(self):
+        """Otra copia de la aplicación intentó abrirse: se enseña esta ventana."""
+        self.show_from_tray()
 
     # ---------- primer uso y recorrido ----------
     def maybe_show_welcome(self):
@@ -1278,7 +1285,12 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             self.on_ffmpeg_finished(True)
 
     def on_ffmpeg_finished(self, success):
-        self.status_label.setText("Escribe el nombre de una canción o artista para empezar.")
+        self._ffmpeg_missing = not success
+        if success:
+            self.status_label.setText("Escribe el nombre de una canción o artista para empezar.")
+        else:
+            self.status_label.setText("Falta un componente de audio. Se volverá a intentar cuando haya internet.")
+            self.notify("No se pudo preparar el componente de audio (FFmpeg). Lo intentaremos de nuevo cuando haya conexión.")
 
     def open_music_folder(self):
         folder = str(get_download_dir())
@@ -1555,12 +1567,17 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         stem, ext = os.path.splitext(os.path.basename(path))
         new_name, ok = ask_text(self, "Cambiar nombre", "Nuevo nombre del archivo", text=stem, ok="Guardar")
         if ok and new_name.strip() and new_name.strip() != stem:
-            new_path = os.path.join(os.path.dirname(path), new_name.strip() + ext)
+            from services.youtube_service import sanitize_filename
+            new_path = os.path.join(os.path.dirname(path), sanitize_filename(new_name) + ext)
+            if os.path.exists(new_path) and os.path.normcase(new_path) != os.path.normcase(path):
+                show_message(self, "No se pudo cambiar el nombre", "Ya hay un archivo con ese nombre.")
+                return
             try:
                 os.rename(path, new_path)
             except Exception as e:
                 show_message(self, "No se pudo cambiar el nombre", str(e))
                 return
+            PlaylistService.relocate(path, new_path)         # listas y favoritos siguen encontrando la canción
             self.rescan_library()
 
     def show_in_explorer(self, path):
@@ -1580,6 +1597,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         from services import recycle
         name = os.path.basename(path)
         if recycle.move_to_recycle_bin(path):
+            PlaylistService.relocate(path)
             self.rescan_library()
             margin = (self.player_bar.height() + 24) if self.player_bar.isVisible() else 40
             self.toast.show_message(f"«{name}» está en la papelera de Windows", bottom_margin=margin,
@@ -1594,6 +1612,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             except Exception as e:
                 show_message(self, "No se pudo borrar", str(e))
                 return
+            PlaylistService.relocate(path)
             self.rescan_library()
 
     def play_local_file(self, path: str, autoplay: bool = True, start_ms: int = 0):
@@ -2156,6 +2175,28 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             self.preview_worker.is_cancelled = True
         self._on_track_changed()
 
+    def stop_background_work(self, wait_ms: int = 2500):
+        """Pide a todos los procesos en segundo plano (descargas, búsquedas, actualización, letras...) que paren y espera un
+        momento a que lo hagan, para no dejar archivos a medias al salir."""
+        running = []
+        for thread in list(_ACTIVE_THREADS):
+            try:
+                if not thread.isRunning() or thread is QThread.currentThread():
+                    continue
+                if hasattr(thread, "cancel"):
+                    thread.cancel()
+                else:
+                    thread.is_cancelled = True
+                running.append(thread)
+            except (RuntimeError, AttributeError):
+                continue
+        deadline = time.time() + wait_ms / 1000
+        for thread in running:
+            try:
+                thread.wait(max(1, int((deadline - time.time()) * 1000)))
+            except RuntimeError:
+                pass
+
     def closeEvent(self, event):
         if self.should_close_to_tray():          # «seguir sonando en la bandeja»
             event.ignore()
@@ -2165,24 +2206,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self.save_session()
         self.shutdown_playback_options()
 
-        if hasattr(self, 'catalog_worker') and self.catalog_worker and self.catalog_worker.isRunning():
-            self.catalog_worker.is_cancelled = True
-
-        if hasattr(self, 'search_worker') and self.search_worker and self.search_worker.isRunning():
-            self.search_worker.is_cancelled = True
-
-        if hasattr(self, 'preview_worker') and self.preview_worker and self.preview_worker.isRunning():
-            self.preview_worker.is_cancelled = True
-
-        if hasattr(self, 'ffmpeg_worker') and self.ffmpeg_worker and self.ffmpeg_worker.isRunning():
-            self.ffmpeg_worker.is_cancelled = True
-
-        if hasattr(self, 'updater') and self.updater and self.updater.isRunning():
-            self.updater.is_cancelled = True
-
-        if self._eq_worker is not None and self._eq_worker.isRunning():
-            self._eq_worker.is_cancelled = True
-            self._eq_worker.wait(1500)
+        self.stop_background_work()
 
         if getattr(self, "full_player", None) is not None:
             try:

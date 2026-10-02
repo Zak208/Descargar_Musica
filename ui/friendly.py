@@ -17,7 +17,7 @@ def friendly_error(raw) -> str:
     if any(k in text for k in ("private video", "unavailable", "removed", "not available",
                                "copyright", "blocked", "no longer available", "terminated")):
         return "Esta canción no está disponible. Prueba con otra versión."
-    if any(k in text for k in ("age", "sign in", "confirm your age", "login")):
+    if any(k in text for k in ("age-restricted", "age restricted", "sign in", "confirm your age", "log in", "login required")):
         return "Esta canción requiere iniciar sesión y no se puede descargar."
     if "ffmpeg" in text or "ffprobe" in text:
         return "Falta un componente de audio. Cierra y vuelve a abrir la aplicación."

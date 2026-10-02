@@ -3,19 +3,22 @@
 No incluye las cachés ni tus canciones (esas están en tu carpeta de música). Cada vez que se restaura, antes se guarda
 una copia del estado actual por si hubo un error. Además se hace una copia automática semanal (solo las 5 últimas).
 """
+import json
 import logging
 import os
+import shutil
 import time
 import zipfile
 from datetime import datetime
 from pathlib import Path
 
-from config import APP_DATA_DIR, load_settings, save_settings
+from config import APP_DATA_DIR, load_settings, reset_settings_cache, save_settings
 
 logger = logging.getLogger(__name__)
 
 BACKUP_DIR = APP_DATA_DIR / "copias"
 AUTO_KEEP = 5
+MAX_RESTORE_BYTES = 200 * 1024 * 1024
 AUTO_EVERY_DAYS = 7
 # Lo que forma parte de la copia (archivos sueltos y carpetas dentro de la carpeta de datos)
 INCLUDE_FILES = ("settings.json", "favoritos.json", "playlists.json", "artistas_seguidos.json", "equalizer.json",
@@ -90,16 +93,29 @@ def restore_backup(path: str | os.PathLike) -> int:
     if inspect_backup(path) is None:
         raise ValueError("Ese archivo no es una copia de seguridad de la aplicación.")
     create_backup(BACKUP_DIR / f"antes-de-restaurar-{datetime.now():%Y%m%d-%H%M%S}.zip")
-    count = 0
+    wanted = []
     with zipfile.ZipFile(path) as z:
-        for name in z.namelist():
-            target = _safe_target(name)
+        for info in z.infolist():
+            target = _safe_target(info.filename)
             if target is None:
                 continue
+            if info.file_size > MAX_RESTORE_BYTES:
+                raise ValueError(f"«{info.filename}» es demasiado grande para ser de una copia de seguridad.")
+            if info.filename.lower().endswith(".json"):       # un JSON estropeado no debe pisar uno bueno
+                try:
+                    json.loads(z.read(info).decode("utf-8"))
+                except ValueError:
+                    raise ValueError(f"La copia está dañada («{info.filename}»). No se ha restaurado nada.")
+            wanted.append((info, target))
+        count = 0
+        for info, target in wanted:
             target.parent.mkdir(parents=True, exist_ok=True)
-            with z.open(name) as src, open(target, "wb") as dst:
-                dst.write(src.read())
+            tmp = Path(str(target) + ".restaurando")
+            with z.open(info) as src, open(tmp, "wb") as dst:
+                shutil.copyfileobj(src, dst)
+            os.replace(tmp, target)                              # atómico: o queda el viejo o queda el nuevo
             count += 1
+    reset_settings_cache()                                       # los ajustes en memoria ya no valen
     return count
 
 

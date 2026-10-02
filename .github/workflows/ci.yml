@@ -1,0 +1,40 @@
+# Comprobaciones en cada subida y en cada propuesta de cambios: errores de código y todas las pruebas automáticas.
+name: Comprobar el código
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: comprobar-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pruebas:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyflakes
+
+      - name: Errores de código
+        shell: pwsh
+        run: |
+          # se ignoran los avisos de «importado y sin usar»; cualquier otro aviso (nombres sin definir, etc.) falla
+          $out = python -m pyflakes ui services config.py main.py version.py 2>&1 | Where-Object { $_ -notmatch "imported but unused|assigned to but never used|f-string is missing" }
+          if ($out) { $out; throw "pyflakes encontró problemas" }
+
+      - name: Pruebas automáticas
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python dev_tools/ejecutar_pruebas.py

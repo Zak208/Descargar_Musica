@@ -46,6 +46,9 @@ class DownloadsTracker(QObject):
             "percent": 0,
             "state": "active",
             "error": "",
+            "worker": worker,          # para poder cancelarla (mientras la fila exista, el id no se repite)
+            "info": dict(info),
+            "cancelled": False,
         }
         worker.progress_signal.connect(lambda d, k=key: self._progress(k, d))
         worker.finished_signal.connect(lambda r, k=key: self._finished(k, r))
@@ -71,8 +74,20 @@ class DownloadsTracker(QObject):
         ok = bool(result.get("success"))
         entry["state"] = "done" if ok else "error"
         entry["percent"] = 100 if ok else entry["percent"]
-        entry["error"] = "" if ok else friendly_error(result.get("error"))
+        entry["error"] = "" if ok else ("Descarga cancelada." if entry.get("cancelled") else friendly_error(result.get("error")))
+        entry["worker"] = None             # ya terminó: no hace falta guardarla
         self._notify(immediate=True)
+
+    def cancel(self, key):
+        """Cancela una descarga en curso."""
+        entry = self.entries.get(key)
+        worker = entry.get("worker") if entry else None
+        if worker is not None and entry["state"] in ACTIVE_STATES:
+            entry["cancelled"] = True
+            worker.cancel()
+
+    def failed(self) -> list:
+        return [(k, e) for k, e in self.entries.items() if e["state"] == "error"]
 
     def active(self) -> list:
         return [e for e in self.entries.values() if e["state"] in ACTIVE_STATES]
@@ -89,15 +104,26 @@ class DownloadsTracker(QObject):
 class _Row(QFrame):
     """Fila de una descarga. Se reutiliza: solo se actualizan sus textos y su barra."""
 
-    def __init__(self):
+    def __init__(self, key=None, on_action=None):
         super().__init__()
+        self.key = key
+        self.on_action = on_action
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(3)
+        top = QHBoxLayout()
+        top.setSpacing(8)
         self.name = ElidedLabel("")
         self.name.setObjectName("SongTitle")
         self.name.setStyleSheet("font-size: 13px;")
-        lay.addWidget(self.name)
+        top.addWidget(self.name, stretch=1)
+        self.action = QPushButton("")
+        self.action.setCursor(Qt.PointingHandCursor)
+        self.action.setStyleSheet("font-size: 11px; padding: 2px 10px;")
+        self.action.clicked.connect(self._on_action)
+        self.action.hide()
+        top.addWidget(self.action)
+        lay.addLayout(top)
         self.status = RollLabel("")
         self.status.setStyleSheet("font-size: 12px;")
         lay.addWidget(self.status)
@@ -108,6 +134,10 @@ class _Row(QFrame):
         lay.addWidget(self.bar)
         self._shown = None
         self._state = None
+
+    def _on_action(self):
+        if self.on_action is not None:
+            self.on_action(self.action.property("kind"), self.key)
 
     def update_from(self, entry: dict):
         title = f"{entry['artist']} - {entry['title']}" if entry["artist"] else entry["title"]
@@ -130,6 +160,10 @@ class _Row(QFrame):
             flash(self, accent(), 0.22, 700, 8)          # final feliz: un destello suave
         self._state = state
         busy = state in ACTIVE_STATES
+        kind = "cancel" if busy else ("retry" if state == "error" else "")
+        self.action.setProperty("kind", kind)
+        self.action.setText("Cancelar" if kind == "cancel" else "Reintentar")
+        self.action.setVisible(bool(kind))
         self.bar.setVisible(busy)
         if busy:
             if state == "converting":
@@ -165,6 +199,11 @@ class DownloadsPanel(InlineDialog):
         self.btn_clear.setCursor(Qt.PointingHandCursor)
         self.btn_clear.clicked.connect(self.tracker.clear_finished)
         head.addWidget(self.btn_clear)
+        self.btn_retry = QPushButton("Reintentar fallidas")
+        self.btn_retry.setCursor(Qt.PointingHandCursor)
+        self.btn_retry.clicked.connect(self._retry_failed)
+        self.btn_retry.setVisible(False)
+        head.addWidget(self.btn_retry)
         root.addLayout(head)
 
         # Cola de descargas (se pueden pausar y cancelar)
@@ -267,6 +306,21 @@ class DownloadsPanel(InlineDialog):
         self.window_ref.refresh_download_marks()
         self.refresh_pending()
 
+    def _row_action(self, kind: str, key):
+        entry = self.tracker.entries.get(key)
+        if kind == "cancel":
+            self.tracker.cancel(key)
+        elif kind == "retry" and entry:
+            info = entry.get("info") or {}
+            self.tracker.entries.pop(key, None)             # la fila vieja se sustituye por la del nuevo intento
+            self.window_ref.quick_download(info)
+            self.refresh()
+
+    def _retry_failed(self):
+        for key, entry in list(self.tracker.failed()):
+            if not entry.get("cancelled"):
+                self._row_action("retry", key)
+
     def refresh(self):
         entries = self.tracker.entries
         for key in [k for k in self._rows if k not in entries]:
@@ -277,7 +331,7 @@ class DownloadsPanel(InlineDialog):
         for pos, (key, entry) in enumerate(reversed(list(entries.items()))):
             row = self._rows.get(key)
             if row is None:
-                row = _Row()
+                row = _Row(key, self._row_action)
                 self._rows[key] = row
                 self.body_layout.insertWidget(pos, row)
             else:
@@ -290,6 +344,7 @@ class DownloadsPanel(InlineDialog):
         self.refresh_queue()
         self.empty.setVisible(not entries)
         self.btn_clear.setVisible(any(e["state"] not in ACTIVE_STATES for e in entries.values()))
+        self.btn_retry.setVisible(any(e["state"] == "error" and not e.get("cancelled") for e in entries.values()))
         self.scroll.setFixedHeight(max(70, min(380, self.body.sizeHint().height() + 6)))
 
     def toggle(self):

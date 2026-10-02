@@ -1,30 +1,70 @@
-import json
+import copy
+import os
 import uuid
 from datetime import datetime
 import logging
-from config import FAVORITES_FILE, PLAYLISTS_FILE, COVERS_DIR
+from config import FAVORITES_FILE, PLAYLISTS_FILE, COVERS_DIR, atomic_write_json, read_json
 
 logger = logging.getLogger(__name__)
 
 
+_UNKNOWN_ARTIST = "artista desconocido"
+
+
+def _norm(text) -> str:
+    return " ".join(str(text or "").strip().lower().split())
+
+
 class PlaylistService:
-    @staticmethod
-    def _load_json(file_path, default_val):
-        if file_path.exists():
-            try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception as e:
-                logger.error(f"Error cargando {file_path}: {e}")
-        return default_val
+    # Caché en memoria de favoritos y listas: pasar el ratón por una fila consultaba estos archivos cada vez.
+    # Se invalida sola si el archivo cambia (fecha y tamaño) o al guardar.
+    _cache: dict = {}
 
     @staticmethod
-    def _save_json(file_path, data):
+    def _stamp(file_path):
         try:
-            from config import atomic_write_json
+            st = os.stat(file_path)
+            return (st.st_mtime_ns, st.st_size)
+        except OSError:
+            return None
+
+    @classmethod
+    def _shared(cls, file_path, default_val):
+        """Datos compartidos (NO se deben modificar). Para modificar, usa `_load_json`."""
+        stamp = cls._stamp(file_path)
+        hit = cls._cache.get(str(file_path))
+        if hit is not None and hit[0] == stamp:
+            return hit[1]
+        data = read_json(file_path, None)
+        if data is None or not isinstance(data, type(default_val)):
+            data = copy.deepcopy(default_val)
+        cls._cache[str(file_path)] = (cls._stamp(file_path), data)
+        return data
+
+    @classmethod
+    def _load_json(cls, file_path, default_val):
+        return copy.deepcopy(cls._shared(file_path, default_val))
+
+    @classmethod
+    def _save_json(cls, file_path, data):
+        try:
             atomic_write_json(file_path, data)
+            cls._cache[str(file_path)] = (cls._stamp(file_path), copy.deepcopy(data))
         except Exception as e:
+            cls._cache.pop(str(file_path), None)
             logger.error(f"Error guardando {file_path}: {e}")
+
+    @staticmethod
+    def _same(t: dict, track_id: str, title: str, artist: str = "") -> bool:
+        """¿Es la misma canción? Mismo identificador o, si no, mismo título y el mismo artista (si se conocen los dos)."""
+        if track_id and str(t.get("id")) == track_id:
+            return True
+        if not title or _norm(t.get("title")) != title:
+            return False
+        other = _norm(t.get("uploader"))
+        if not artist or not other or artist == _UNKNOWN_ARTIST or other == _UNKNOWN_ARTIST:
+            return True
+        return artist == other or artist in other or other in artist
 
     # ================= FAVORITOS =================
     @classmethod
@@ -32,25 +72,21 @@ class PlaylistService:
         return cls._load_json(FAVORITES_FILE, [])
 
     @classmethod
-    def is_favorite(cls, track_id: str, track_title: str = "") -> bool:
-        favs = cls.get_favorites()
-        for t in favs:
-            if track_id and str(t.get("id")) == str(track_id):
-                return True
-            if track_title and t.get("title", "").strip().lower() == track_title.strip().lower():
-                return True
-        return False
+    def is_favorite(cls, track_id: str, track_title: str = "", artist: str = "") -> bool:
+        title = _norm(track_title)
+        return any(cls._same(t, str(track_id or ""), title, _norm(artist)) for t in cls._shared(FAVORITES_FILE, []))
 
     @classmethod
     def toggle_favorite(cls, track_info: dict) -> bool:
         """Alterna el estado de favorito de una canción. Retorna True si ahora es favorita."""
         favs = cls.get_favorites()
         track_id = str(track_info.get("id", ""))
-        title = track_info.get("title", "").strip().lower()
+        title = _norm(track_info.get("title"))
+        artist = _norm(track_info.get("uploader"))
 
         found_idx = -1
         for idx, t in enumerate(favs):
-            if (track_id and str(t.get("id")) == track_id) or (title and t.get("title", "").strip().lower() == title):
+            if cls._same(t, track_id, title, artist):
                 found_idx = idx
                 break
 
@@ -167,11 +203,10 @@ class PlaylistService:
         return True
 
     @classmethod
-    def get_favorite(cls, track_id: str, title: str = ""):
-        for t in cls.get_favorites():
-            if track_id and str(t.get("id")) == str(track_id):
-                return dict(t)
-            if title and t.get("title", "").strip().lower() == title.strip().lower():
+    def get_favorite(cls, track_id: str, title: str = "", artist: str = ""):
+        title = _norm(title)
+        for t in cls._shared(FAVORITES_FILE, []):
+            if cls._same(t, str(track_id or ""), title, _norm(artist)):
                 return dict(t)
         return None
 
@@ -217,11 +252,12 @@ class PlaylistService:
 
         tracks = playlists[playlist_id].setdefault("tracks", [])
         track_id = str(track_info.get("id", ""))
-        title = track_info.get("title", "").strip().lower()
+        title = _norm(track_info.get("title"))
+        artist = _norm(track_info.get("uploader"))
 
         # Evitar duplicados exactos en la misma playlist
         for t in tracks:
-            if (track_id and str(t.get("id")) == track_id) or (title and t.get("title", "").strip().lower() == title):
+            if cls._same(t, track_id, title, artist):
                 return False
 
         item = {
@@ -257,20 +293,17 @@ class PlaylistService:
         return False
 
     # ================= PERTENENCIA A LISTAS =================
-    @staticmethod
-    def _same_track(t: dict, track_id: str, title: str) -> bool:
-        return bool((track_id and str(t.get("id")) == track_id) or (title and t.get("title", "").strip().lower() == title))
-
     @classmethod
     def lists_containing(cls, track_info: dict) -> set:
         """Claves de las listas donde está la canción: 'favorites' y/o los identificadores de tus playlists."""
         track_id = str(track_info.get("id", ""))
-        title = track_info.get("title", "").strip().lower()
+        title = _norm(track_info.get("title"))
+        artist = _norm(track_info.get("uploader"))
         found = set()
-        if cls.is_favorite(track_id, track_info.get("title", "")):
+        if any(cls._same(t, track_id, title, artist) for t in cls._shared(FAVORITES_FILE, [])):
             found.add("favorites")
-        for p_id, data in cls.get_playlists().items():
-            if any(cls._same_track(t, track_id, title) for t in data.get("tracks", [])):
+        for p_id, data in cls._shared(PLAYLISTS_FILE, {}).items():
+            if any(cls._same(t, track_id, title, artist) for t in data.get("tracks", [])):
                 found.add(p_id)
         return found
 
@@ -278,11 +311,39 @@ class PlaylistService:
     def toggle_in_playlist(cls, playlist_id: str, track_info: dict) -> bool:
         """Añade la canción a la lista o la quita si ya estaba. Devuelve True si ahora está dentro."""
         track_id = str(track_info.get("id", ""))
-        title = track_info.get("title", "").strip().lower()
-        playlists = cls.get_playlists()
-        tracks = playlists.get(playlist_id, {}).get("tracks", [])
-        match = next((t for t in tracks if cls._same_track(t, track_id, title)), None)
+        title = _norm(track_info.get("title"))
+        artist = _norm(track_info.get("uploader"))
+        tracks = cls._shared(PLAYLISTS_FILE, {}).get(playlist_id, {}).get("tracks", [])
+        match = next((t for t in tracks if cls._same(t, track_id, title, artist)), None)
         if match is None:
             return cls.add_track_to_playlist(playlist_id, track_info)
         cls.remove_track_from_playlist(playlist_id, match.get("id"))
         return False
+
+    @classmethod
+    def relocate(cls, old_path: str, new_path: str = "") -> int:
+        """Una canción cambió de sitio (o se borró): actualiza su ruta en favoritos y listas. Devuelve cuántas entradas tocó."""
+        if not old_path:
+            return 0
+        key = os.path.normcase(os.path.abspath(old_path))
+        changed = 0
+        favs = cls._load_json(FAVORITES_FILE, [])
+        playlists = cls._load_json(PLAYLISTS_FILE, {})
+        groups = [(favs, FAVORITES_FILE, [favs]),
+                  (playlists, PLAYLISTS_FILE, [p.get("tracks", []) for p in playlists.values()])]
+        for data, file_path, lists in groups:
+            touched = False
+            for tracks in lists:
+                for t in tracks:
+                    lp = t.get("local_path")
+                    if lp and os.path.normcase(os.path.abspath(lp)) == key:
+                        if new_path:
+                            t["local_path"] = new_path
+                        else:
+                            t.pop("local_path", None)
+                            t.pop("already_downloaded", None)
+                        touched = True
+                        changed += 1
+            if touched:
+                cls._save_json(file_path, data)
+        return changed

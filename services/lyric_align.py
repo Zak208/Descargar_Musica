@@ -187,7 +187,7 @@ class AlignWorker(QThread):
             return
         work = tempfile.mkdtemp(prefix="sincro_")
         try:
-            with heavy_task():
+            with heavy_task("slow"):
                 wav = os.path.join(work, "audio.wav")
                 conv = subprocess.run([ffmpeg, "-y", "-v", "error", "-i", self.audio_path, "-vn", "-ac", "1", "-ar", "16000",
                                        "-c:a", "pcm_s16le", wav], capture_output=True, timeout=300)

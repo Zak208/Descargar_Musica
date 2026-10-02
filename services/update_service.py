@@ -1,7 +1,7 @@
 """Actualizaciones: del motor de descargas (yt-dlp) y aviso de versiones nuevas de la aplicación.
 
-Todo sale de GitHub (peticiones públicas, sin cuenta). Solo se consulta con conexión: la aplicación cada hora como mucho
-(para que una versión nueva te llegue pronto) y el motor de descargas una vez al día."""
+Todo sale de GitHub (peticiones públicas, sin cuenta). Solo se consulta con conexión: la aplicación cada pocos minutos como mucho
+(para que una versión nueva te llegue pronto). Las consultas llevan ETag: si no hay novedades no cuentan en el límite de GitHub."""
 import hashlib
 import logging
 import os
@@ -36,20 +36,44 @@ def mark_checked(setting_key: str) -> None:
     save_settings(settings)
 
 
-def latest_ytdlp_tag() -> str | None:
-    r = http.get(YTDLP_API, headers={"Accept": "application/vnd.github+json"}, timeout=10)
+def _latest_tag(url: str, key: str) -> str | None:
+    """`tag_name` de la última versión publicada en `url`. Pide solo lo que cambió (ETag): si no hay novedades GitHub
+    contesta «304» sin contarlo en el límite de peticiones. Si GitHub dice «demasiadas peticiones», espera una hora."""
+    settings = load_settings()
+    cached = settings.get(f"tag_{key}")
+    if time.time() < float(settings.get("update_backoff_until", 0) or 0):
+        return cached
+    headers = {"Accept": "application/vnd.github+json"}
+    if settings.get(f"etag_{key}") and cached:
+        headers["If-None-Match"] = settings[f"etag_{key}"]
+    r = http.get(url, headers=headers, timeout=10)
+    if r.status_code == 304:
+        return cached
+    if r.status_code in (403, 429):
+        settings["update_backoff_until"] = time.time() + 3600
+        save_settings(settings)
+        return cached
     if r.status_code != 200:
         return None
-    return (r.json().get("tag_name") or "").strip() or None
+    tag = (r.json().get("tag_name") or "").strip() or None
+    if tag:
+        settings = load_settings()
+        settings[f"tag_{key}"] = tag
+        if r.headers.get("ETag"):
+            settings[f"etag_{key}"] = r.headers["ETag"]
+        save_settings(settings)
+    return tag
+
+
+def latest_ytdlp_tag() -> str | None:
+    return _latest_tag(YTDLP_API, "ytdlp")
 
 
 def latest_app_version() -> str | None:
     """Versión más reciente publicada de la aplicación (sin la «v»)."""
-    r = http.get(APP_API, headers={"Accept": "application/vnd.github+json"}, timeout=10)
-    if r.status_code == 200:
-        tag = (r.json().get("tag_name") or "").strip()
-        if tag:
-            return tag.lstrip("vV")
+    tag = _latest_tag(APP_API, "app")
+    if tag:
+        return tag.lstrip("vV")
     r = http.get(APP_TAGS, headers={"Accept": "application/vnd.github+json"}, timeout=10)
     if r.status_code == 200:
         tags = [t.get("name", "") for t in r.json() if isinstance(t, dict)]

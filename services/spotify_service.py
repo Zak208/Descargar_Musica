@@ -9,8 +9,15 @@ logger = logging.getLogger(__name__)
 
 def is_spotify_url(text: str) -> bool:
     """Verifica si el texto introducido es un enlace de Spotify."""
-    text = text.strip().lower()
-    return "open.spotify.com/" in text or "spotify.link/" in text
+    from urllib.parse import urlparse
+    text = text.strip()
+    if not text or " " in text:
+        return False
+    try:
+        host = (urlparse(text if "://" in text else "https://" + text).hostname or "").lower()
+    except ValueError:
+        return False
+    return host in ("open.spotify.com", "spotify.link") and "/" in text.split("://", 1)[-1]
 
 
 def is_spotify_playlist_or_album(text: str) -> bool:
@@ -26,8 +33,7 @@ def get_spotify_track_info(url: str) -> dict | None:
         match = re.search(r'spotify\.com/track/([a-zA-Z0-9]+)', url)
         if not match:
             # Probar vía oEmbed
-            oembed_url = f"https://open.spotify.com/oembed?url={url}"
-            r = http.get(oembed_url, timeout=5)
+            r = http.get("https://open.spotify.com/oembed", params={"url": url}, timeout=5)
             if r.status_code == 200:
                 data = r.json()
                 title = data.get("title", "")
@@ -62,8 +68,7 @@ def get_spotify_track_info(url: str) -> dict | None:
 
                 if not thumb:
                     try:
-                        oembed_url = f"https://open.spotify.com/oembed?url={url}"
-                        r_oe = http.get(oembed_url, timeout=3)
+                        r_oe = http.get("https://open.spotify.com/oembed", params={"url": url}, timeout=3)
                         if r_oe.status_code == 200:
                             thumb = r_oe.json().get("thumbnail_url", "")
                     except Exception:

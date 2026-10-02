@@ -181,7 +181,7 @@ class TranscribeWorker(QThread):
 
     def run(self):
         from services.heavy import heavy_task
-        with heavy_task():
+        with heavy_task("slow"):
             self._transcribe()
 
     def _transcribe(self):

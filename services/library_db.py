@@ -7,8 +7,8 @@ Frente al JSON anterior:
 """
 import json
 import logging
-import os
 import sqlite3
+import threading
 import time
 from contextlib import contextmanager
 
@@ -45,16 +45,38 @@ CREATE INDEX IF NOT EXISTS idx_tracks_album ON tracks(album);
 """
 
 
+SCHEMA_VERSION = 1       # PRAGMA user_version: si cambia una tabla, súbelo y añade el paso en _migrate()
+_ready = False
+_ready_lock = threading.Lock()
+
+
+def _migrate(con) -> None:
+    """Crea las tablas (la primera vez en cada ejecución) y aplica los cambios de versiones anteriores."""
+    current = con.execute("PRAGMA user_version").fetchone()[0]
+    con.executescript(SCHEMA)
+    # (aquí irán los pasos «si current < 2: ALTER TABLE ...» cuando alguna tabla cambie)
+    if current < SCHEMA_VERSION:
+        con.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+
+
 @contextmanager
 def connect():
-    """Conexión corta (se abre y se cierra): se puede usar desde cualquier hilo."""
+    """Conexión corta (se abre y se cierra): se puede usar desde cualquier hilo. El esquema se comprueba una sola vez."""
+    global _ready
     DB_FILE.parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(str(DB_FILE), timeout=10)
+    if not DB_FILE.exists():
+        _ready = False              # la base se borró (copia restaurada, limpieza...): hay que crearla otra vez
+    con = sqlite3.connect(str(DB_FILE), timeout=5)
     con.row_factory = sqlite3.Row
     try:
-        con.execute("PRAGMA journal_mode=WAL")
+        if not _ready:
+            with _ready_lock:
+                if not _ready:
+                    con.execute("PRAGMA journal_mode=WAL")
+                    _migrate(con)
+                    con.commit()
+                    _ready = True
         con.execute("PRAGMA synchronous=NORMAL")
-        con.executescript(SCHEMA)
         yield con
         con.commit()
     finally:
@@ -95,7 +117,6 @@ def apply_changes(upserts: list, removed: list) -> None:
             "album=excluded.album, duration=excluded.duration, genre=excluded.genre, year=excluded.year, "
             "track_no=excluded.track_no, tagver=excluded.tagver", upserts)
         con.executemany("DELETE FROM tracks WHERE path=?", [(p,) for p in removed])
-        con.executemany("DELETE FROM plays WHERE path=?", [(p,) for p in removed])
 
 
 # ----------------------------------------------------------- reproducciones

@@ -48,6 +48,7 @@ class ListsMixin:
         self._lib_filter = "all"
         self._side_items = {}
         self._avatar_jobs = []
+        QTimer.singleShot(50, self._first_scan)
 
     # ------------------------------------------------------------ biblioteca
     def watch_library(self):
@@ -61,13 +62,19 @@ class ListsMixin:
     def library_items(self) -> list:
         """Canciones descargadas (más recientes primero) con título, artista, álbum y duración."""
         if self._lib_items is None:
-            self._lib_items = load_items_sync()   # solo la primera vez, si aún no terminó la lectura en segundo plano
-            self.invalidate_library()
+            # aún no terminó la primera lectura (se hace en segundo plano): leerla aquí bloquearía la ventana
+            if self._lib_worker is None or not self._lib_worker.isRunning():
+                self._start_scan()
+            return []
         return self._lib_items
 
     def rescan_library(self):
         """Vuelve a leer la biblioteca en segundo plano (con una pequeña espera para agrupar cambios)."""
         self._rescan_timer.start()
+
+    def _first_scan(self):
+        if self._lib_items is None and (self._lib_worker is None or not self._lib_worker.isRunning()):
+            self._start_scan()
 
     def _start_scan(self):
         if self._lib_worker is not None and self._lib_worker.isRunning():
@@ -453,7 +460,7 @@ class ListsMixin:
         add(menu, "Reproducir a continuación", "queue.svg", lambda: self.add_to_queue(info))
         menu.addSeparator()
 
-        is_fav = PlaylistService.is_favorite(info.get('id'), info.get('title'))
+        is_fav = PlaylistService.is_favorite(info.get('id'), info.get('title'), info.get('uploader', ''))
         add(menu, "Quitar de Canciones que te gustan" if is_fav else "Añadir a Canciones que te gustan",
             "added.svg" if is_fav else "plus_circle.svg",
             lambda: self.toggle_info_favorite(info), accent() if is_fav else None)
@@ -549,7 +556,7 @@ class ListsMixin:
         added = 0
         for info in infos:
             if kind == "favorites":
-                if not PlaylistService.is_favorite(info.get("id"), info.get("title")):
+                if not PlaylistService.is_favorite(info.get("id"), info.get("title"), info.get("uploader", "")):
                     PlaylistService.toggle_favorite(info)
                     added += 1
             elif kind == "playlist":
@@ -587,7 +594,7 @@ class ListsMixin:
         self.refresh_current_list()
 
     def toggle_info_favorite(self, info: dict):
-        stored = PlaylistService.get_favorite(str(info.get("id", "")), info.get("title", ""))
+        stored = PlaylistService.get_favorite(str(info.get("id", "")), info.get("title", ""), info.get("uploader", ""))
         is_fav = PlaylistService.toggle_favorite(info)
         self.sync_favorite_hearts()
         if is_fav:

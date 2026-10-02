@@ -235,7 +235,7 @@ class WordTimingWorker(QThread):
             return
         work = tempfile.mkdtemp(prefix="palabras_")
         try:
-            with heavy_task():
+            with heavy_task("slow"):
                 if self.is_cancelled:
                     return
                 wav = os.path.join(work, "audio.wav")

@@ -25,6 +25,8 @@ def _scrub(text: str) -> str:
     if user and len(user) > 2:
         text = re.sub(re.escape(user), "usuario", text, flags=re.IGNORECASE)
     text = re.sub(r"[\w.+-]+@[\w-]+\.[\w.-]+", "<correo>", text)
+    text = re.sub(r"https?://\S+", "<enlace>", text)
+    text = re.sub(r"\([^()\n]{3,80} - [^()\n]{2,80}\)", "(<canción>)", text)     # «Intento fallido (Artista - Título)»
     return text
 
 

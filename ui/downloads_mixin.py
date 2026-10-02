@@ -83,6 +83,8 @@ class DownloadsMixin:
         keys = {str(i.get("id") or i.get("url") or i.get("title")) for i in self.batch_queue}
         keys |= {str(w.item_info.get("id") or w.item_info.get("url") or w.item_info.get("title"))
                  for w in self._batch_workers}
+        keys |= {str((e.get("info") or {}).get("id") or (e.get("info") or {}).get("url") or (e.get("info") or {}).get("title"))
+                 for e in self.downloads.active()}        # también las sueltas que están bajando ahora mismo
         return keys
 
     def estimate_download(self, items: list) -> tuple:
@@ -208,6 +210,11 @@ class DownloadsMixin:
 
     def quick_download(self, info: dict, on_done=None):
         """Descarga una canción directamente (sin pasar por la lista de resultados). Sin conexión queda pendiente."""
+        if str(info.get("id") or info.get("url") or info.get("title")) in self._batch_keys():
+            self.notify(f"«{info.get('title', 'canción')}» ya se está descargando.")
+            if on_done is not None:
+                on_done({"success": False, "cancelled": True})
+            return
         if self.is_offline():
             self.queue_download(info)
             self.notify(f"Sin conexión: «{info.get('title', 'canción')}» se descargará cuando vuelva internet.")

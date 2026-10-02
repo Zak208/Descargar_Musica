@@ -59,3 +59,8 @@ class UsabilityMixin:
                 tip = btn.toolTip()
                 if tip:
                     btn.setAccessibleName(tip)
+        for attr, name in (("volume_slider", "Volumen"), ("progress_slider", "Posición de la canción"),
+                           ("seek_slider", "Posición de la canción")):
+            slider = getattr(self, attr, None)
+            if slider is not None and not slider.accessibleName():
+                slider.setAccessibleName(name)

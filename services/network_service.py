@@ -32,7 +32,13 @@ def _probe() -> bool:
                 return True
         except OSError:
             continue
-    return False
+    # algunos cortafuegos y proxys bloquean estas conexiones directas pero dejan pasar la web: se prueba con HTTPS
+    # (respeta el proxy del sistema) antes de dar la conexión por perdida
+    try:
+        from services import http
+        return http.get("https://www.youtube.com/generate_204", timeout=4).status_code < 500
+    except Exception:
+        return False
 
 
 class _ProbeThread(QThread):

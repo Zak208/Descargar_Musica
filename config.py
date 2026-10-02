@@ -1,6 +1,11 @@
-import os
-import sys
 import json
+import logging
+import os
+import shutil
+import sys
+import tempfile
+import threading
+import time
 from pathlib import Path
 
 # Directorio raíz del proyecto o del ejecutable compilado
@@ -88,40 +93,89 @@ RECOMMENDATIONS_FILE = APP_DATA_DIR / "recomendaciones.json"
 
 
 _settings_cache: dict | None = None
+_io_lock = threading.RLock()       # una sola escritura/lectura de JSON a la vez dentro del programa
 
 
 def atomic_write_json(path: Path, data) -> None:
-    """Escribe JSON a un archivo temporal y lo renombra, para no dejar el archivo corrupto si la app se cierra a mitad."""
-    tmp = Path(str(path) + ".tmp")
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-    os.replace(tmp, path)
+    """Escribe JSON a un archivo temporal propio y lo renombra, para no dejar el archivo corrupto si la app se cierra a mitad.
+    Guarda antes una copia del anterior (`.bak`) por si algún día se estropea."""
+    path = Path(path)
+    with _io_lock:
+        fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            if path.exists():
+                try:
+                    shutil.copy2(path, str(path) + ".bak")
+                except OSError:
+                    pass
+            os.replace(tmp, path)
+        except BaseException:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            raise
+
+
+def read_json(path: Path, default=None):
+    """Lee un JSON. Si está estropeado, lo aparta como `.corrupto-<fecha>` (no se pierde ni se pisa) y prueba con la copia
+    `.bak`; si tampoco sirve devuelve `default`. Si no existe devuelve `default`."""
+    path = Path(path)
+    with _io_lock:
+        if not path.exists():
+            return default
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            logging.getLogger(__name__).error(f"Archivo estropeado {path.name}: {e}")
+        try:
+            stamp = time.strftime("%Y%m%d-%H%M%S")
+            os.replace(path, str(path) + f".corrupto-{stamp}")
+        except OSError:
+            pass
+        bak = Path(str(path) + ".bak")
+        if bak.exists():
+            try:
+                with open(bak, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                shutil.copy2(bak, path)
+                return data
+            except Exception:
+                pass
+        return default
 
 
 def load_settings() -> dict:
     """Carga los ajustes del usuario (se leen del disco una sola vez y se guardan en memoria)."""
     global _settings_cache
-    if _settings_cache is None:
-        _settings_cache = {}
-        if SETTINGS_FILE.exists():
-            try:
-                with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
-                    loaded = json.load(f)
-                if isinstance(loaded, dict):
-                    _settings_cache = loaded
-            except Exception:
-                _settings_cache = {}
-    return dict(_settings_cache)
+    with _io_lock:
+        if _settings_cache is None:
+            loaded = read_json(SETTINGS_FILE, {})
+            _settings_cache = loaded if isinstance(loaded, dict) else {}
+        return dict(_settings_cache)
+
+
+def reset_settings_cache() -> None:
+    """Olvida los ajustes en memoria (tras restaurar una copia de seguridad)."""
+    global _settings_cache
+    with _io_lock:
+        _settings_cache = None
 
 
 def save_settings(settings: dict):
     """Guarda los ajustes del usuario en settings.json."""
     global _settings_cache
-    _settings_cache = dict(settings)
-    try:
-        atomic_write_json(SETTINGS_FILE, settings)
-    except Exception as e:
-        print(f"Error guardando settings: {e}")
+    with _io_lock:
+        _settings_cache = dict(settings)
+        try:
+            atomic_write_json(SETTINGS_FILE, settings)
+        except Exception as e:
+            logging.getLogger(__name__).error(f"Error guardando settings: {e}")
 
 
 def get_download_dir() -> Path:

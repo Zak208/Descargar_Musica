@@ -148,6 +148,8 @@ class OfflineMixin:
             self.notify("Conexión recuperada")
             QTimer.singleShot(400, self.refresh_recommendations)
             QTimer.singleShot(1200, self.resume_pending_downloads)
+            if getattr(self, "_ffmpeg_missing", False):          # el primer arranque fue sin internet: se vuelve a intentar
+                QTimer.singleShot(2000, self.check_ffmpeg_and_update)
         else:
             self.notify("Sin conexión: tu música descargada y tus listas siguen funcionando")
         self.reload_current_list()

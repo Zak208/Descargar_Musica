@@ -91,6 +91,15 @@ def build_item(path: str, mtime: float, tags: dict) -> dict:
     }
 
 
+def _inside(path: str, root: str) -> bool:
+    """¿Está `path` dentro de la carpeta `root`? (Music2 no está dentro de Music)"""
+    try:
+        base = os.path.normcase(os.path.abspath(root))
+        return os.path.commonpath([os.path.normcase(os.path.abspath(path)), base]) == base
+    except ValueError:
+        return False
+
+
 def load_items_sync(root: str | None = None) -> list:
     """Biblioteca completa, de la más reciente a la más antigua. Solo se leen las etiquetas de los archivos
     nuevos o modificados (el resto sale del índice SQLite)."""
@@ -108,7 +117,12 @@ def load_items_sync(root: str | None = None) -> list:
             upserts.append(dict(tags, path=path, mtime=mtime, tagver=library_db.TAG_VERSION))
         items.append(build_item(path, mtime, tags))
     present = {p for p, _m in found}
-    removed = [p for p in known if p not in present and p.startswith(root)]
+    removed = [p for p in known if p not in present and _inside(p, root)]
+    if removed and (not os.path.isdir(root) or (not found and known)
+                    or (len(removed) > 20 and len(removed) > len(known) * 0.5)):
+        # la carpeta no responde (disco de red, OneDrive desconectado...): no se borra nada del índice
+        logger.warning(f"Escaneo sospechoso ({len(removed)} de {len(known)} pistas desaparecidas): no se borra nada")
+        removed = []
     if upserts or removed:
         try:
             library_db.apply_changes(upserts, removed)

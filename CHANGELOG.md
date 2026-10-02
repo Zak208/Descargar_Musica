@@ -3,6 +3,44 @@
 Formato: `MAYOR.MENOR.PARCHE`. MAYOR = cambios que rompen datos o uso, MENOR = funciones nuevas, PARCHE = arreglos.
 Cada versión subida a GitHub tiene su etiqueta `vX.Y.Z` (pestaña *Releases/Tags*).
 
+## 1.14.0
+**Auditoría completa del proyecto: robustez, rendimiento y seguridad**
+
+*Datos y fiabilidad*
+- **Escrituras de JSON a prueba de fallos**: un solo bloqueo para todo el programa, archivo temporal propio en cada escritura y copia `.bak` del anterior. Si un JSON (listas, favoritos, ajustes) se estropea, ya no se toma por vacío y se pisa: se aparta como `.corrupto-<fecha>` y se recupera de la copia.
+- **Favoritos y listas distinguen artistas**: dos canciones con el mismo título (otro artista, directo/estudio) ya no se pisan; antes marcar una marcaba la otra.
+- **Renombrar o borrar una canción actualiza tus listas y favoritos** (antes quedaban con «No encontramos ese archivo»). Renombrar limpia el nombre (sin `..\` ni caracteres inválidos) y avisa si ya existe.
+- **Copias de seguridad**: restaurar valida cada JSON antes de tocar nada, escribe de forma atómica, limita el tamaño y refresca los ajustes en memoria.
+- **Biblioteca**: si el escaneo devuelve muy pocos archivos (OneDrive o disco de red desconectado) ya no se borran del índice; las reproducciones se conservan y `C:\Music2` ya no se confunde con `C:\Music`. La base de datos lleva versión de esquema para migraciones futuras y comprueba su estructura una sola vez por ejecución.
+- **Una sola copia abierta**: si abres la aplicación dos veces, la segunda avisa a la primera (que se muestra) y se cierra; al reiniciarse la propia aplicación espera a que la anterior termine.
+- **Al cerrar** se cancelan y esperan (2,5 s como mucho) las descargas, la actualización, las letras y demás tareas en marcha; antes solo se esperaba al ecualizador y se cancelaban atributos que ya no existían.
+
+*Descargas*
+- Una descarga que fallaba antes de empezar (ruta imposible, sin permisos) dejaba la cola parada; ahora avisa siempre.
+- **Cancelar y reintentar por canción** en el panel de descargas, y «Reintentar fallidas».
+- Ya no se pueden lanzar dos descargas de la misma canción a la vez.
+- Nombres con `%` («100% Pure Love»), nombres reservados de Windows (`CON`, `NUL`…) y nombres larguísimos ya no rompen la descarga.
+- FFmpeg: se comprueba su huella SHA-256 con la que publica el autor, se extrae a un archivo aparte y se prueba antes de usarlo (un corte ya no deja un `ffmpeg.exe` a medias); si no se pudo descargar al primer arranque, se reintenta al volver internet.
+- Los errores que contenían «age» (message, image, language…) ya no se muestran como «requiere iniciar sesión».
+
+*Rendimiento*
+- Favoritos y listas se guardan en memoria y solo se vuelven a leer si el archivo cambia: pasar el ratón por una fila ya no lee y analiza dos JSON.
+- La lectura inicial de la biblioteca ya no puede bloquear la ventana (antes, al abrir sin conexión, se hacía en el hilo de la interfaz).
+- Las tareas pesadas tienen dos carriles: la voz (letras, tiempo de palabras; minutos) ya no bloquea el escaneo de la biblioteca ni el ecualizador, y se cancela la medición de palabras al cambiar de canción.
+
+*Seguridad y privacidad*
+- Los enlaces de YouTube y Spotify se validan por servidor (antes bastaba con que el texto mencionara «youtube.com/», p. ej. una dirección interna), y el parámetro de Spotify se codifica.
+- La papelera avisa en vez de borrar para siempre cuando no cabe.
+- El registro solo guarda avisos y errores (con `DESCARGADOR_DEBUG=1` guarda todo), y el informe de Ayuda quita además enlaces y títulos.
+- La detección de internet prueba también por HTTPS (proxys y cortafuegos que bloquean conexiones directas).
+
+*Actualizaciones y publicación*
+- Las consultas a GitHub usan ETag (si no hay novedades no cuentan en el límite) y esperan una hora si GitHub dice «demasiadas peticiones».
+- El script de instalación reintenta la copia si falla y solo instala lo que la propia aplicación dejó en su carpeta de preparación.
+- La publicación automática comprueba que la etiqueta coincide con `version.py` y ejecuta `pyflakes` de verdad; nuevo `ci.yml` que pasa el análisis y todas las pruebas en cada subida. Nuevo `dev_tools/ejecutar_pruebas.py` (código de salida distinto de 0 si algo falla) y `prueba_robustez.py`.
+- El instalador ya no deja elegir carpeta (desinstalar borra la carpeta entera).
+- Los deslizadores de volumen y posición tienen nombre para lectores de pantalla.
+
 ## 1.13.1
 **Arreglos**
 - **La actualización automática se quedaba a medias**: la aplicación se cerraba pero no se instalaba la versión nueva ni se volvía a abrir. El script de instalación se quedaba esperando para siempre porque, lanzado sin consola, no podía enlazar dos programas de Windows. Ahora no usa tuberías, espera como mucho 90 segundos y deja un registro en `%APPDATA%\Descargador de Músicactualizacion.log`. Prueba nueva: una «aplicación» de mentira que sigue abierta unos segundos, con el mismo modo de lanzamiento que la real.

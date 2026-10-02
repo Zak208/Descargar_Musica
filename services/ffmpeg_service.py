@@ -1,5 +1,7 @@
+import hashlib
 import os
 import shutil
+import subprocess
 import zipfile
 import requests
 from services import http
@@ -7,6 +9,24 @@ import logging
 from config import FFMPEG_DIR, APP_DIR
 
 logger = logging.getLogger(__name__)
+
+MIN_EXE_BYTES = 5_000_000
+
+
+def _expected_sha(zip_name: str) -> str | None:
+    """Huella SHA-256 que BtbN publica junto a la descarga (checksums.sha256), o None si no se pudo leer."""
+    try:
+        r = http.get("https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/checksums.sha256", timeout=15)
+        if r.status_code != 200:
+            return None
+        for line in r.text.splitlines():
+            parts = line.split()
+            if len(parts) >= 2 and parts[-1].lstrip("*") == zip_name:
+                return parts[0].lower()
+    except Exception as e:
+        logger.info(f"No se pudo leer la huella de FFmpeg: {e}")
+    return None
+
 
 class FFmpegService:
     @staticmethod
@@ -33,7 +53,7 @@ class FFmpegService:
         
         # 3. En la carpeta app_data/ffmpeg/
         local_exe = FFMPEG_DIR / "ffmpeg.exe"
-        if local_exe.exists():
+        if local_exe.exists() and local_exe.stat().st_size > MIN_EXE_BYTES:      # uno a medias no vale
             if str(FFMPEG_DIR) not in os.environ.get("PATH", ""):
                 os.environ["PATH"] = str(FFMPEG_DIR) + os.pathsep + os.environ.get("PATH", "")
             return str(local_exe)
@@ -71,16 +91,21 @@ class FFmpegService:
             
             total_size = int(response.headers.get('content-length', 0))
             downloaded = 0
-            
+            digest = hashlib.sha256()
+
             with open(zip_path, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     if chunk:
                         f.write(chunk)
+                        digest.update(chunk)
                         downloaded += len(chunk)
                         if progress_callback and total_size > 0:
                             percent = int((downloaded / total_size) * 100)
                             progress_callback(f"Descargando componentes (FFmpeg): {percent}%")
                             
+            expected = _expected_sha(url.rsplit("/", 1)[-1])
+            if expected and digest.hexdigest() != expected:
+                raise RuntimeError("La descarga de FFmpeg llegó dañada.")
             if progress_callback:
                 progress_callback("Descomprimiendo componentes...")
                 
@@ -89,8 +114,15 @@ class FFmpegService:
                     if member.endswith("ffmpeg.exe"):          # ffprobe no hace falta: ahorra ~145 MB de disco
                         filename = os.path.basename(member)
                         target_file = FFMPEG_DIR / filename
-                        with zip_ref.open(member) as source, open(target_file, "wb") as target:
+                        part = FFMPEG_DIR / (filename + ".part")        # se extrae aparte: un corte no deja un .exe a medias
+                        with zip_ref.open(member) as source, open(part, "wb") as target:
                             shutil.copyfileobj(source, target)
+                        check = subprocess.run([str(part), "-version"], capture_output=True, timeout=30,
+                                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                        if check.returncode != 0:
+                            part.unlink(missing_ok=True)
+                            raise RuntimeError("El FFmpeg descargado no funciona.")
+                        os.replace(part, target_file)
                             
             if zip_path.exists():
                 zip_path.unlink()

@@ -39,7 +39,9 @@ from logging.handlers import RotatingFileHandler
 
 _handler = RotatingFileHandler(log_path, maxBytes=1_000_000, backupCount=2, encoding="utf-8")
 _handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s'))
-logging.basicConfig(level=logging.INFO, handlers=[_handler])
+# por privacidad solo se apuntan avisos y errores (los títulos y enlaces de lo que escuchas no quedan en el registro);
+# con la variable DESCARGADOR_DEBUG=1 se apunta todo para diagnosticar
+logging.basicConfig(level=logging.INFO if os.environ.get("DESCARGADOR_DEBUG") else logging.WARNING, handlers=[_handler])
 
 def global_exception_hook(exc_type, exc_value, exc_traceback):
     if issubclass(exc_type, KeyboardInterrupt):
@@ -114,7 +116,7 @@ def selftest() -> int:
     try:
         import importlib
         for name in ("ui.nowplaying_full", "ui.calibrate", "ui.keep_change", "ui.celebrate", "ui.winext", "ui.emptystate",
-                     "ui.continue_card", "ui.focusring", "ui.tooltips", "services.envelope", "services.app_updater", "services.word_timing"):
+                     "ui.continue_card", "ui.focusring", "ui.tooltips", "services.envelope", "services.app_updater", "services.word_timing", "ui.single_instance"):
             importlib.import_module(name)
         check("módulos de las animaciones y de la pantalla completa", True)
     except Exception as e:
@@ -217,11 +219,20 @@ def main():
     except Exception:
         pass
 
+    # una sola copia a la vez (si se está reiniciando a sí misma, espera a que la anterior termine de cerrar)
+    from ui.single_instance import SingleInstance
+    instance = SingleInstance(app)
+    if not instance.acquire(wait_ms=10000 if "--reiniciando" in sys.argv else 0):
+        logging.info("Ya hay otra copia abierta: se avisa a esa y se sale")
+        sys.exit(0)
+    app.aboutToQuit.connect(instance.release)
+
     splash = _make_splash()
     splash.show()
     app.processEvents()                  # se ve al instante, mientras se construye la ventana principal
 
     window = MainWindow()
+    instance.activated.connect(window.bring_to_front)
     from ui import motion
     fade = motion.enabled()
     if fade:

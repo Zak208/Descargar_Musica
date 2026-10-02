@@ -9,6 +9,7 @@ FOF_SILENT = 0x0004
 FOF_NOCONFIRMATION = 0x0010
 FOF_ALLOWUNDO = 0x0040
 FOF_NOERRORUI = 0x0400
+FOF_WANTNUKEWARNING = 0x4000     # si no cabe en la papelera, avisa en vez de borrarlo para siempre
 
 
 class _SHFILEOPSTRUCT(ctypes.Structure):
@@ -24,7 +25,7 @@ def move_to_recycle_bin(path: str) -> bool:
     op = _SHFILEOPSTRUCT()
     op.wFunc = FO_DELETE
     op.pFrom = os.path.abspath(path) + "\0"          # la lista termina con un doble carácter nulo
-    op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI
+    op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI | FOF_WANTNUKEWARNING
     try:
         result = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op))
     except Exception:

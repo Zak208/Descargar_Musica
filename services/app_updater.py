@@ -206,6 +206,11 @@ def build_script(staged: Path, target: Path, pid: int, exe_name: str = EXE_NAME,
         'echo %DATE% %TIME% copiando archivos>> "%LOG%"',
         r'"%SYS%\robocopy.exe" "%SRC%" "%DST%" /E /R:10 /W:1 /NFL /NDL /NJH /NJS /NP >> "%LOG%" 2>&1',
         "if errorlevel 8 (",
+        '  echo %DATE% %TIME% ERROR al copiar: se reintenta>> "%LOG%"',
+        r'  "%SYS%\ping.exe" -n 6 127.0.0.1 >nul',
+        r'  "%SYS%\robocopy.exe" "%SRC%" "%DST%" /E /R:20 /W:2 /NFL /NDL /NJH /NJS /NP >> "%LOG%" 2>&1',
+        ")",
+        "if errorlevel 8 (",
         '  echo %DATE% %TIME% ERROR al copiar>> "%LOG%"',
         ")",
     ]
@@ -230,6 +235,12 @@ def install_and_restart() -> bool:
     """Lanza el script de instalación (separado de la aplicación). Quien llama debe cerrar la aplicación enseguida."""
     folder = staged_folder()
     if folder is None or not (folder / EXE_NAME).is_file() or not can_self_update():
+        return False
+    try:                                    # solo se instala lo que esta propia aplicación dejó en su carpeta de preparación
+        folder.resolve().relative_to(UPDATE_DIR.resolve())
+    except ValueError:
+        logger.warning("La carpeta de actualización no está donde debería: no se instala")
+        clear_staged()
         return False
     try:
         script = build_script(folder, install_dir(), os.getpid(), version=staged_version() or "")
