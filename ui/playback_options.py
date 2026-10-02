@@ -243,6 +243,8 @@ class PlaybackOptionsMixin:
         else:
             self._natural_advance = False
             self._fade_factor = 1.0
+        if getattr(self, "_gain_anim", None) is not None:
+            self._gain_anim.stop()
         self._gain_factor = 1.0
         path = (info or {}).get("local_path")
         if self._normalize and path:
@@ -331,8 +333,28 @@ class PlaybackOptionsMixin:
     def _on_loudness(self, path: str, lufs: float):
         current = (self.current_item_info or {}).get("local_path")
         if self._normalize and current and current == path:
-            self._gain_factor = loudness_service.gain_for(lufs)
+            self._ramp_gain(loudness_service.gain_for(lufs))
+
+    def _ramp_gain(self, target: float):
+        """El volumen pasa poco a poco al que corresponde a la canción (medida a mitad de un fundido, un salto de volumen
+        de golpe sonaría como un corte)."""
+        if getattr(self, "_gain_anim", None) is None:
+            self._gain_anim = QVariantAnimation(self)
+            self._gain_anim.valueChanged.connect(self._on_gain_value)
+        self._gain_anim.stop()
+        if abs(self._gain_factor - target) < 0.01:
+            self._gain_factor = target
             self._apply_volume()
+            return
+        self._gain_anim.setStartValue(float(self._gain_factor))
+        self._gain_anim.setEndValue(float(target))
+        self._gain_anim.setDuration(900)
+        self._gain_anim.setEasingCurve(QEasingCurve.InOutQuad)
+        self._gain_anim.start()
+
+    def _on_gain_value(self, v):
+        self._gain_factor = float(v)
+        self._apply_volume()
 
     def set_normalize(self, enabled: bool):
         self._normalize = bool(enabled)

@@ -115,6 +115,35 @@ pump(0.5)
 check("la sacudida termina en su sitio", lbl.pos().x() == x0)
 lbl.deleteLater()
 
+# ------------------------------------------------------------- los interruptores de Ajustes responden a un clic real
+from PySide6.QtCore import QPoint as _QPoint
+from PySide6.QtTest import QTest as _QTest
+from PySide6.QtWidgets import QScrollArea as _QScrollArea
+from ui.controls import ToggleSwitch as _Toggle
+from ui.overlay import get_host
+
+_dlg = w.settings_dialog
+get_host(w).push(_dlg)
+pump(0.6)
+_area = _dlg.findChild(_QScrollArea)
+_dead = []
+for _sw in _dlg.findChildren(_Toggle):
+    if _sw is _dlg.chk_contrast:
+        continue                       # ese abre la pregunta «¿se ve bien?» y se prueba aparte
+    _area.ensureWidgetVisible(_sw)
+    pump(0.1)
+    _before = _sw.isChecked()
+    _QTest.mouseClick(_sw, Qt.LeftButton, Qt.NoModifier, _QPoint(_sw.width() - 14, _sw.height() // 2))
+    pump(0.15)
+    if _sw.isChecked() == _before:
+        _dead.append(_sw.text())
+    else:
+        _QTest.mouseClick(_sw, Qt.LeftButton, Qt.NoModifier, _QPoint(_sw.width() - 14, _sw.height() // 2))
+        pump(0.15)
+check(f"Ajustes: todos los interruptores responden al pulsar la perilla {_dead or ''}", not _dead)
+get_host(w).pop(_dlg)
+pump(0.3)
+
 # ------------------------------------------------------------- controles pintados a mano
 from ui.controls import ToggleSwitch, SegmentedControl, CoverLabel, TabStrip, PlayPauseButton
 from PySide6.QtGui import QPixmap, QColor
@@ -127,6 +156,19 @@ t.toggle()
 pump(0.3)
 check("interruptor: se desliza al desmarcar", not t.isChecked() and t._t < 0.01)
 t.deleteLater()
+
+# el interruptor responde al pulsar la perilla (a la derecha, lejos del texto)
+from PySide6.QtCore import QPoint
+from PySide6.QtTest import QTest
+sw2 = ToggleSwitch("Texto corto", w)
+sw2.resize(420, 30)
+sw2.show()
+pump(0.1)
+QTest.mouseClick(sw2, Qt.LeftButton, Qt.NoModifier, QPoint(sw2.width() - 14, 15))
+check("interruptor: se pulsa en la perilla, lejos del texto", sw2.isChecked())
+QTest.mouseClick(sw2, Qt.LeftButton, Qt.NoModifier, QPoint(100, 15))
+check("interruptor: y en el hueco entre el texto y la perilla", not sw2.isChecked())
+sw2.deleteLater()
 
 seg = SegmentedControl([("a", "Uno"), ("b", "Dos"), ("c", "Tres")], "a", w)
 seg.resize(300, 34)

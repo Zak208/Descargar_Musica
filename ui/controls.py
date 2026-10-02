@@ -29,6 +29,10 @@ class ToggleSwitch(QCheckBox):
         self.setCursor(Qt.PointingHandCursor)
         self.setMinimumHeight(30)
 
+    def hitButton(self, pos):
+        """Se puede pulsar en cualquier punto del interruptor (texto, hueco o perilla), no solo donde lo calcula el estilo."""
+        return self.rect().contains(pos)
+
     def setChecked(self, checked):
         super().setChecked(checked)
         self._anim.stop()

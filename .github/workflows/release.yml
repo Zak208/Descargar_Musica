@@ -57,7 +57,11 @@ jobs:
         shell: pwsh
         run: |
           $ver = (Select-String -Path version.py -Pattern '__version__ = "([^"]+)"').Matches[0].Groups[1].Value
-          Compress-Archive -Path "dist_app\Descargar_Musica" -DestinationPath "Descargar_Musica-v$ver-windows.zip"
+          $zip = "Descargar_Musica-v$ver-windows.zip"
+          Compress-Archive -Path "dist_app\Descargar_Musica" -DestinationPath $zip
+          # huella SHA-256 publicada junto al .zip: la aplicación la comprueba antes de actualizarse sola
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          "$hash  $zip" | Set-Content -Path "$zip.sha256" -Encoding ascii
           "VERSION=$ver" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Notas de esta versión
@@ -71,6 +75,8 @@ jobs:
       - name: Publicar
         uses: softprops/action-gh-release@v2
         with:
-          files: Descargar_Musica-v${{ env.VERSION }}-windows.zip
+          files: |
+            Descargar_Musica-v${{ env.VERSION }}-windows.zip
+            Descargar_Musica-v${{ env.VERSION }}-windows.zip.sha256
           body_path: release_notes.md
           name: Descargador de Música ${{ env.VERSION }}

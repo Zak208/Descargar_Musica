@@ -3,6 +3,17 @@
 Formato: `MAYOR.MENOR.PARCHE`. MAYOR = cambios que rompen datos o uso, MENOR = funciones nuevas, PARCHE = arreglos.
 Cada versión subida a GitHub tiene su etiqueta `vX.Y.Z` (pestaña *Releases/Tags*).
 
+## 1.12.0
+**La aplicación se actualiza sola desde GitHub**
+- Si en GitHub hay una versión más nueva que la que tienes (por ejemplo, la 1.15 y tú tienes la 1.11), aparece un **botón azul arriba a la izquierda**. Se descarga sola en segundo plano (con batería baja o datos medidos espera a que lo pulses), se comprueba su huella SHA-256 y el botón pasa a **«Reiniciar y actualizar a la X»**: la aplicación se cierra, se instalan los archivos nuevos y se vuelve a abrir. Tus datos no se tocan.
+- Se mira cada hora como mucho (y cada 3 horas si la dejas abierta). Solo descarga desde el repositorio oficial por HTTPS y solo instala si la versión publicada trae su huella (`.sha256`), que la publicación automática ya añade.
+- Importante: las versiones anteriores a la 1.12 no saben actualizarse solas; en cada ordenador hay que instalar la 1.12 una vez a mano. Desde ahí, todo es automático.
+
+**Arreglos**
+- Ajustes: los interruptores solo respondían al pulsar en su texto; ahora responden en toda su superficie, perilla incluida.
+- Fundido entre canciones: el volumen que se ajusta al medir la canción nueva se aplicaba de golpe y sonaba como un corte justo al terminar el fundido; ahora cambia poco a poco.
+- El panel «En reproducción» se abre siempre la primera vez que suena algo y se queda abierto si ya lo estaba.
+
 ## 1.11.0
 **Arreglos**
 - **Aleatorio**: «A continuación» (panel y cola) enseñaba la siguiente de la lista y sonaba otra al azar. Ahora el orden aleatorio se decide de antemano y lo que se muestra es exactamente lo que suena (sin repetir hasta recorrer toda la lista).

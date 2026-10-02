@@ -68,7 +68,7 @@ from ui.lyrics_dialog import LyricsDialog
 from ui.lyrics_editor import LyricsEditorDialog
 from services import lyric_align, lyrics_store, transcribe_service, session_service, backup_service
 from services import http as web
-from services import update_service, ytdlp_loader
+from services import app_updater, update_service, ytdlp_loader
 from ui.metadata_dialog import MetadataDialog
 from ui.equalizer_dialog import EqualizerDialog
 from ui.queue_dialog import QueueDialog
@@ -186,7 +186,14 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self._session_timer.timeout.connect(lambda: self.player_bar.isVisible() and self.save_session())
         self._session_timer.start()
         QTimer.singleShot(8000, backup_service.auto_backup_if_due)
-        QTimer.singleShot(12000, self.check_updates)         # una vez cada 24 h, solo con conexión
+        QTimer.singleShot(12000, self.check_updates)         # como mucho cada hora, solo con conexión
+        self._update_timer = QTimer(self)                     # y mientras la aplicación sigue abierta, cada 3 horas
+        self._update_timer.setInterval(3 * 3600 * 1000)
+        self._update_timer.timeout.connect(self.check_updates)
+        self._update_timer.start()
+        self._app_update_worker = None
+        self._update_state = None
+        QTimer.singleShot(1500, self._restore_pending_update)
         QTimer.singleShot(25000, perf.trim_memory)       # tras el arranque se devuelve a Windows lo que sobra
         self._trim_timer = QTimer(self)                   # y cada 10 minutos mientras no se esté usando
         self._trim_timer.setInterval(600_000)
@@ -279,6 +286,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self.topbar.search_submitted.connect(self.perform_search)
         self.topbar.home_clicked.connect(lambda: self.switch_to_page(0))
         self.topbar.downloads_clicked.connect(self.show_downloads_panel)
+        self.topbar.update_clicked.connect(self._on_update_clicked)
         self.main_vbox.insertWidget(0, self.topbar)   # ocupa todo el ancho, por encima de los paneles
         # El buscador es único; estos nombres antiguos apuntan a él
         self.downloads_panel = DownloadsPanel(self.downloads, self, self.topbar.btn_downloads)
@@ -876,7 +884,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             if manual:
                 self.notify("Sin conexión: no se puede buscar actualizaciones.")
             return
-        if not manual and not update_service.due("last_update_check"):
+        if not manual and not update_service.due("last_update_check", 3600):
             return
         worker = getattr(self, "_update_check", None)
         if worker is not None and worker.isRunning():
@@ -905,12 +913,87 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             self.update_engine(quiet=True)
         elif engine_new and manual:
             self.notify(f"Hay una versión nueva del motor de descargas ({engine_new}).")
-        if app_new:
+        if app_new and app_updater.can_self_update():
+            self._offer_app_update(app_new, manual)
+        elif app_new:
             margin = (self.player_bar.height() + 24) if self.player_bar.isVisible() else 40
             self.toast.show_message(f"Hay una versión nueva de Descargador de Música ({app_new})", bottom_margin=margin,
                                     action=("Ver novedades", self.open_app_releases))
         elif manual and not engine_new:
             self.notify("Todo está al día.")
+
+    # ---------- actualizar la propia aplicación (botón azul arriba a la izquierda) ----------
+    def _restore_pending_update(self):
+        """Si quedó una versión ya descargada de otra vez, el botón «Reiniciar y actualizar» aparece enseguida."""
+        if not app_updater.can_self_update():
+            return
+        version = app_updater.staged_version()
+        if version:
+            self._update_version = version
+            self._set_update_state("ready")
+
+    def _offer_app_update(self, version: str, manual: bool = False):
+        self._update_version = version
+        if self._update_state in ("downloading", "ready") and getattr(self, "_update_version_ready", None) == version:
+            return
+        if app_updater.staged_version() == version:
+            self._set_update_state("ready")
+        elif perf.saving_reason(self.network):                 # batería baja o datos medidos: se descarga cuando tú quieras
+            self._set_update_state("available")
+        else:
+            self._start_app_download()
+        if manual:
+            self.notify(f"Hay una versión nueva ({version}): mira el botón azul de arriba a la izquierda.")
+
+    def _set_update_state(self, state):
+        self._update_state = state
+        v = getattr(self, "_update_version", "")
+        if state == "available":
+            self.topbar.set_update_button(f"Actualizar a la {v}", True, "Descarga la versión nueva (se instala al reiniciar)")
+        elif state == "downloading":
+            self.topbar.set_update_button(f"Descargando la {v}…", False, "Se está descargando la versión nueva")
+        elif state == "ready":
+            self._update_version_ready = v
+            self.topbar.set_update_button(f"Reiniciar y actualizar a la {v}", True,
+                                          "Se cierra la aplicación, se instala la versión nueva y se vuelve a abrir")
+        else:
+            self.topbar.set_update_button("")
+
+    def _start_app_download(self):
+        worker = self._app_update_worker
+        if worker is not None and worker.isRunning():
+            return
+        self._set_update_state("downloading")
+        worker = app_updater.AppUpdateWorker(self)
+        worker.progress.connect(lambda pct: self.topbar.set_update_button(
+            f"Descargando la {self._update_version}… {pct}%", False, "Se está descargando la versión nueva"))
+        worker.done.connect(self._on_app_download_done)
+        worker.failed.connect(self._on_app_download_failed)
+        self._app_update_worker = worker
+        worker.start()
+
+    def _on_app_download_done(self, version: str):
+        self._update_version = version
+        self._set_update_state("ready")
+        self.notify(f"La versión {version} está lista: pulsa el botón azul para reiniciar y actualizar.")
+
+    def _on_app_download_failed(self, message: str):
+        self._set_update_state("available")
+        self.notify(f"No se pudo descargar la actualización: {friendly_error(message)}")
+
+    def _on_update_clicked(self):
+        if self._update_state == "available":
+            self._start_app_download()
+        elif self._update_state == "ready":
+            self.restart_and_update()
+
+    def restart_and_update(self):
+        """Cierra la aplicación, instala la versión descargada y la vuelve a abrir."""
+        if not app_updater.install_and_restart():
+            self.notify("No se pudo preparar la actualización. Inténtalo de nuevo más tarde.")
+            self._set_update_state("available")
+            return
+        self.quit_app()
 
     def update_engine(self, quiet: bool = False):
         tag = getattr(self, "_pending_engine", "")
@@ -1884,6 +1967,11 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self.playing_changed.emit(state == QMediaPlayer.PlayingState)
         if state == QMediaPlayer.PlayingState:
             self._resume_pending = False
+            if not getattr(self, "_panel_first_play_done", False):
+                self._panel_first_play_done = True          # la primera vez que suena algo, el panel se abre siempre
+                self._panel_user_closed = False
+                if not self.now_panel.isVisible() and not self.is_mini_mode and self.current_item_info:
+                    self.set_now_playing_visible(True)
         if hasattr(self, "home_continue"):
             self.home_continue.refresh()
         if self._full_player_visible():

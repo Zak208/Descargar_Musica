@@ -61,7 +61,7 @@ check(f"FFmpeg mide el volumen de una canción ({lufs} LUFS)", lufs is not None 
 w.set_context(items)
 w.play_local_file(path)
 check("se mide y se guarda en segundo plano", wait(lambda: loudness_service.stored(path) is not None, 40))
-pump(0.6)
+pump(1.4)          # el ajuste de volumen llega poco a poco (no de golpe, para que no suene como un corte)
 expected = 0.5 * loudness_service.gain_for(loudness_service.stored(path))
 check("al sonar, el volumen se ajusta a la medida", abs(w.audio_output.volume() - expected) < 0.01)
 w.set_normalize(False)

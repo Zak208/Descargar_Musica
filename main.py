@@ -114,7 +114,7 @@ def selftest() -> int:
     try:
         import importlib
         for name in ("ui.nowplaying_full", "ui.calibrate", "ui.keep_change", "ui.celebrate", "ui.winext", "ui.emptystate",
-                     "ui.continue_card", "ui.focusring", "ui.tooltips", "services.envelope"):
+                     "ui.continue_card", "ui.focusring", "ui.tooltips", "services.envelope", "services.app_updater"):
             importlib.import_module(name)
         check("módulos de las animaciones y de la pantalla completa", True)
     except Exception as e:

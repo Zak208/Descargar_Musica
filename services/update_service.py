@@ -1,6 +1,7 @@
 """Actualizaciones: del motor de descargas (yt-dlp) y aviso de versiones nuevas de la aplicación.
 
-Todo sale de GitHub (peticiones públicas, sin cuenta). Solo se consulta una vez cada 24 horas y solo con conexión."""
+Todo sale de GitHub (peticiones públicas, sin cuenta). Solo se consulta con conexión: la aplicación cada hora como mucho
+(para que una versión nueva te llegue pronto) y el motor de descargas una vez al día."""
 import hashlib
 import logging
 import os
@@ -24,9 +25,9 @@ APP_PAGE = "https://github.com/Zak208/Descargar_Musica/releases"
 CHECK_EVERY = 24 * 3600
 
 
-def due(setting_key: str) -> bool:
-    """¿Toca volver a consultar? (una vez cada 24 horas)."""
-    return time.time() - float(load_settings().get(setting_key, 0) or 0) > CHECK_EVERY
+def due(setting_key: str, every: int = CHECK_EVERY) -> bool:
+    """¿Toca volver a consultar? (por defecto una vez cada 24 horas)."""
+    return time.time() - float(load_settings().get(setting_key, 0) or 0) > every
 
 
 def mark_checked(setting_key: str) -> None:

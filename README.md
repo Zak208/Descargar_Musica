@@ -1,6 +1,6 @@
 # Descargador de Música
 
-**Versión actual: 1.11.0** · [Historial de versiones](CHANGELOG.md) · cada versión subida tiene su etiqueta `vX.Y.Z` en GitHub
+**Versión actual: 1.12.0** · [Historial de versiones](CHANGELOG.md) · cada versión subida tiene su etiqueta `vX.Y.Z` en GitHub
 
 Aplicación de escritorio para **Windows** que combina un reproductor con aspecto de Spotify y un descargador de música:
 buscas una canción, un artista o un álbum, escuchas un adelanto y la descargas a tu equipo en MP3, M4A, FLAC o WAV,
@@ -109,7 +109,11 @@ informática. **Tu música descargada y tus listas funcionan también sin intern
   `.exe` nunca los borra. Hay **copia de seguridad en un clic** (y una automática cada semana), restauración,
   **«Liberar espacio»** y un **informe de problemas sin datos personales** (Ayuda).
 - **Actualizaciones**: el motor de descargas (yt-dlp) se puede actualizar por separado desde Ayuda (o solo, una vez al
-  día) para que las descargas sigan funcionando cuando YouTube cambia algo, y la app avisa si hay versión nueva.
+  día) para que las descargas sigan funcionando cuando YouTube cambia algo.
+- **La aplicación se actualiza sola desde GitHub**: cuando subes una versión nueva (etiqueta `vX.Y.Z`) y en otro ordenador
+  tienes una anterior, ahí aparece un **botón azul arriba a la izquierda**: primero se descarga (se comprueba su huella
+  SHA-256) y luego pone **«Reiniciar y actualizar a la X»**. Se mira cada hora como mucho. Hace falta la 1.12 o posterior en
+  cada ordenador (la primera vez se instala a mano desde Releases).
 - **Asistente de bienvenida** de 3 pasos y **recorrido guiado** (Ayuda).
 
 ## Requisitos
@@ -264,6 +268,7 @@ services/                  lógica sin interfaz
     backup_service.py        copia de seguridad · storage_service.py espacio · diagnostics_service.py informe y reparación
     recycle.py               papelera de Windows · quality.py calidades · heavy.py tareas pesadas
     envelope.py              envolvente de graves/medios/agudos de cada canción para el visualizador
+    app_updater.py           actualizar la propia aplicación desde GitHub (descarga, huella, instalación y reinicio)
     ffmpeg_service.py        localiza o descarga FFmpeg
 ui/                        interfaz
     main_window.py           ventana principal
@@ -351,6 +356,7 @@ python dev_tools/prueba_listas.py        # listas, artistas, sin recargas
 python dev_tools/prueba_detalles.py      # fechas «añadida», rueda lateral, géneros, ventanas sueltas
 python dev_tools/prueba_fundido.py       # aleatorio coherente y fundido cruzado con dos reproductores (audio real)
 python dev_tools/prueba_animaciones.py   # niveles de movimiento, reposo, efectos, controles, avisos, visualizador, Windows
+python dev_tools/prueba_actualizar.py    # actualización desde GitHub: huella, instalación (se ejecuta de verdad) y botón azul
 ```
 
 ## Solución de problemas

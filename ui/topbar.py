@@ -12,6 +12,7 @@ class TopBar(QWidget):
     search_submitted = Signal(str)
     home_clicked = Signal()
     downloads_clicked = Signal()
+    update_clicked = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -32,6 +33,20 @@ class TopBar(QWidget):
         self.brand.setObjectName("BrandLabel")
         left_lay.addWidget(self.logo)
         left_lay.addWidget(self.brand)
+        # botón azul que aparece cuando hay una versión nueva de la aplicación
+        self.btn_update = QPushButton("")
+        self.btn_update.setObjectName("UpdateBtn")
+        self.btn_update.setProperty("noRetheme", True)
+        self.btn_update.setCursor(Qt.PointingHandCursor)
+        self.btn_update.setStyleSheet(
+            "QPushButton#UpdateBtn { background-color: #2979FF; color: #FFFFFF; border: none; border-radius: 17px; "
+            "padding: 0px 16px; min-height: 34px; max-height: 34px; font-size: 13px; font-weight: 800; }"
+            "QPushButton#UpdateBtn:hover { background-color: #448AFF; }"
+            "QPushButton#UpdateBtn:disabled { background-color: #1B4DB3; color: #D6E4FF; }")
+        self.btn_update.clicked.connect(self.update_clicked.emit)
+        self.btn_update.hide()
+        left_lay.addSpacing(10)
+        left_lay.addWidget(self.btn_update)
         left_lay.addStretch()
         root.addWidget(left, 1)
 
@@ -139,6 +154,14 @@ class TopBar(QWidget):
 
     def set_info(self, text: str):
         self.info.setText(text)
+
+    def set_update_button(self, text: str, enabled: bool = True, tip: str = ""):
+        """Botón azul de actualización (arriba a la izquierda). Texto vacío = oculto."""
+        self.btn_update.setText(text)
+        self.btn_update.setEnabled(enabled)
+        self.btn_update.setToolTip(tip)
+        self.btn_update.setVisible(bool(text))
+        self.brand.setVisible(not text)          # con el botón a la vista, el nombre cede su sitio (no cabrían los dos)
 
     def set_download_progress(self, percent):
         """Anillo de progreso conjunto en el botón de descargas (None cuando no hay nada en marcha)."""
