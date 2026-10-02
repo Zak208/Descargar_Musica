@@ -5,6 +5,7 @@ import subprocess
 
 from ui.animations import fade_in, flash, pop_icon, press_feedback, ripple_feedback
 from ui.controls import CoverLabel
+from ui.covers import placeholder_cover
 from ui.downloadfx import SmoothProgress
 from ui.hover import HoverFader
 from ui.textfx import DotsLabel
@@ -114,6 +115,7 @@ class SongResultCard(QFrame, HoverFader):
         # 1. Portada cuadrada
         self.thumb_label = CoverLabel(radius=6)
         self.thumb_label.setFixedSize(COVER_SIZE, COVER_SIZE)
+        self.thumb_label.setPixmap(placeholder_cover(self.item_info.get('title', ''), COVER_SIZE, 6))
         self.thumb_label.setStyleSheet("background-color: #2A2A2A; border-radius: 6px;")
         self.load_thumbnail()
         layout.addWidget(self.thumb_label)
@@ -379,6 +381,9 @@ class SongResultCard(QFrame, HoverFader):
                 ok="Descargar"):
                 return
 
+        if hasattr(self.parent_window, "fly_to"):
+            self.parent_window.fly_to(self.item_info, self.parent_window.topbar.btn_downloads,
+                                      self.download_btn.mapToGlobal(self.download_btn.rect().center()))
         self.download_btn.setEnabled(False)
         self.download_btn.setText(" Guardando...")
         self.progress_bar.setVisible(True)

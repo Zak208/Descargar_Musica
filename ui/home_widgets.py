@@ -4,6 +4,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QFrame, QVBoxLayout, QLabel
 
 from ui.controls import CoverLabel
+from ui.covers import placeholder_cover
 from ui.hover import TileHover
 from ui.imageloader import LocalCoverLoader
 from ui.widgets import ElidedLabel
@@ -32,6 +33,7 @@ class RecentTrackCard(TileHover, QFrame):
         self.tile_cover = self.cover
         self.cover.setFixedSize(CARD_COVER, CARD_COVER)
         self.cover.setStyleSheet("background-color: #2A2A2A; border-radius: 8px;")
+        self.cover.setPixmap(placeholder_cover(info.get("title", ""), CARD_COVER, 8))
         lay.addWidget(self.cover)
 
         t = ElidedLabel(info.get("title", ""))

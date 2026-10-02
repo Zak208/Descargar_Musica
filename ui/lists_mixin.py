@@ -527,7 +527,22 @@ class ListsMixin:
     def on_track_dropped(self, kind: str, list_id, infos):
         """Canciones soltadas sobre una lista de la barra lateral: se añaden a ella."""
         infos = [infos] if isinstance(infos, dict) else list(infos)
+        start = None
+        try:
+            from PySide6.QtGui import QCursor
+            start = QCursor.pos()
+        except Exception:
+            pass
+        item = self.side_item(kind, list_id)           # la miniatura vuela hasta la lista y esta pulsa al llegar
+
+        def arrived():
+            from ui.animations import flash, pop_icon
+            target = self.side_item(kind, list_id)
+            if target is not None:
+                flash(target, accent(), 0.28, 600, 8)
+
         self.add_tracks_to_list(kind, list_id, infos)
+        self.fly_to(infos[0] if infos else {}, self.side_item(kind, list_id) or item, start, arrived)
 
     def add_tracks_to_list(self, kind: str, list_id, infos: list):
         """Añade varias canciones a «Canciones que te gustan» o a una playlist (sin repetir las que ya están)."""

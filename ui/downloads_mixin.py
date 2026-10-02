@@ -222,6 +222,7 @@ class DownloadsMixin:
                 if on_done is not None:
                     on_done({"success": False, "cancelled": True})
                 return
+        self.fly_to(info, self.topbar.btn_downloads)
         worker = DownloadWorker(info, str(get_download_dir()), get_audio_quality())
         self.downloads.track(worker, info)
         _ACTIVE_THREADS.add(worker)

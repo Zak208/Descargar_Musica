@@ -7,7 +7,7 @@ from services.playlist_service import PlaylistService
 from ui.animations import reveal_widget
 from ui.controls import CoverLabel
 from ui.hover import GlowHover
-from ui.covers import list_cover_pixmap, artist_avatar_pixmap, mix_cover, GENRE_COLORS
+from ui.covers import placeholder_cover, list_cover_pixmap, artist_avatar_pixmap, mix_cover, GENRE_COLORS
 from ui.formatting import format_total
 from ui.icons import icon
 from ui.save_popup import save_icon
@@ -110,6 +110,7 @@ class TrackTile(QFrame, GlowHover):
         self.cover = CoverLabel(radius=8)
         self.cover.setFixedSize(COVER, COVER)
         self.cover.setStyleSheet("background-color: #2A2A2A; border-radius: 8px;")
+        self.cover.setPixmap(placeholder_cover(info.get("title", ""), COVER, 8))
         lay.addWidget(self.cover)
 
         self.play_btn = QPushButton("", self.cover)

@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QScrollArea, QWidget
 )
 
+from ui.controls import CoverLabel
 from ui.covers import list_cover_pixmap
 from ui.icons import icon
 from ui.settings_dialog import SettingsDialog
@@ -42,9 +43,10 @@ class SideListItem(QFrame):
         lay.setContentsMargins(8, 7, 8, 7)
         lay.setSpacing(12)
 
-        cover = QLabel()
+        cover = CoverLabel(radius=8 if kind != "artist" else THUMB // 2, placeholder="#00000000")
         cover.setFixedSize(THUMB, THUMB)
         cover.setPixmap(list_cover_pixmap(kind, list_id, THUMB, 8))
+        self.cover = cover
         lay.addWidget(cover)
 
         texts = QVBoxLayout()

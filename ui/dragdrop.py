@@ -36,6 +36,22 @@ def start_track_drag(widget, infos, source=None) -> None:
     p = QPainter(ghost)
     p.setOpacity(0.7)
     p.drawPixmap(0, 0, pix)
+    p.setOpacity(1.0)
+    p.setRenderHint(QPainter.Antialiasing)
+    from PySide6.QtGui import QColor, QPen
+    from ui.styles import accent
+    p.setPen(QPen(QColor(accent()), 2))
+    p.setBrush(Qt.NoBrush)
+    p.drawRoundedRect(1, 1, ghost.width() - 2, ghost.height() - 2, 8, 8)
+    if len(infos) > 1:                      # insignia redonda con el número de canciones que se arrastran
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(accent()))
+        p.drawEllipse(ghost.width() - 30, 6, 24, 24)
+        p.setPen(QColor("#000000"))
+        font = p.font()
+        font.setBold(True)
+        p.setFont(font)
+        p.drawText(ghost.width() - 30, 6, 24, 24, Qt.AlignCenter, str(min(len(infos), 99)))
     p.end()
     drag.setPixmap(ghost)
     drag.setHotSpot(QPoint(24, ghost.height() // 2))

@@ -13,6 +13,7 @@ from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QVBoxLayout, QL
 from services.playlist_service import PlaylistService
 from ui.animations import fade_out_hide, flash, show_fading
 from ui.controls import CoverLabel
+from ui.covers import placeholder_cover
 from ui.downloadfx import DownloadStateButton
 from ui.formatting import format_added
 from ui.hover import HoverFader, NowPlayingBars
@@ -98,6 +99,7 @@ class TrackRow(QFrame, HoverFader):
 
         self.cover = CoverLabel(radius=5)
         self.cover.setFixedSize(ROW_COVER, ROW_COVER)
+        self.cover.setPixmap(placeholder_cover(self.item_info.get("title", ""), ROW_COVER, 5))
         self.cover.setStyleSheet("background-color: #2A2A2A; border-radius: 5px;")
         lay.addWidget(self.cover)
         self._load_cover()

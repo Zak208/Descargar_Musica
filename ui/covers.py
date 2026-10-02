@@ -101,6 +101,88 @@ SMART_ICONS = {"week": "clock.svg", "untagged": "tag.svg", "long": "timer.svg", 
                "never": "music.svg", "rediscover": "refresh.svg"}
 
 
+_PLACEHOLDERS: dict = {}
+
+
+def placeholder_cover(text: str, size: int = 48, radius: int = 6) -> QPixmap:
+    """Portada de relleno mientras llega la real (o si no tiene): un degradado suave según el título con su inicial.
+    Es siempre la misma para la misma canción y se guarda en memoria."""
+    text = text or ""
+    letter = next((c for c in text if c.isalnum()), "♪").upper()
+    idx = sum(ord(c) for c in text) % len(MIX_COLORS)
+    key = (letter, idx, size, radius)
+    cached = _PLACEHOLDERS.get(key)
+    if cached is not None:
+        return cached
+    c1, c2 = MIX_COLORS[idx]
+    dpr = 2
+    px = size * dpr
+    pix = QPixmap(px, px)
+    pix.fill(Qt.transparent)
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.Antialiasing)
+    grad = QLinearGradient(0, 0, px, px)
+    grad.setColorAt(0, QColor(c1).darker(190))
+    grad.setColorAt(1, QColor(c2).darker(230))
+    path = QPainterPath()
+    path.addRoundedRect(0, 0, px, px, radius * dpr, radius * dpr)
+    p.fillPath(path, grad)
+    p.setPen(QColor(255, 255, 255, 215))
+    font = QFont("Poppins")
+    font.setBold(True)
+    font.setPixelSize(int(px * 0.46))
+    p.setFont(font)
+    p.drawText(QRectF(0, 0, px, px), Qt.AlignCenter, letter)
+    p.end()
+    pix.setDevicePixelRatio(dpr)
+    if len(_PLACEHOLDERS) > 300:
+        _PLACEHOLDERS.clear()
+    _PLACEHOLDERS[key] = pix
+    return pix
+
+
+def mosaic_cover(tracks: list, size: int = 140, radius: int = 12):
+    """Mosaico 2×2 con las portadas de las primeras canciones de una lista, usando solo las que ya están en la caché de
+    disco (no descarga nada). Devuelve None si no hay suficientes."""
+    import hashlib
+    from ui.imageloader import CACHE_DIR
+    images = []
+    for t in tracks[:12]:
+        url = t.get("thumbnail")
+        if not url:
+            continue
+        f = CACHE_DIR / hashlib.md5(url.encode("utf-8")).hexdigest()
+        try:
+            if f.exists():
+                img = QImage()
+                if img.loadFromData(f.read_bytes()):
+                    images.append(img)
+        except OSError:
+            continue
+        if len(images) == 4:
+            break
+    if len(images) < 2:
+        return None
+    dpr = 2
+    px = size * dpr
+    out = QPixmap(px, px)
+    out.fill(Qt.transparent)
+    p = QPainter(out)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setRenderHint(QPainter.SmoothPixmapTransform)
+    path = QPainterPath()
+    path.addRoundedRect(0, 0, px, px, radius * dpr, radius * dpr)
+    p.setClipPath(path)
+    half = px // 2
+    for i in range(4):
+        img = images[i % len(images)]
+        tile = QPixmap.fromImage(img).scaled(half, half, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+        p.drawPixmap((i % 2) * half, (i // 2) * half, tile, (tile.width() - half) // 2, (tile.height() - half) // 2, half, half)
+    p.end()
+    out.setDevicePixelRatio(dpr)
+    return out
+
+
 def list_cover_pixmap(kind: str, list_id, size: int = 48, radius: int = 8, label: str = "") -> QPixmap:
     """Portada de una lista: imagen elegida (playlists), nombre del género o degradado con icono."""
     if kind == "localmix":
@@ -122,6 +204,9 @@ def list_cover_pixmap(kind: str, list_id, size: int = 48, radius: int = 8, label
             img = QPixmap(path)
             if not img.isNull():
                 return _rounded(img, size, radius)
+        mosaic = mosaic_cover(PlaylistService.get_playlists().get(list_id, {}).get("tracks", []), size, radius)
+        if mosaic is not None:
+            return mosaic
     c1, c2 = tile_colors(kind)
     return cover_tile(TILE_ICONS.get(kind, "playlist.svg"), c1, c2, size, radius)
 

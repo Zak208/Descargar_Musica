@@ -1100,6 +1100,24 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self.album_worker.error_occurred.connect(lambda err: self.notify(friendly_error(err)))
         self.album_worker.start()
 
+    # ---------- una miniatura vuela hasta donde ha ido la canción ----------
+    def fly_to(self, info: dict, end_widget, start_global=None, on_done=None):
+        """Una miniatura de la canción vuela del cursor (o de `start_global`) hasta `end_widget`: se ve adónde ha ido."""
+        from PySide6.QtGui import QCursor
+        from ui.covers import placeholder_cover
+        if end_widget is None or not end_widget.isVisible():
+            if on_done:
+                on_done()
+            return
+        start = start_global or QCursor.pos()
+        end = end_widget.mapToGlobal(end_widget.rect().center())
+        pix = placeholder_cover((info or {}).get("title", ""), 34, 6)
+        snapshot.fly(self, pix, start, end, 34, 320, on_done=on_done)
+
+    def side_item(self, kind: str, list_id):
+        entry = getattr(self, "_side_items", {}).get(f"{kind}:{list_id}")
+        return entry[0] if entry else None
+
     # ---------- la portada viaja de la tarjeta a la cabecera de la página ----------
     def remember_cover_source(self, widget):
         pix = widget.pixmap() if hasattr(widget, "pixmap") else None
@@ -1169,6 +1187,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
 
     # ================= COLA, ECUALIZADOR Y TEMAS =================
     def add_to_queue(self, track_info: dict):
+        self.fly_to(track_info, self.btn_queue)
         self.playback_queue.append(track_info)
         self.notify("Sonará a continuación")
         if self.now_panel.isVisible():
