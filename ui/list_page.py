@@ -8,7 +8,10 @@ from PySide6.QtWidgets import (
 
 from services import recycle
 from services.playlist_service import PlaylistService
-from ui.animations import fade_in
+from ui.animations import fade_in, expand_widget
+from ui.controls import TabStrip
+from ui.scrolling import BackToTop, polish_scroll_area
+from ui.textfx import reveal_up
 from ui.covers import list_cover_pixmap, tile_colors, MIX_COLORS, GENRE_COLORS
 from ui.dialogs import ask_text, ask_confirm
 from ui.formatting import format_total, parse_added
@@ -356,6 +359,7 @@ class ListPage(QWidget):
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        polish_scroll_area(self.scroll)                      # rueda suave y barra fina que se oculta
         self.scroll.verticalScrollBar().valueChanged.connect(self._on_scroll)
         content = QWidget()
         self.content_layout = QVBoxLayout(content)
@@ -459,21 +463,11 @@ class ListPage(QWidget):
         actions.addWidget(self.btn_sort)
         self.content_layout.addLayout(actions)
 
-        # Pestañas (solo en "Canciones que te gustan")
-        self.tabs_box = QWidget()
-        tabs = QHBoxLayout(self.tabs_box)
-        tabs.setContentsMargins(0, 0, 0, 0)
-        tabs.setSpacing(8)
-        self.tab_buttons = {}
-        for key, label in (("all", "Todas"), ("downloaded", "Descargadas"), ("pending", "Sin descargar")):
-            b = QPushButton(label)
-            b.setObjectName("TabBtn")
-            b.setCheckable(True)
-            b.setCursor(Qt.PointingHandCursor)
+        # Pestañas (solo en "Canciones que te gustan"): la píldora se desliza de una a otra
+        self.tabs_box = TabStrip((("all", "Todas"), ("downloaded", "Descargadas"), ("pending", "Sin descargar")))
+        self.tab_buttons = self.tabs_box.buttons
+        for key, b in self.tab_buttons.items():
             b.clicked.connect(lambda _=False, k=key: self.set_tab(k))
-            tabs.addWidget(b)
-            self.tab_buttons[key] = b
-        tabs.addStretch()
         self.content_layout.addWidget(self.tabs_box)
 
         # Cabecera de columnas
@@ -481,7 +475,7 @@ class ListPage(QWidget):
         self.columns.clicked.connect(self._column_clicked)
         self.content_layout.addWidget(self.columns)
 
-        self.loading = LoadingBlock("Cargando tu lista...")
+        self.loading = LoadingBlock("Cargando tu lista...", skeleton=True)
         self.loading.setVisible(False)
         self.content_layout.addWidget(self.loading)
 
@@ -510,6 +504,7 @@ class ListPage(QWidget):
 
         self.scroll.setWidget(content)
         main.addWidget(self.scroll, stretch=1)
+        self.back_top = BackToTop(self.scroll, self)
 
     # ------------------------------------------------------------- datos
     def _prepare_items(self, tracks: list) -> list:
@@ -591,6 +586,7 @@ class ListPage(QWidget):
         self.loading.setVisible(False)
         self._reconcile()
         fade_in(self.header, 320)
+        reveal_up(self.title_lbl, 60)                # el título sube desde una línea invisible
 
     def sync(self, name: str, tracks: list):
         """Pone la lista al día sin recargarla: solo se añaden, quitan o cambian las filas que lo necesitan."""
@@ -871,7 +867,7 @@ class ListPage(QWidget):
     # ----------------------------------------------- selección de varias canciones
     def update_selection_bar(self, rows: list):
         multi = len(rows) >= 2
-        self.selection_bar.setVisible(multi)
+        expand_widget(self.selection_bar, multi)
         if not multi:
             return
         infos = [r.item_info for r in rows]

@@ -469,3 +469,127 @@ class GlowCover(QWidget):
         p.setOpacity(0.42)
         r = QRectF(self.cover.geometry()).adjusted(-10, 2, 10, 20)
         p.drawPixmap(r, self._glow, QRectF(self._glow.rect()))
+
+
+class TabStrip(QWidget):
+    """Pestañas (Todas / Descargadas / Sin descargar): la píldora blanca se desliza de una a otra. Los botones son
+    QPushButton comprobables (`buttons[clave]`), así que el resto del código los usa igual que antes."""
+    HEIGHT = 34
+
+    def __init__(self, options, parent=None):
+        super().__init__(parent)
+        from PySide6.QtWidgets import QHBoxLayout
+        self.buttons = {}
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(8)
+        self.pill = QWidget(self)
+        self.pill.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.pill.setStyleSheet("background-color: #FFFFFF; border-radius: 17px;")
+        self.pill.hide()
+        self._anim = QVariantAnimation(self)
+        self._anim.setDuration(motion.DUR_BASE - 20)
+        self._anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._anim.valueChanged.connect(self._on_value)
+        self._from = self._to = None
+        for key, label in options:
+            b = QPushButton(label)
+            b.setObjectName("TabBtn")
+            b.setCheckable(True)
+            b.setCursor(Qt.PointingHandCursor)
+            b.setStyleSheet("QPushButton#TabBtn { background-color: transparent; }"
+                            "QPushButton#TabBtn:checked { background-color: transparent; color: #000000; }")
+            b.toggled.connect(lambda on, btn=b: on and self._move_to(btn, animate=True))
+            b.installEventFilter(self)
+            lay.addWidget(b)
+            self.buttons[key] = b
+        lay.addStretch()
+
+    def eventFilter(self, obj, event):
+        if event.type() in (QEvent.Resize, QEvent.Move, QEvent.Show) and isinstance(obj, QPushButton) and obj.isChecked():
+            self._move_to(obj, animate=False)
+        return False
+
+    def _checked(self):
+        return next((b for b in self.buttons.values() if b.isChecked()), None)
+
+    def _move_to(self, btn, animate: bool):
+        target = btn.geometry()
+        if not target.isValid() or target.width() < 4:
+            return
+        if not self.pill.isVisible() or not animate or not motion.enabled() or not self.isVisible():
+            self._anim.stop()
+            self.pill.setGeometry(target)
+            self.pill.show()
+            self.pill.lower()
+            self._to = target
+            return
+        self._anim.stop()
+        self._from = self.pill.geometry()
+        self._to = target
+        self._anim.setStartValue(0.0)
+        self._anim.setEndValue(1.0)
+        self._anim.start()
+
+    def _on_value(self, v):
+        t = float(v)
+        a, b = self._from, self._to
+        lerp = lambda p, q: int(p + (q - p) * t)
+        self.pill.setGeometry(lerp(a.x(), b.x()), lerp(a.y(), b.y()), lerp(a.width(), b.width()), lerp(a.height(), b.height()))
+
+    def paintEvent(self, _event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor("#242424"))
+        for b in self.buttons.values():
+            if b.isVisible():
+                p.drawRoundedRect(QRectF(b.geometry()), 17, 17)
+
+
+class FollowButton(QPushButton):
+    """«Seguir» / «Siguiendo»: al seguir, un relleno del color del tema entra desde la izquierda (150 ms)."""
+
+    def __init__(self, text: str = "", parent=None):
+        super().__init__(text, parent)
+        self._t = 0.0
+        self._anim = QVariantAnimation(self)
+        self._anim.setDuration(motion.DUR_FAST + 30)
+        self._anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._anim.valueChanged.connect(self._on_value)
+        self.toggled.connect(self._start)
+
+    def setChecked(self, checked):
+        was = self.isChecked()
+        super().setChecked(checked)
+        if bool(checked) == was:
+            self._t = 1.0 if checked else 0.0
+            self.update()
+
+    def _start(self, checked: bool):
+        self._anim.stop()
+        if not motion.enabled() or not self.isVisible():
+            self._t = 1.0 if checked else 0.0
+            self.update()
+            return
+        self._anim.setStartValue(self._t)
+        self._anim.setEndValue(1.0 if checked else 0.0)
+        self._anim.start()
+
+    def _on_value(self, v):
+        self._t = float(v)
+        self.update()
+
+    def paintEvent(self, event):
+        if self._t > 0.01:
+            p = QPainter(self)
+            p.setRenderHint(QPainter.Antialiasing)
+            clip = QPainterPath()
+            r = self.height() / 2
+            clip.addRoundedRect(QRectF(self.rect()), r, r)
+            p.setClipPath(clip)
+            c = QColor(accent())
+            c.setAlphaF(0.16)
+            p.fillRect(QRectF(0, 0, self.width() * self._t, self.height()), c)
+            p.end()
+        super().paintEvent(event)

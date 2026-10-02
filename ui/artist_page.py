@@ -6,6 +6,10 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushBu
 from services.artist_service import ArtistService
 from services.recommendation_service import RelatedArtistsWorker
 from ui.animations import fade_in
+from ui.controls import CoverLabel, FollowButton
+from ui.loading import LoadingBlock
+from ui.scrolling import BackToTop, polish_scroll_area
+from ui.textfx import reveal_up
 from ui.covers import artist_avatar_pixmap, artist_avatar_path
 from ui.home_shelves import ArtistTile, make_shelf, clear_layout
 from ui.icons import icon
@@ -49,6 +53,7 @@ class ArtistProfilePage(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        polish_scroll_area(scroll)
         content = QWidget()
         self.content_layout = QVBoxLayout(content)
         self.content_layout.setContentsMargins(0, 0, 8, 20)
@@ -61,7 +66,7 @@ class ArtistProfilePage(QWidget):
         h.setContentsMargins(28, 28, 28, 28)
         h.setSpacing(28)
 
-        self.avatar_lbl = QLabel()
+        self.avatar_lbl = CoverLabel(radius=AVATAR // 2, placeholder="#00000000")
         self.avatar_lbl.setFixedSize(AVATAR, AVATAR)
         self.avatar_lbl.setPixmap(artist_avatar_pixmap("x", AVATAR))
         h.addWidget(self.avatar_lbl)
@@ -96,7 +101,7 @@ class ArtistProfilePage(QWidget):
         self.btn_play.clicked.connect(self._play_popular)
         actions.addWidget(self.btn_play)
 
-        self.btn_follow = QPushButton("Seguir")
+        self.btn_follow = FollowButton("Seguir")
         self.btn_follow.setObjectName("FollowBtn")
         self.btn_follow.setCheckable(True)
         self.btn_follow.setCursor(Qt.PointingHandCursor)
@@ -135,6 +140,7 @@ class ArtistProfilePage(QWidget):
 
         scroll.setWidget(content)
         main.addWidget(scroll, stretch=1)
+        self.back_top = BackToTop(scroll, self)
 
     # --------------------------------------------------------------- datos
     def start_loading(self, name: str):
@@ -143,6 +149,7 @@ class ArtistProfilePage(QWidget):
         self.name_lbl.setText(name)
         self.meta_lbl.setText("Cargando...")
         clear_layout(self.tracks_container)
+        self.tracks_container.addWidget(LoadingBlock("Cargando las canciones...", skeleton=True))
         clear_layout(self.albums_layout)
         clear_layout(self.related_layout)
         self.related_box.setVisible(False)
@@ -193,6 +200,7 @@ class ArtistProfilePage(QWidget):
             self.albums_layout.addWidget(card)
         self.albums_box.setVisible(bool(albums))
         fade_in(self.header_frame, 300)
+        reveal_up(self.name_lbl, 60)
 
         # Artistas parecidos (en segundo plano)
         self.related_box.setVisible(False)

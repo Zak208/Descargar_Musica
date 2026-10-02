@@ -4,6 +4,10 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QScrollArea
 
 from ui.animations import fade_in
+from ui.controls import CoverLabel
+from ui.loading import LoadingBlock
+from ui.scrolling import BackToTop, polish_scroll_area
+from ui.textfx import reveal_up
 from ui.formatting import format_total
 from ui.home_shelves import clear_layout
 from ui.icons import icon
@@ -46,6 +50,7 @@ class AlbumDetailsPage(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        polish_scroll_area(scroll)
         content = QWidget()
         self.content_layout = QVBoxLayout(content)
         self.content_layout.setContentsMargins(0, 0, 8, 20)
@@ -57,7 +62,7 @@ class AlbumDetailsPage(QWidget):
         h.setContentsMargins(28, 28, 28, 28)
         h.setSpacing(28)
 
-        self.cover_lbl = QLabel()
+        self.cover_lbl = CoverLabel(radius=8, placeholder="#202020")
         self.cover_lbl.setFixedSize(COVER, COVER)
         self.cover_lbl.setStyleSheet("background-color: #202020; border-radius: 8px;")
         h.addWidget(self.cover_lbl)
@@ -121,12 +126,14 @@ class AlbumDetailsPage(QWidget):
 
         scroll.setWidget(content)
         main.addWidget(scroll, stretch=1)
+        self.back_top = BackToTop(scroll, self)
 
     def start_loading(self):
         self.album_data = {}
         self.title_lbl.setText("Cargando álbum...")
         self.meta_lbl.setText("")
         clear_layout(self.tracks_container)
+        self.tracks_container.addWidget(LoadingBlock("Cargando las canciones...", skeleton=True))
         self.cover_lbl.clear()
         for b in (self.btn_play, self.btn_download_album, self.btn_save_list):
             b.setEnabled(False)
@@ -160,6 +167,7 @@ class AlbumDetailsPage(QWidget):
             self.tracks_container.addWidget(TrackRow(item, main_window, number=int(item.get("track_number") or i + 1),
                                                       list_mode=False))
         fade_in(self.header_frame, 300)
+        reveal_up(self.title_lbl, 60)
 
     def _play(self):
         tracks = self.album_data.get("tracks", [])

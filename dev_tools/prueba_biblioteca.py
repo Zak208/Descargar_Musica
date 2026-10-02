@@ -132,6 +132,7 @@ check("selección: Ctrl + clic quita una", len(w._alive_rows()) == 3 and rows[1]
 check("selección: el texto de la barra", "3 canciones" in page.selection_bar.count.text())
 before = len(w.playback_queue)
 page.selection_action("queue")
+pump(0.4)          # la barra se pliega con una animación breve
 check("selección: reproducir a continuación las 3", len(w.playback_queue) == before + 3 and not page.selection_bar.isVisible())
 w.playback_queue.clear()
 w.select_row(rows[0])

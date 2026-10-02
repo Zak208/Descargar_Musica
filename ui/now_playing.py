@@ -11,7 +11,8 @@ from services.artist_service import ArtistService
 from services.lyrics_service import LyricsWorker
 from services.playlist_service import PlaylistService
 from services.recommendation_service import ArtistInfoWorker
-from ui.controls import CoverLabel, GlowCover
+from ui.controls import CoverLabel, FollowButton, GlowCover
+from ui.scrolling import polish_scroll_area
 from ui.formatting import split_artists
 from ui.icons import icon
 from ui.save_popup import save_icon
@@ -346,6 +347,7 @@ class NowPlayingPanel(QFrame):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        polish_scroll_area(scroll)
         inner = QWidget()
         inner.setObjectName("PanelInner")
         inner.setStyleSheet("#PanelInner { background: transparent; }")
@@ -430,7 +432,7 @@ class NowPlayingPanel(QFrame):
         self.artist_bio.setStyleSheet("font-size: 13px; color: #D0D0D0; background: transparent;")
         inner_a.addWidget(self.artist_bio)
         row = QHBoxLayout()
-        self.btn_follow = QPushButton("Seguir")
+        self.btn_follow = FollowButton("Seguir")
         self.btn_follow.setObjectName("FollowBtn")
         self.btn_follow.setCheckable(True)
         self.btn_follow.setCursor(Qt.PointingHandCursor)

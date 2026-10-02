@@ -360,3 +360,46 @@ def reveal_widget(widget: QWidget, show: bool, dy: int = 8, duration: int = 140)
     anim.finished.connect(done)
     widget._reveal_anim = anim
     anim.start()
+
+
+def expand_widget(widget: QWidget, show: bool, duration: int = 160):
+    """Un panel (la barra de selección) se despliega o se pliega en altura en vez de aparecer de golpe."""
+    if show == widget.isVisible() and not getattr(widget, "_expand_anim", None):
+        return
+    if not motion.enabled() or not widget.parentWidget() or not widget.parentWidget().isVisible():
+        widget.setMaximumHeight(16777215)
+        widget.setVisible(show)
+        return
+    old = getattr(widget, "_expand_anim", None)
+    if old is not None:
+        old.stop()
+    full = max(widget.sizeHint().height(), 30)
+    start = widget.height() if widget.isVisible() else 0
+    if show:
+        widget.setMaximumHeight(max(0, start))
+        widget.show()
+    anim = QVariantAnimation(widget)
+    anim.setStartValue(float(start))
+    anim.setEndValue(float(full if show else 0))
+    anim.setDuration(duration if show else 110)
+    anim.setEasingCurve(QEasingCurve.OutCubic)
+
+    def on_value(v):
+        try:
+            widget.setMaximumHeight(int(float(v)))
+        except RuntimeError:
+            pass
+
+    def done():
+        try:
+            widget.setMaximumHeight(16777215)
+            if not show:
+                widget.hide()
+            widget._expand_anim = None
+        except RuntimeError:
+            pass
+
+    anim.valueChanged.connect(on_value)
+    anim.finished.connect(done)
+    widget._expand_anim = anim
+    anim.start()

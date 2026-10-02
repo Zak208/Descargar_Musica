@@ -9,6 +9,7 @@ from services.youtube_service import DownloadWorker
 from ui.common import _ACTIVE_THREADS
 from ui.covers import PlaylistCoverFromUrl
 from ui.dialogs import ask_confirm
+from ui import winext
 from ui.friendly import friendly_error
 
 
@@ -36,8 +37,20 @@ class DownloadsMixin:
         was_busy = getattr(self, "_dl_was_busy", False)
         self._dl_was_busy = bool(active)
         self.topbar.set_download_progress(self.downloads.overall_percent() if active else None)
+        taskbar = getattr(self, "taskbar", None)
+        if taskbar is not None and taskbar.ok:
+            if active:
+                taskbar.set_progress(self.downloads.overall_percent())
+                if self.batch_paused:
+                    taskbar.set_state(winext.TBPF_PAUSED)
+            else:
+                taskbar.set_progress(None)
         if was_busy and not active:
             self.topbar.download_finished_flash()           # el anillo se completa y parpadea una vez
+            if taskbar is not None and taskbar.ok and not self.isActiveWindow():
+                from ui.icons import icon
+                from ui.styles import accent
+                taskbar.set_overlay(icon("check_circle.svg", accent()).pixmap(16, 16), "Descargas terminadas")
         if active:
             self._download_info_reset.stop()
             n = len(active)

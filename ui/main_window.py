@@ -5,7 +5,7 @@ import logging
 import subprocess
 
 from PySide6.QtCore import (
-    Qt, QUrl, QSize, QThread, QTimer, Signal, QPropertyAnimation, QEasingCurve, QObject, QEvent, QByteArray, QProcess
+    Qt, QUrl, QSize, QRect, QThread, QTimer, Signal, QPropertyAnimation, QEasingCurve, QObject, QEvent, QByteArray, QProcess
 )
 from PySide6.QtGui import QPixmap, QImage, QIcon, QDesktopServices
 from PySide6.QtWidgets import (
@@ -51,7 +51,7 @@ from ui.toast import Toast
 from ui.topbar import TopBar
 from ui.downloads_panel import DownloadsTracker, DownloadsPanel
 from ui.animations import fade_in, pop_icon, press_pulse
-from ui import motion, snapshot, frames
+from ui import motion, snapshot, frames, winext
 from ui.anim_clock import clock
 from ui.dialogs import ask_text, ask_confirm, show_message
 from ui.imageloader import prune_disk_cache, clear_memory_cache
@@ -198,6 +198,40 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         QTimer.singleShot(0, self.watch_library)
         QTimer.singleShot(4000, prune_disk_cache)
         QTimer.singleShot(500, self.play_home_intro)          # entrada suave de Inicio (solo la primera vez)
+        self.taskbar = None
+        QTimer.singleShot(700, self._init_windows_integration)
+
+    # ---------- integración con Windows (barra de título, barra de tareas) ----------
+    def _hwnd(self) -> int:
+        try:
+            return int(self.winId())
+        except Exception:
+            return 0
+
+    def _init_windows_integration(self):
+        """Barra de título del color del tema y, en la barra de tareas, progreso de descargas y botones en la miniatura."""
+        if not winext.IS_WIN:
+            return
+        self._apply_title_bar()
+        hwnd = self._hwnd()
+        self.taskbar = winext.Taskbar(hwnd)
+        if self.taskbar.ok:
+            pix = lambda name: icon(name, "#FFFFFF").pixmap(24, 24)
+            self.taskbar.add_thumb_buttons(
+                {winext.Taskbar.PREV: pix("prev.svg"), winext.Taskbar.PLAY: pix("play.svg"), winext.Taskbar.NEXT: pix("next.svg")},
+                self._on_thumb_button)
+
+    def _apply_title_bar(self):
+        bg = THEME_CONFIGS.get(self.current_theme, THEME_CONFIGS["spotify"]).get("bg_main", "#121212")
+        winext.apply_title_bar(self._hwnd(), bg)
+
+    def _on_thumb_button(self, button_id: int):
+        if button_id == winext.Taskbar.PREV:
+            self.play_previous()
+        elif button_id == winext.Taskbar.PLAY:
+            self.toggle_play_pause()
+        elif button_id == winext.Taskbar.NEXT:
+            self.play_next()
 
     def _on_clock_degraded(self, interval: int):
         """El equipo va justo: las animaciones continuas bajan de velocidad (o se limitan a las puntuales)."""
@@ -649,10 +683,11 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             self.info_widget.setMaximumWidth(230)
             self.seek_slider.setMaximumWidth(260)
             self.setMinimumSize(0, 0)
-            self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
-            self.resize(640, self.player_bar.height() + 16)
-            self.show()
-            QTimer.singleShot(0, lambda: self.is_mini_mode and self.resize(640, self.player_bar.height() + 16))
+            self._set_always_on_top(True)
+            geo = self.geometry()
+            self._animate_geometry(QRect(geo.x(), geo.y(), 640, self.player_bar.height() + 16))
+            QTimer.singleShot(400, lambda: self.is_mini_mode and self.resize(640, self.player_bar.height() + 16))
+            self.btn_play_pause.set_ring(0.0)
         else:
             for w in extras:
                 w.setVisible(True)
@@ -664,10 +699,32 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             self.now_panel.setVisible(getattr(self, '_panel_was_open', False))
             self.content_widget.setVisible(True)
             self.setMinimumSize(getattr(self, "_normal_min_size", QSize(0, 0)))
-            self.setWindowFlags(self.windowFlags() & ~Qt.WindowStaysOnTopHint)
+            self._set_always_on_top(False)
             if self.normal_geometry:
-                self.setGeometry(self.normal_geometry)
-            self.show()
+                self._animate_geometry(self.normal_geometry)
+
+    def _set_always_on_top(self, on: bool):
+        """«Siempre encima» del reproductor pequeño: en Windows se cambia sin recrear la ventana (sin parpadeo)."""
+        if winext.IS_WIN and winext.set_topmost(self._hwnd(), on):
+            return
+        flags = self.windowFlags()
+        self.setWindowFlags(flags | Qt.WindowStaysOnTopHint if on else flags & ~Qt.WindowStaysOnTopHint)
+        self.show()
+
+    def _animate_geometry(self, rect):
+        """La ventana se encoge o crece hasta `rect` (con el contenido ya cambiado)."""
+        if not motion.enabled() or not self.isVisible():
+            self.setGeometry(rect)
+            return
+        anim = getattr(self, "_geo_anim", None)
+        if anim is None:
+            anim = self._geo_anim = QPropertyAnimation(self, b"geometry", self)
+            anim.setEasingCurve(QEasingCurve.OutCubic)
+        anim.stop()
+        anim.setDuration(motion.DUR_BASE + 40)
+        anim.setStartValue(self.geometry())
+        anim.setEndValue(rect)
+        anim.start()
 
     def choose_custom_download_dir(self):
         current = str(get_download_dir())
@@ -692,6 +749,8 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             self._suggest_clipboard_link()
         elif event.type() == QEvent.WindowStateChange:
             self._set_background(self.isMinimized())
+        if event.type() == QEvent.ActivationChange and self.isActiveWindow() and getattr(self, "taskbar", None):
+            self.taskbar.set_overlay(None)             # al volver a la ventana, la marca de «descargas terminadas» se quita
         super().changeEvent(event)
 
     def _set_background(self, background: bool):
@@ -1104,6 +1163,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             if hasattr(self, 'visualizer'):
                 self.visualizer.set_accent_color(accent_hex)
             frames.clear()
+            self._apply_title_bar()
             self.update_player_heart_icon()
             self.topbar.refresh_accent()
             for w in self.findChildren(QWidget):
@@ -1701,6 +1761,9 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
     def handle_playback_state(self, state):
         self.update_system_status(state == QMediaPlayer.PlayingState)
         self.playing_changed.emit(state == QMediaPlayer.PlayingState)
+        if getattr(self, "taskbar", None) is not None and self.taskbar.ok:
+            self.taskbar.update_play_icon(icon("pause.svg" if state == QMediaPlayer.PlayingState else "play.svg",
+                                               "#FFFFFF").pixmap(24, 24))
         if state == QMediaPlayer.PlayingState:
             self._set_info_dim(False)
             self.player_status.setText("Reproduciendo")
@@ -1799,6 +1862,9 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             self._eq_worker.is_cancelled = True
             self._eq_worker.wait(1500)
 
+        if getattr(self, "taskbar", None) is not None:
+            self.taskbar.set_progress(None)
+            self.taskbar.shutdown()
         if hasattr(self, 'player'):
             self.player.stop()
             self.player.setSource(QUrl())

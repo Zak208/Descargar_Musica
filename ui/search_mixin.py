@@ -7,7 +7,9 @@ from services.spotify_service import is_spotify_url
 from services.youtube_service import SearchWorker, is_youtube_url
 from ui.friendly import friendly_error
 from ui.home_shelves import ArtistTile, make_shelf
+from ui.controls import TabStrip
 from ui.loading import LoadingBlock
+from ui.scrolling import polish_scroll_area
 from ui.song_card import SongResultCard
 from ui.spotify_views import AlbumCard
 from ui.widgets import ReflowGrid
@@ -77,6 +79,7 @@ class SearchMixin:
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        polish_scroll_area(self.scroll_area)
         self.results_container = QWidget()
         self.results_layout = QVBoxLayout(self.results_container)
         self.results_layout.setAlignment(Qt.AlignTop)
@@ -90,23 +93,15 @@ class SearchMixin:
 
     def build_search_header(self, layout):
         """Filtros (Todo / Canciones / Artistas / Álbumes) en la parte alta de los resultados."""
-        row = QHBoxLayout()
-        row.setSpacing(8)
-        self.search_chips = {}
-        for key, label in FILTERS:
-            chip = QPushButton(label)
-            chip.setObjectName("TabBtn")
-            chip.setCheckable(True)
+        strip = TabStrip(FILTERS)                      # la píldora se desliza de un filtro a otro
+        self.search_chips = strip.buttons
+        for key, chip in self.search_chips.items():
             chip.setChecked(key == "all")
-            chip.setCursor(Qt.PointingHandCursor)
             chip.clicked.connect(lambda _=False, k=key: self.set_search_filter(k))
-            row.addWidget(chip)
-            self.search_chips[key] = chip
-        row.addStretch()
-        layout.addLayout(row)
+        layout.addWidget(strip)
 
     def build_search_loading(self, layout):
-        self.search_loading = LoadingBlock("Buscando...")
+        self.search_loading = LoadingBlock("Buscando...", skeleton=True)
         self.search_loading.setVisible(False)
         layout.addWidget(self.search_loading)
 

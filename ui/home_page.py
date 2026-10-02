@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 
 from ui.home_shelves import make_shelf
 from ui.icons import icon
+from ui.scrolling import BackToTop, polish_scroll_area
 from ui.textfx import CountLabel, DotsLabel, WordsInLabel
 
 
@@ -24,6 +25,8 @@ def build_home_page(self):
     self.page_intro = QScrollArea()
     self.page_intro.setWidgetResizable(True)
     self.page_intro.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+    polish_scroll_area(self.page_intro)
+    self.home_back_top = BackToTop(self.page_intro, self.page_intro)
     content = QWidget()
     content.setObjectName("HomeContent")
     content.setStyleSheet("#HomeContent { background: transparent; }")

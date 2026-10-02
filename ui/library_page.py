@@ -9,6 +9,7 @@ from ui.covers import list_cover_pixmap
 from ui.animations import fade_in
 from ui.controls import CoverLabel
 from ui.hover import TileHover
+from ui.scrolling import polish_scroll_area
 from ui.widgets import ElidedLabel
 
 COLUMNS = 4
@@ -134,6 +135,7 @@ class LibraryPage(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        polish_scroll_area(scroll)
         inner = QWidget()
         self.grid = QGridLayout(inner)
         self.grid.setContentsMargins(0, 8, 0, 20)
