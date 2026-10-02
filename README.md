@@ -1,6 +1,6 @@
 # Descargador de Música
 
-**Versión actual: 1.12.0** · [Historial de versiones](CHANGELOG.md) · cada versión subida tiene su etiqueta `vX.Y.Z` en GitHub
+**Versión actual: 1.12.1** · [Historial de versiones](CHANGELOG.md) · cada versión subida tiene su etiqueta `vX.Y.Z` en GitHub
 
 Aplicación de escritorio para **Windows** que combina un reproductor con aspecto de Spotify y un descargador de música:
 buscas una canción, un artista o un álbum, escuchas un adelanto y la descargas a tu equipo en MP3, M4A, FLAC o WAV,
@@ -357,6 +357,7 @@ python dev_tools/prueba_detalles.py      # fechas «añadida», rueda lateral, g
 python dev_tools/prueba_fundido.py       # aleatorio coherente y fundido cruzado con dos reproductores (audio real)
 python dev_tools/prueba_animaciones.py   # niveles de movimiento, reposo, efectos, controles, avisos, visualizador, Windows
 python dev_tools/prueba_actualizar.py    # actualización desde GitHub: huella, instalación (se ejecuta de verdad) y botón azul
+python dev_tools/prueba_letra_cambio.py  # la letra del panel se ve al cambiar de canción (abre una ventana real un momento)
 ```
 
 ## Solución de problemas

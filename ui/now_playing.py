@@ -274,6 +274,8 @@ class LyricsBox(QFrame):
                 self._lines.append((ms, lbl))
         self._plain = bool(lines) and not synced
         self.follower.set_lines(self._lines)
+        for delay in (0, 80, 300):             # comprueba que las frases tienen altura (ver _ensure_layout)
+            QTimer.singleShot(delay, self._ensure_layout)
         self.scroll.verticalScrollBar().setValue(0)
         self.status.setVisible(not lines)
         if not lines:
@@ -281,6 +283,18 @@ class LyricsBox(QFrame):
         self.scroll.setVisible(bool(lines))
         if self.window_ref.player.position() and self._lines:
             self.update_position(self.window_ref.player.position())
+
+    def _ensure_layout(self):
+        """Si las frases se midieron cuando la zona aún estaba oculta o estrecha, quedaban con altura 0 y la letra no se
+        veía (pasaba al cambiar de canción). Si es así, se vuelven a colocar."""
+        try:
+            if self._lines and self._lines[0][1].height() < 4:
+                self.body.invalidate()
+                self.body.activate()
+                self.scroll.widget().adjustSize()
+                self.follower.recenter()
+        except RuntimeError:
+            pass
 
     def _seek(self, ms: int):
         self.window_ref.player.setPosition(ms)

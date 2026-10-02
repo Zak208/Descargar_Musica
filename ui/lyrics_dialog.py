@@ -296,6 +296,8 @@ class LyricsDialog(QDialog, AmbientBackdrop):
                 self.lyrics_layout.addWidget(lbl)
                 self.line_widgets.append((ms, lbl))
             self.follower.set_lines(self.line_widgets)
+            for delay in (0, 80, 300):
+                QTimer.singleShot(delay, self._ensure_layout)
             if self.player is not None:      # se coloca en la línea que toca ahora mismo
                 self.update_position(self.player.position())
         else:
@@ -326,6 +328,17 @@ class LyricsDialog(QDialog, AmbientBackdrop):
         self.btn_generate.setVisible(has_file)
         self.actions.setVisible(True)
         self.btn_edit.setVisible(False)
+
+    def _ensure_layout(self):
+        """Si las frases quedaron con altura 0 (se midieron con la zona oculta), se vuelven a colocar."""
+        try:
+            if self.line_widgets and self.line_widgets[0][1].height() < 4:
+                self.lyrics_layout.invalidate()
+                self.lyrics_layout.activate()
+                self.lyrics_container.adjustSize()
+                self.follower.recenter()
+        except RuntimeError:
+            pass
 
     def seek_to_position(self, ms: int):
         if self.player:

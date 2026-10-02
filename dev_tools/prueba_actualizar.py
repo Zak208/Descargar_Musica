@@ -149,14 +149,14 @@ if sys.platform == "win32":
     (target / "run.cmd").write_text("@echo viejo> \"%~dp0resultado.txt\"\r\n", encoding="utf-8")
     (target / "_internal" / "lib.dll").write_text("lib vieja")
     (staged / "run.cmd").write_text("@echo nuevo> \"%~dp0resultado.txt\"\r\n", encoding="utf-8")
-    (staged / "_internal" / "lib.dll").write_text("lib nueva")
+    (staged / "_internal" / "lib.dll").write_text("lib nueva y más grande")
     (staged / "_internal" / "extra.dll").write_text("extra")
     stage_work = base / "trabajo"
     script = app_updater.build_script(staged, target, 99999999, "run.cmd", stage_work)
     proc = subprocess.Popen(["cmd", "/c", str(script)], creationflags=subprocess.CREATE_NO_WINDOW)
     proc.wait(timeout=60)
     time.sleep(1.0)
-    check("el script copia los archivos nuevos sobre los viejos", (target / "_internal" / "lib.dll").read_text() == "lib nueva"
+    check("el script copia los archivos nuevos sobre los viejos", (target / "_internal" / "lib.dll").read_text() == "lib nueva y más grande"
           and (target / "_internal" / "extra.dll").exists())
     check("y vuelve a abrir el programa", (target / "resultado.txt").exists() and "nuevo" in (target / "resultado.txt").read_text())
     check("y limpia la carpeta de preparación", not stage_work.exists())

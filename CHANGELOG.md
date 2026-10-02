@@ -3,6 +3,10 @@
 Formato: `MAYOR.MENOR.PARCHE`. MAYOR = cambios que rompen datos o uso, MENOR = funciones nuevas, PARCHE = arreglos.
 Cada versión subida a GitHub tiene su etiqueta `vX.Y.Z` (pestaña *Releases/Tags*).
 
+## 1.12.1
+**Arreglos**
+- **La letra del panel lateral desaparecía al cambiar de canción**: cuando la letra llegaba de internet (tardaba un poco) las frases se colocaban con altura 0 y no se veía nada, sobre todo al pasar rápido de una canción a otra. Ahora se comprueba y se recolocan. Lo mismo en la ventana de letras. Prueba nueva: `prueba_letra_cambio.py` (reproduce el fallo con ventana real).
+
 ## 1.12.0
 **La aplicación se actualiza sola desde GitHub**
 - Si en GitHub hay una versión más nueva que la que tienes (por ejemplo, la 1.15 y tú tienes la 1.11), aparece un **botón azul arriba a la izquierda**. Se descarga sola en segundo plano (con batería baja o datos medidos espera a que lo pulses), se comprueba su huella SHA-256 y el botón pasa a **«Reiniciar y actualizar a la X»**: la aplicación se cierra, se instalan los archivos nuevos y se vuelve a abrir. Tus datos no se tocan.
