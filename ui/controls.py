@@ -1,0 +1,436 @@
+"""Controles propios, pintados a mano y con transiciones breves: interruptor, selector con indicador deslizante,
+portada con fundido y zoom, y botón de reproducir/pausa que se transforma. En reposo no gastan nada."""
+from PySide6.QtCore import Qt, QSize, QRectF, QPointF, QVariantAnimation, QEasingCurve, Signal, QEvent
+from PySide6.QtGui import QPainter, QColor, QPainterPath, QPixmap, QFontMetrics, QPen
+from PySide6.QtWidgets import QCheckBox, QWidget, QLabel, QFrame, QPushButton, QSizePolicy
+
+from ui import motion
+from ui.styles import accent
+
+
+def _mix(a: QColor, b: QColor, t: float) -> QColor:
+    return QColor(int(a.red() + (b.red() - a.red()) * t), int(a.green() + (b.green() - a.green()) * t),
+                  int(a.blue() + (b.blue() - a.blue()) * t))
+
+
+class ToggleSwitch(QCheckBox):
+    """Casilla con aspecto de interruptor: la perilla se desliza y el fondo pasa de gris al color del tema.
+    Es un QCheckBox (misma API: setChecked, isChecked, toggled, setText), así que sustituye a las casillas sin más."""
+    TRACK_W, TRACK_H = 42, 22
+
+    def __init__(self, text: str = "", parent=None):
+        super().__init__(text, parent)
+        self._t = 1.0 if self.isChecked() else 0.0
+        self._anim = QVariantAnimation(self)
+        self._anim.setDuration(motion.DUR_FAST)
+        self._anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._anim.valueChanged.connect(self._on_value)
+        self.toggled.connect(self._start)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setMinimumHeight(30)
+
+    def setChecked(self, checked):
+        super().setChecked(checked)
+        self._anim.stop()
+        self._t = 1.0 if self.isChecked() else 0.0
+        self.update()
+
+    def _start(self, checked: bool):
+        self._anim.stop()
+        if not motion.enabled() or not self.isVisible():
+            self._t = 1.0 if checked else 0.0
+            self.update()
+            return
+        self._anim.setStartValue(self._t)
+        self._anim.setEndValue(1.0 if checked else 0.0)
+        self._anim.start()
+
+    def _on_value(self, v):
+        self._t = float(v)
+        self.update()
+
+    def sizeHint(self):
+        fm = QFontMetrics(self.font())
+        return QSize(fm.horizontalAdvance(self.text()) + self.TRACK_W + 16, max(30, self.TRACK_H + 8))
+
+    def minimumSizeHint(self):
+        return QSize(self.TRACK_W + 20, 30)
+
+    def paintEvent(self, _event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        h = self.height()
+        track = QRectF(self.width() - self.TRACK_W - 2, (h - self.TRACK_H) / 2, self.TRACK_W, self.TRACK_H)
+        off, on = QColor("#5A5A5A"), QColor(accent())
+        if not self.isEnabled():
+            off, on = QColor("#3A3A3A"), QColor("#4A4A4A")
+        p.setPen(Qt.NoPen)
+        p.setBrush(_mix(off, on, self._t))
+        p.drawRoundedRect(track, self.TRACK_H / 2, self.TRACK_H / 2)
+        d = self.TRACK_H - 6
+        x = track.left() + 3 + (self.TRACK_W - d - 6) * self._t
+        p.setBrush(QColor("#FFFFFF" if self.isEnabled() else "#9A9A9A"))
+        p.drawEllipse(QRectF(x, track.top() + 3, d, d))
+        if self.hasFocus() and self.focusPolicy() != Qt.NoFocus:
+            ring = QColor(accent())
+            p.setBrush(Qt.NoBrush)
+            p.setPen(ring)
+            p.drawRoundedRect(track.adjusted(-2, -2, 2, 2), self.TRACK_H / 2 + 2, self.TRACK_H / 2 + 2)
+        p.setPen(self.palette().windowText().color() if self.isEnabled() else QColor("#777777"))
+        text_rect = QRectF(0, 0, track.left() - 12, h)
+        p.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft | Qt.TextWordWrap, self.text())
+
+
+class SegmentedControl(QWidget):
+    """Selector de pocas opciones con una píldora que se desliza de una a otra (en vez de saltar)."""
+    changed = Signal(str)
+
+    def __init__(self, options, current: str = None, parent=None, height: int = 34):
+        super().__init__(parent)
+        self._options = list(options)
+        self._current = current if current in [k for k, _ in self._options] else self._options[0][0]
+        self._x = None
+        self._w = 0.0
+        self._anim = QVariantAnimation(self)
+        self._anim.setDuration(motion.DUR_BASE)
+        self._anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._anim.valueChanged.connect(self._on_value)
+        self._hover = -1
+        self.setFixedHeight(height)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+
+    def current(self) -> str:
+        return self._current
+
+    def set_current(self, key: str, animate: bool = True):
+        if key not in [k for k, _ in self._options] or key == self._current:
+            return
+        old = self._cell(self._current)
+        self._current = key
+        new = self._cell(key)
+        if animate and motion.enabled() and self.isVisible():
+            self._anim.stop()
+            self._anim.setStartValue(0.0)
+            self._anim.setEndValue(1.0)
+            self._from = (old.left(), old.width())
+            self._to = (new.left(), new.width())
+            self._anim.start()
+        else:
+            self._x, self._w = new.left(), new.width()
+            self.update()
+
+    def _cell(self, key: str) -> QRectF:
+        n = len(self._options)
+        w = self.width() / max(1, n)
+        i = [k for k, _ in self._options].index(key)
+        return QRectF(i * w, 0, w, self.height())
+
+    def _on_value(self, v):
+        t = float(v)
+        self._x = self._from[0] + (self._to[0] - self._from[0]) * t
+        self._w = self._from[1] + (self._to[1] - self._from[1]) * t
+        self.update()
+
+    def sizeHint(self):
+        fm = self.fontMetrics()
+        return QSize(sum(fm.horizontalAdvance(t) + 36 for _, t in self._options), self.height())
+
+    def resizeEvent(self, event):
+        cell = self._cell(self._current)
+        self._x, self._w = cell.left(), cell.width()
+        super().resizeEvent(event)
+
+    def paintEvent(self, _event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        r = self.height() / 2
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(255, 255, 255, 18))
+        p.drawRoundedRect(QRectF(self.rect()), r, r)
+        if self._x is None:
+            cell = self._cell(self._current)
+            self._x, self._w = cell.left(), cell.width()
+        pill = QRectF(self._x + 2, 2, self._w - 4, self.height() - 4)
+        p.setBrush(QColor(accent()))
+        p.drawRoundedRect(pill, r - 2, r - 2)
+        for i, (key, text) in enumerate(self._options):
+            cell = self._cell(key)
+            selected = key == self._current
+            p.setPen(QColor("#000000") if selected else QColor("#FFFFFF" if i == self._hover else "#C8C8C8"))
+            font = self.font()
+            font.setBold(True)
+            p.setFont(font)
+            p.drawText(cell, Qt.AlignCenter, text)
+        if self.hasFocus():
+            p.setPen(QColor(accent()))
+            p.setBrush(Qt.NoBrush)
+            p.drawRoundedRect(QRectF(self.rect()).adjusted(1, 1, -1, -1), r, r)
+
+    def _index_at(self, x: float) -> int:
+        return max(0, min(len(self._options) - 1, int(x / max(1.0, self.width() / len(self._options)))))
+
+    def mouseMoveEvent(self, event):
+        i = self._index_at(event.position().x())
+        if i != self._hover:
+            self._hover = i
+            self.update()
+
+    def leaveEvent(self, event):
+        self._hover = -1
+        self.update()
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            key = self._options[self._index_at(event.position().x())][0]
+            if key != self._current:
+                self.set_current(key)
+                self.changed.emit(key)
+
+    def keyPressEvent(self, event):
+        keys = [k for k, _ in self._options]
+        i = keys.index(self._current)
+        if event.key() in (Qt.Key_Right, Qt.Key_Down) and i < len(keys) - 1:
+            self.set_current(keys[i + 1])
+            self.changed.emit(self._current)
+        elif event.key() in (Qt.Key_Left, Qt.Key_Up) and i > 0:
+            self.set_current(keys[i - 1])
+            self.changed.emit(self._current)
+        else:
+            super().keyPressEvent(event)
+
+
+class CoverLabel(QLabel):
+    """Portada que aparece con un fundido (desde el color de relleno o desde la anterior) y, si se quiere, crece un
+    poco al pasar el ratón. Se pinta a mano: no usa efectos gráficos, que son caros en cuadrículas con decenas de portadas."""
+
+    def __init__(self, radius: int = 8, zoom_on_hover: bool = False, placeholder: str = "#2A2A2A", parent=None):
+        super().__init__(parent)
+        self.radius = radius
+        self._zoom_on_hover = zoom_on_hover
+        self._placeholder = QColor(placeholder)
+        self._old = None
+        self._fade = 1.0
+        self._zoom = 1.0
+        self._dim = 0.0
+        self._dim_target = 0.0
+        self._dim_anim = QVariantAnimation(self)
+        self._dim_anim.setDuration(motion.DUR_BASE)
+        self._dim_anim.valueChanged.connect(self._on_dim)
+        self._fade_anim = QVariantAnimation(self)
+        self._fade_anim.setDuration(motion.DUR_BASE)
+        self._fade_anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._fade_anim.valueChanged.connect(self._on_fade)
+        self._zoom_anim = QVariantAnimation(self)
+        self._zoom_anim.setDuration(motion.DUR_FAST + 20)
+        self._zoom_anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._zoom_anim.valueChanged.connect(self._on_zoom)
+        if zoom_on_hover:
+            self.setAttribute(Qt.WA_Hover, True)
+            self.installEventFilter(self)
+
+    # -- contenido
+    def setPixmap(self, pix):
+        previous = self.pixmap()
+        super().setPixmap(pix)
+        if pix is None or pix.isNull():
+            self._old = None
+            self._fade = 1.0
+            self.update()
+            return
+        if motion.enabled() and motion.visible_ok(self):
+            self._old = previous if (previous is not None and not previous.isNull()) else None
+            self._fade = 0.0
+            self._fade_anim.stop()
+            self._fade_anim.setStartValue(0.0)
+            self._fade_anim.setEndValue(1.0)
+            self._fade_anim.start()
+        else:
+            self._old = None
+            self._fade = 1.0
+        self.update()
+
+    def clear(self):
+        super().clear()
+        self._old = None
+        self._fade = 1.0
+
+    def _on_fade(self, v):
+        self._fade = float(v)
+        if self._fade >= 1.0:
+            self._old = None
+        self.update()
+
+    def _on_zoom(self, v):
+        self._zoom = float(v)
+        self.update()
+
+    def set_dim(self, dim: bool):
+        """Atenúa la portada (canción en pausa)."""
+        target = 1.0 if dim else 0.0
+        if target == self._dim_target:
+            return
+        self._dim_target = target
+        if motion.enabled() and self.isVisible():
+            self._dim_anim.stop()
+            self._dim_anim.setStartValue(self._dim)
+            self._dim_anim.setEndValue(target)
+            self._dim_anim.start()
+        else:
+            self._dim = target
+            self.update()
+
+    def _on_dim(self, v):
+        self._dim = float(v)
+        self.update()
+
+    def eventFilter(self, obj, event):
+        if obj is self and self._zoom_on_hover and motion.enabled():
+            if event.type() == QEvent.Enter:
+                self._zoom_to(1.05)
+            elif event.type() == QEvent.Leave:
+                self._zoom_to(1.0)
+        return False
+
+    def _zoom_to(self, value: float):
+        self._zoom_anim.stop()
+        self._zoom_anim.setStartValue(self._zoom)
+        self._zoom_anim.setEndValue(value)
+        self._zoom_anim.start()
+
+    # -- dibujo
+    def paintEvent(self, event):
+        QFrame.paintEvent(self, event)
+        pix = self.pixmap()
+        if pix is None or pix.isNull():
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
+        rect = QRectF(self.rect())
+        clip = QPainterPath()
+        clip.addRoundedRect(rect, self.radius, self.radius)
+        p.setClipPath(clip)
+        if self._zoom != 1.0:
+            p.translate(rect.center())
+            p.scale(self._zoom, self._zoom)
+            p.translate(-rect.center())
+        src = QRectF(pix.rect())
+        if self._fade < 1.0:
+            if self._old is not None:
+                p.drawPixmap(rect, self._old, QRectF(self._old.rect()))
+            else:
+                p.fillRect(rect, self._placeholder)
+            p.setOpacity(self._fade)
+        p.drawPixmap(rect, pix, src)
+        if self._dim > 0.001:
+            p.setOpacity(1.0)
+            p.fillRect(rect, QColor(0, 0, 0, int(120 * self._dim)))
+
+
+class PlayPauseButton(QPushButton):
+    """El botón grande de reproducir/pausa: al cambiar de estado, un icono se mezcla con el otro (140 ms).
+    Se usa con `set_state(True/False)`; el resto del programa lo trata como un QPushButton."""
+
+    def __init__(self, parent=None):
+        super().__init__("", parent)
+        self._pix = {}
+        self._playing = False
+        self._t = 1.0
+        self._prev = None
+        self._ring = None            # progreso 0..1 que se dibuja como un arco alrededor del botón (modo mini)
+        self._anim = QVariantAnimation(self)
+        self._anim.setDuration(140)
+        self._anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._anim.valueChanged.connect(self._on_value)
+
+    def set_state(self, playing: bool):
+        if playing == self._playing:
+            return
+        self._prev = self._playing
+        self._playing = playing
+        if motion.enabled() and self.isVisible():
+            self._anim.stop()
+            self._anim.setStartValue(0.0)
+            self._anim.setEndValue(1.0)
+            self._anim.start()
+        else:
+            self._t = 1.0
+            self.update()
+
+    def _on_value(self, v):
+        self._t = float(v)
+        self.update()
+
+    def set_ring(self, progress):
+        """Arco de progreso alrededor del botón (None lo quita)."""
+        if progress is None:
+            if self._ring is not None:
+                self._ring = None
+                self.update()
+            return
+        progress = max(0.0, min(1.0, progress))
+        if self._ring is None or abs(progress - self._ring) > 0.002:
+            self._ring = progress
+            self.update()
+
+    def _icon_pix(self, playing: bool, size: int) -> QPixmap:
+        from ui.icons import icon
+        key = (playing, size)
+        pix = self._pix.get(key)
+        if pix is None:
+            pix = icon("pause_black.svg" if playing else "play_black.svg").pixmap(QSize(size, size))
+            self._pix[key] = pix
+        return pix
+
+    def paintEvent(self, event):
+        # el fondo redondo y los estados (hover, pulsado) los pinta la hoja de estilos; aquí solo el icono
+        super().paintEvent(event)
+        size = self.iconSize().width() or 20
+        p = QPainter(self)
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
+        cx, cy = self.width() / 2, self.height() / 2
+        if self._t < 1.0 and self._prev is not None:
+            p.setOpacity(1.0 - self._t)
+            self._draw_icon(p, self._icon_pix(self._prev, size), cx, cy, size, 1.0 - 0.15 * self._t)
+        p.setOpacity(self._t if self._t < 1.0 else 1.0)
+        self._draw_icon(p, self._icon_pix(self._playing, size), cx, cy, size, 0.85 + 0.15 * self._t)
+        if self._ring is not None:
+            p.setOpacity(1.0)
+            p.setRenderHint(QPainter.Antialiasing)
+            pen = QPen(QColor(accent()), 3)
+            pen.setCapStyle(Qt.RoundCap)
+            p.setPen(pen)
+            p.setBrush(Qt.NoBrush)
+            r = QRectF(self.rect()).adjusted(1.5, 1.5, -1.5, -1.5)
+            p.drawArc(r, 90 * 16, int(-360 * 16 * self._ring))
+
+    def _draw_icon(self, p, pix, cx, cy, size, scale):
+        d = size * scale
+        p.drawPixmap(QRectF(cx - d / 2, cy - d / 2, d, d), pix, QRectF(pix.rect()))
+
+
+class DotButton(QPushButton):
+    """Botón de control con un puntito de color debajo cuando está activo (aleatorio, repetir): se distingue por la
+    forma y no solo por el color."""
+
+    def __init__(self, parent=None):
+        super().__init__("", parent)
+        self._active = False
+
+    def set_active(self, active: bool):
+        if active != self._active:
+            self._active = bool(active)
+            self.update()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if self._active:
+            p = QPainter(self)
+            p.setRenderHint(QPainter.Antialiasing)
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(accent()))
+            p.drawEllipse(QPointF(self.width() / 2, self.height() - 4), 2.2, 2.2)

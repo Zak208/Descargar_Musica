@@ -2,6 +2,8 @@
 from PySide6.QtCore import Qt, Signal, QSize, QTimer
 from PySide6.QtWidgets import QWidget, QHBoxLayout, QLineEdit, QPushButton, QLabel
 
+from ui.animations import pop_icon
+from ui.downloadfx import RingButton
 from ui.icons import icon
 from ui.styles import accent
 
@@ -70,7 +72,7 @@ class TopBar(QWidget):
         self.info = QLabel("")
         self.info.setObjectName("TopInfo")
         right_lay.addWidget(self.info)
-        self.btn_downloads = QPushButton(" Descargas")
+        self.btn_downloads = RingButton(" Descargas")
         self.btn_downloads.setObjectName("TopPillBtn")
         self.btn_downloads.setIcon(icon("download.svg"))
         self.btn_downloads.setIconSize(QSize(16, 16))
@@ -122,6 +124,14 @@ class TopBar(QWidget):
 
     def set_info(self, text: str):
         self.info.setText(text)
+
+    def set_download_progress(self, percent):
+        """Anillo de progreso conjunto en el botón de descargas (None cuando no hay nada en marcha)."""
+        self.btn_downloads.set_ring(None if percent is None else percent / 100.0)
+
+    def download_finished_flash(self):
+        self.btn_downloads.finished_flash()
+        pop_icon(self.btn_downloads, 1.3, 260)
 
     def set_download_count(self, count: int):
         self.btn_downloads.setText(f" Descargas · {count}" if count else " Descargas")

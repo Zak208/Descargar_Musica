@@ -1,11 +1,16 @@
 """Descargas en curso: seguimiento de todas las canciones que se están bajando y panel para verlas."""
 from PySide6.QtCore import Qt, QObject, Signal, QTimer, QPoint
 from PySide6.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QProgressBar, QScrollArea, QWidget, QFrame
+    QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QScrollArea, QWidget, QFrame
 )
 
 from services import pending_downloads
+from ui import motion
+from ui.animations import flash
+from ui.downloadfx import SmoothProgress, StepDots, step_for
 from ui.friendly import friendly_error
+from ui.styles import accent
+from ui.textfx import RollLabel
 from ui.overlay import InlineDialog
 from ui.widgets import ElidedLabel
 
@@ -93,31 +98,37 @@ class _Row(QFrame):
         self.name.setObjectName("SongTitle")
         self.name.setStyleSheet("font-size: 13px;")
         lay.addWidget(self.name)
-        self.status = QLabel("")
-        self.status.setWordWrap(True)
+        self.status = RollLabel("")
         self.status.setStyleSheet("font-size: 12px;")
         lay.addWidget(self.status)
-        self.bar = QProgressBar()
-        self.bar.setTextVisible(False)
+        self.steps = StepDots()
+        lay.addWidget(self.steps)
+        self.bar = SmoothProgress()
         self.bar.setFixedHeight(5)
         lay.addWidget(self.bar)
         self._shown = None
+        self._state = None
 
     def update_from(self, entry: dict):
         title = f"{entry['artist']} - {entry['title']}" if entry["artist"] else entry["title"]
         if self.name.fullText() != title:
             self.name.setText(title)
         state = entry["state"]
+        green = accent()
         if state == "active":
-            text, color = f"Descargando… {entry['percent']}%", "#1ED760"
+            text, color = (f"Descargando… {entry['percent']}%" if entry["percent"] > 0 else "Buscando la canción…"), green
         elif state == "converting":
-            text, color = "Preparando tu canción...", "#1ED760"
+            text, color = "Preparando tu canción...", green
         elif state == "done":
-            text, color = "Lista en tu música", "#1ED760"
+            text, color = "Lista en tu música", green
         else:
             text, color = entry["error"] or "No se pudo descargar", "#FF6B6B"
-        self.status.setStyleSheet(f"font-size: 12px; color: {color};")
+        self.status.setStyleSheet(f"font-size: 12px; color: {color}; background: transparent;")
         self.status.setText(text)
+        self.steps.set_step(step_for(entry), failed=state == "error")
+        if state == "done" and self._state not in (None, "done"):
+            flash(self, accent(), 0.22, 700, 8)          # final feliz: un destello suave
+        self._state = state
         busy = state in ACTIVE_STATES
         self.bar.setVisible(busy)
         if busy:

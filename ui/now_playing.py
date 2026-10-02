@@ -16,7 +16,7 @@ from ui.icons import icon
 from ui.save_popup import save_icon
 from ui.imageloader import ImageLoaderThread, LocalCoverLoader
 from ui.lyric_line import LyricLine
-from ui.perf import eco
+from ui import motion
 from ui.styles import accent
 from ui.widgets import ElidedLabel
 
@@ -310,7 +310,7 @@ class LyricsBox(QFrame):
 
     def _scroll_to(self, value: int):
         bar = self.scroll.verticalScrollBar()
-        if eco():
+        if not motion.enabled():
             bar.setValue(value)
             return
         if self._anim is None:

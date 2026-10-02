@@ -124,3 +124,68 @@ def trim_memory() -> None:
         kernel32.SetProcessWorkingSetSize(kernel32.GetCurrentProcess(), ctypes.c_size_t(-1), ctypes.c_size_t(-1))
     except Exception:
         pass
+
+
+# ------------------------------------------------------------ medidor de consumo (Ajustes → Rendimiento)
+class _FileTime(ctypes.Structure):
+    _fields_ = [("lo", wintypes.DWORD), ("hi", wintypes.DWORD)]
+
+
+class _MemCounters(ctypes.Structure):
+    _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD), ("PeakWorkingSetSize", ctypes.c_size_t),
+                ("WorkingSetSize", ctypes.c_size_t), ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPagedPoolUsage", ctypes.c_size_t), ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaNonPagedPoolUsage", ctypes.c_size_t), ("PagefileUsage", ctypes.c_size_t),
+                ("PeakPagefileUsage", ctypes.c_size_t)]
+
+
+def cpu_seconds() -> float:
+    """Tiempo de procesador que ha gastado la aplicación desde que arrancó (núcleo + usuario)."""
+    if sys.platform != "win32":
+        import time
+        return time.process_time()
+    try:
+        kernel32 = ctypes.windll.kernel32
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        c, e, k, u = _FileTime(), _FileTime(), _FileTime(), _FileTime()
+        kernel32.GetProcessTimes(kernel32.GetCurrentProcess(), ctypes.byref(c), ctypes.byref(e), ctypes.byref(k),
+                                 ctypes.byref(u))
+        to_s = lambda ft: ((ft.hi << 32) | ft.lo) / 1e7
+        return to_s(k) + to_s(u)
+    except Exception:
+        import time
+        return time.process_time()
+
+
+def memory_mb() -> float:
+    """Memoria que ocupa ahora la aplicación (la que se ve en el Administrador de tareas)."""
+    if sys.platform != "win32":
+        return 0.0
+    try:
+        counters = _MemCounters()
+        counters.cb = ctypes.sizeof(_MemCounters)
+        kernel32 = ctypes.windll.kernel32
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        psapi = ctypes.windll.psapi
+        psapi.GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.POINTER(_MemCounters), wintypes.DWORD]
+        psapi.GetProcessMemoryInfo(kernel32.GetCurrentProcess(), ctypes.byref(counters), counters.cb)
+        return counters.WorkingSetSize / (1024 * 1024)
+    except Exception:
+        return 0.0
+
+
+class CpuMeter:
+    """Porcentaje de un procesador que ha usado la aplicación entre una lectura y la siguiente."""
+
+    def __init__(self):
+        import time
+        self._t = time.perf_counter()
+        self._c = cpu_seconds()
+
+    def read(self) -> float:
+        import time
+        now, cpu = time.perf_counter(), cpu_seconds()
+        span = max(1e-3, now - self._t)
+        pct = 100.0 * (cpu - self._c) / span
+        self._t, self._c = now, cpu
+        return max(0.0, pct)

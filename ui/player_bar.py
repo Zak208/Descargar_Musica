@@ -1,18 +1,27 @@
 """Construye la barra de reproducción inferior."""
 import os
 
-from PySide6.QtCore import Qt, QSize, QPropertyAnimation, QEasingCurve
+from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QPixmap, QIcon
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QSlider, QGraphicsOpacityEffect
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame
 )
+
+from ui.animations import press_feedback
+from ui.controls import CoverLabel, DotButton, PlayPauseButton
+from ui.osd import Osd
+from ui.sliders import SmoothSlider
+from ui.textfx import FixedDigitsLabel, SwapLabel
 
 from ui.styles import THEME_CONFIGS
 from ui.icons import icon
 from ui.visualizer_widget import AudioVisualizerWidget
 
 from ui.common import resource_path
-from ui.widgets import ClickableSlider
+
+
+def central_parent_of(window):
+    return window.centralWidget() if window.centralWidget() is not None else window
 
 
 def build_player_bar(self):
@@ -33,20 +42,19 @@ def build_player_bar(self):
     info_widget_layout.setContentsMargins(0, 0, 0, 0)
     info_widget_layout.setSpacing(10)
 
-    self.player_thumb = QLabel()
+    self.player_thumb = CoverLabel(radius=6, placeholder="#1E1E1E")
     self.player_thumb.setFixedSize(56, 56)
     self.player_thumb.setStyleSheet("background-color: #1E1E1E; border-radius: 6px;")
-    self.player_thumb.setScaledContents(True)
     info_widget_layout.addWidget(self.player_thumb)
 
     info_text_layout = QVBoxLayout()
     info_text_layout.setAlignment(Qt.AlignVCenter)
     info_text_layout.setSpacing(2)
 
-    self.player_title = QLabel("Cargando...")
+    self.player_title = SwapLabel("Cargando...")
     self.player_title.setObjectName("PlayerTitle")
     self.player_title.setWordWrap(False)
-    self.player_artist = QLabel("")
+    self.player_artist = SwapLabel("")
     self.player_artist.setObjectName("PlayerArtist")
     info_text_layout.addWidget(self.player_title)
     info_text_layout.addWidget(self.player_artist)
@@ -71,12 +79,8 @@ def build_player_bar(self):
     player_layout.addWidget(self.info_widget, stretch=1)
     self.info_widget.setMaximumWidth(360)
 
-    self.info_opacity = QGraphicsOpacityEffect(self.info_widget)
-    self.info_widget.setGraphicsEffect(self.info_opacity)
-    self.info_opacity.setOpacity(0.5)
-    self.info_anim = QPropertyAnimation(self.info_opacity, b"opacity")
-    self.info_anim.setDuration(350)
-    self.info_anim.setEasingCurve(QEasingCurve.InOutQuad)
+    # en pausa la información se ve más apagada (sin efectos gráficos permanentes: un color distinto y la portada atenuada)
+    self.player_thumb.set_dim(True)
 
     # Controles Centrales
     center_layout = QVBoxLayout()
@@ -90,7 +94,7 @@ def build_player_bar(self):
     tools_layout.setSpacing(4)
 
     # Aleatorio
-    self.btn_shuffle = QPushButton("")
+    self.btn_shuffle = DotButton()
     self.btn_shuffle.setIcon(QIcon(resource_path(os.path.join("assets", "icons", "shuffle.svg"))))
     self.btn_shuffle.setIconSize(QSize(18, 18))
     self.btn_shuffle.setObjectName("ControlBtn")
@@ -110,8 +114,7 @@ def build_player_bar(self):
     controls_layout.addWidget(self.btn_prev)
 
     # Play / Pause
-    self.btn_play_pause = QPushButton("")
-    self.btn_play_pause.setIcon(QIcon(resource_path(os.path.join("assets", "icons", "play_black.svg"))))
+    self.btn_play_pause = PlayPauseButton()
     self.btn_play_pause.setIconSize(QSize(20, 20))
     self.btn_play_pause.setObjectName("PlayPauseBtn")
     self.btn_play_pause.setCursor(Qt.PointingHandCursor)
@@ -129,7 +132,7 @@ def build_player_bar(self):
     controls_layout.addWidget(self.btn_next)
 
     # Bucle
-    self.btn_loop = QPushButton("")
+    self.btn_loop = DotButton()
     self.btn_loop.setIcon(QIcon(resource_path(os.path.join("assets", "icons", "repeat.svg"))))
     self.btn_loop.setIconSize(QSize(18, 18))
     self.btn_loop.setObjectName("ControlBtn")
@@ -204,18 +207,18 @@ def build_player_bar(self):
     seek_layout = QHBoxLayout()
     seek_layout.setSpacing(8)
 
-    self.time_current_label = QLabel("00:00")
+    self.time_current_label = FixedDigitsLabel("00:00")
     self.time_current_label.setStyleSheet("color: #B3B3B3; font-size: 11px; min-width: 35px;")
     self.time_current_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
-    self.seek_slider = ClickableSlider(Qt.Horizontal)
+    self.seek_slider = SmoothSlider(Qt.Horizontal, bubble_text=self.format_time)
     self.seek_slider.setRange(0, 0)
     self.seek_slider.setCursor(Qt.PointingHandCursor)
     self.seek_slider.setFixedHeight(16)
     self.seek_slider.setMaximumWidth(560)
     self.seek_slider.valueChanged.connect(self.on_seek_changed)
 
-    self.time_total_label = QLabel("00:00")
+    self.time_total_label = FixedDigitsLabel("00:00")
     self.time_total_label.setStyleSheet("color: #B3B3B3; font-size: 11px; min-width: 35px;")
     self.time_total_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
 
@@ -238,12 +241,12 @@ def build_player_bar(self):
 
     vol_layout = tools_layout
     vol_layout.addSpacing(8)
-    vol_icon = self.vol_icon = QLabel()
-    vol_pixmap = QPixmap(resource_path(os.path.join("assets", "icons", "volume.svg"))).scaled(16, 16, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-    vol_icon.setPixmap(vol_pixmap)
+    vol_icon = self.vol_icon = CoverLabel(radius=0, placeholder="#00000000")
+    vol_icon.setFixedSize(16, 16)
+    vol_icon.setPixmap(icon("volume.svg", "#B3B3B3").pixmap(16, 16))
     vol_icon.setStyleSheet("background: transparent;")
 
-    self.volume_slider = QSlider(Qt.Horizontal)
+    self.volume_slider = SmoothSlider(Qt.Horizontal)
     self.volume_slider.setRange(0, 100)
     self.volume_slider.setValue(100)
     self.volume_slider.setFixedWidth(96)
@@ -266,4 +269,16 @@ def build_player_bar(self):
     self.btn_close_player.clicked.connect(self.stop_player)
     player_layout.addWidget(self.btn_close_player, alignment=Qt.AlignTop)
 
+    # transporte: pulsación visible en todos los controles
+    for btn in (self.btn_shuffle, self.btn_prev, self.btn_play_pause, self.btn_next, self.btn_loop, self.btn_lyrics,
+                self.btn_queue, self.btn_panel, self.btn_options, self.btn_eq, self.btn_pip):
+        press_feedback(btn)
+
+    # chip del temporizador de dormir (solo se ve si hay uno activo) y aviso flotante del teclado
+    self.sleep_chip = QLabel("")
+    self.sleep_chip.setObjectName("SleepChip")
+    self.sleep_chip.setVisible(False)
+    tools_layout.insertWidget(tools_layout.indexOf(self.btn_options), self.sleep_chip)
+
     self.main_vbox.addWidget(self.player_bar)
+    self.osd = Osd(central_parent_of(self))

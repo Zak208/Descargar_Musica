@@ -3,7 +3,11 @@ import os
 import sys
 import subprocess
 
-from ui.animations import fade_in, pop_icon, press_feedback
+from ui.animations import fade_in, flash, pop_icon, press_feedback, ripple_feedback
+from ui.controls import CoverLabel
+from ui.downloadfx import SmoothProgress
+from ui.hover import HoverFader
+from ui.textfx import DotsLabel
 
 from PySide6.QtCore import Qt, QUrl, QSize, QRectF
 from PySide6.QtGui import QPixmap, QDesktopServices, QPainter, QPainterPath
@@ -23,7 +27,7 @@ from ui.friendly import friendly_error
 
 from ui.common import _ACTIVE_THREADS
 from ui.formatting import format_added
-from ui.perf import eco
+from ui import motion
 from ui.imageloader import ImageLoaderThread, LocalCoverLoader
 
 
@@ -58,10 +62,11 @@ ACTION_IDLE = "#8A8A8A"  # color de los botones secundarios en reposo (siempre v
 ACTION_HOT = "#FFFFFF"   # color al pasar el ratón por la fila
 
 
-class SongResultCard(QFrame):
+class SongResultCard(QFrame, HoverFader):
     def __init__(self, item_info: dict, parent_window, parent=None, list_mode: bool = False):
         super().__init__(parent)
-        self.setObjectName("ResultCard")
+        self.setObjectName("SongCard")
+        self.init_hover(0.07, 8)
         self.item_info = item_info
         self.parent_window = parent_window
         self.list_mode = list_mode
@@ -88,7 +93,7 @@ class SongResultCard(QFrame):
         """Aparición suave la primera vez que se muestra la fila (con un pequeño escalonado)."""
         if not self._shown_once:
             self._shown_once = True
-            if eco():
+            if not motion.enabled():
                 super().showEvent(event)
                 return
             parent = self.parentWidget()
@@ -107,7 +112,7 @@ class SongResultCard(QFrame):
         layout.setSpacing(14)
 
         # 1. Portada cuadrada
-        self.thumb_label = QLabel()
+        self.thumb_label = CoverLabel(radius=6)
         self.thumb_label.setFixedSize(COVER_SIZE, COVER_SIZE)
         self.thumb_label.setStyleSheet("background-color: #2A2A2A; border-radius: 6px;")
         self.load_thumbnail()
@@ -128,14 +133,13 @@ class SongResultCard(QFrame):
         self.artist_label.setObjectName("ArtistName")
         info_layout.addWidget(self.artist_label)
 
-        self.progress_bar = QProgressBar()
+        self.progress_bar = SmoothProgress()
         self.progress_bar.setValue(0)
-        self.progress_bar.setTextVisible(False)
         self.progress_bar.setFixedHeight(6)
         self.progress_bar.setVisible(False)
         info_layout.addWidget(self.progress_bar)
 
-        self.status_detail_label = QLabel("")
+        self.status_detail_label = DotsLabel("")
         self.status_detail_label.setObjectName("StatusDetail")
         self.status_detail_label.setVisible(False)
         info_layout.addWidget(self.status_detail_label)
@@ -229,6 +233,7 @@ class SongResultCard(QFrame):
         self.download_btn.setFixedWidth(DOWNLOAD_COL)
         self.download_btn.setCursor(Qt.PointingHandCursor)
         self.download_btn.clicked.connect(self.start_download)
+        ripple_feedback(self.download_btn)
         layout.addWidget(self.download_btn)
 
     def _paint_actions(self):
@@ -240,13 +245,19 @@ class SongResultCard(QFrame):
 
     def enterEvent(self, event):
         self._hot = True
+        self.hover_to(True)
         self._paint_actions()
         super().enterEvent(event)
 
     def leaveEvent(self, event):
         self._hot = False
+        self.hover_to(False)
         self._paint_actions()
         super().leaveEvent(event)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        self.paint_hover()
 
     def update_heart_state(self):
         saved = bool(PlaylistService.lists_containing(self.item_info))
@@ -388,7 +399,8 @@ class SongResultCard(QFrame):
 
             self.progress_bar.setValue(percent)
             if status == 'converting':
-                self.status_detail_label.setText("Preparando tu canción...")
+                self.progress_bar.setRange(0, 0)
+                self.status_detail_label.animate("Preparando tu canción")
             else:
                 self.status_detail_label.setText(f"Descargando… {percent}%")
         except RuntimeError:
@@ -408,6 +420,8 @@ class SongResultCard(QFrame):
                 self.download_btn.style().polish(self.download_btn)
                 self.status_detail_label.setText("Guardada en tu música")
                 self.open_folder_btn.setVisible(True)
+                self.progress_bar.setRange(0, 100)
+                flash(self, accent(), 0.22, 700, 8)            # final feliz: un destello suave
 
                 self.parent_window.refresh_sidebar_library()
                 self.parent_window.notify(f"«{self.item_info.get('title', 'Canción')}» descargada")

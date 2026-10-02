@@ -33,6 +33,11 @@ class DownloadsMixin:
         """Actualiza el botón y el texto informativo de la barra superior."""
         active = self.downloads.active()
         self.topbar.set_download_count(len(active))
+        was_busy = getattr(self, "_dl_was_busy", False)
+        self._dl_was_busy = bool(active)
+        self.topbar.set_download_progress(self.downloads.overall_percent() if active else None)
+        if was_busy and not active:
+            self.topbar.download_finished_flash()           # el anillo se completa y parpadea una vez
         if active:
             self._download_info_reset.stop()
             n = len(active)
@@ -44,6 +49,14 @@ class DownloadsMixin:
                 self._download_info_reset.start(5000)
             elif not finished:
                 self.update_header_info()
+
+    def download_fraction(self, info: dict):
+        """Avance (0 a 1) de la descarga en marcha de esa canción, o None si todavía no se sabe."""
+        title, artist = info.get("title", ""), info.get("uploader", "")
+        for entry in self.downloads.entries.values():
+            if entry["state"] in ("active", "converting") and entry["title"] == title and entry["artist"] == artist:
+                return entry["percent"] / 100.0 if entry["percent"] > 0 else None
+        return None
 
     def update_header_info(self):
         """Texto general de la barra superior cuando no se está descargando nada."""

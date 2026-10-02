@@ -11,7 +11,11 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QSizePolicy, QWidget
 
 from services.playlist_service import PlaylistService
+from ui.animations import flash
+from ui.controls import CoverLabel
+from ui.downloadfx import DownloadStateButton
 from ui.formatting import format_added
+from ui.hover import HoverFader, NowPlayingBars
 from ui.save_popup import save_icon
 from ui.icons import icon
 from ui.imageloader import ImageLoaderThread, LocalCoverLoader
@@ -31,7 +35,7 @@ HOT = "#FFFFFF"
 _EMPTY = QIcon()
 
 
-class TrackRow(QFrame):
+class TrackRow(QFrame, HoverFader):
     def __init__(self, item_info: dict, parent_window, number: int = 1, list_mode: bool = True, parent=None):
         super().__init__(parent)
         self.setObjectName("TrackRow")
@@ -50,10 +54,12 @@ class TrackRow(QFrame):
         self._press_pos = None
         self._collapse_on_release = False
         self.drag_source = None
+        self._was_downloading = False
         self._blocked = False       # sin conexión y sin descargar: oscurecida y no se puede usar
         self._veil = None
         self._detect_downloaded()
         self.setProperty("selected", False)
+        self.init_hover(0.10, 8)
         self.init_ui()
         self.refresh_state()
         self.apply_offline()
@@ -83,9 +89,14 @@ class TrackRow(QFrame):
         self.idx_label.setObjectName("RowIndex")
         self.idx_label.setFixedWidth(IDX_COL)
         self.idx_label.setAlignment(Qt.AlignCenter)
+        bars_lay = QHBoxLayout(self.idx_label)
+        bars_lay.setContentsMargins(0, 0, 0, 0)
+        self.now_bars = NowPlayingBars(self.parent_window)       # «está sonando»: tres barras que se mueven
+        self.now_bars.hide()
+        bars_lay.addWidget(self.now_bars, alignment=Qt.AlignCenter)
         lay.addWidget(self.idx_label)
 
-        self.cover = QLabel()
+        self.cover = CoverLabel(radius=5)
         self.cover.setFixedSize(ROW_COVER, ROW_COVER)
         self.cover.setStyleSheet("background-color: #2A2A2A; border-radius: 5px;")
         lay.addWidget(self.cover)
@@ -122,7 +133,7 @@ class TrackRow(QFrame):
 
         self.heart_btn = self._icon_button("Guardar en una lista", self._toggle_like)
         lay.addWidget(self.heart_btn)
-        self.dl_btn = self._icon_button("Descargar", self._download)   # columna «descargada»
+        self.dl_btn = self._icon_button("Descargar", self._download, DownloadStateButton)   # columna «descargada»
         lay.addWidget(self.dl_btn)
 
         self.duration_label = QLabel(self.item_info.get("duration_str", ""))
@@ -135,8 +146,8 @@ class TrackRow(QFrame):
         self.more_btn = self._icon_button("Más opciones", self._open_menu)
         lay.addWidget(self.more_btn)
 
-    def _icon_button(self, tip: str, slot) -> QPushButton:
-        btn = QPushButton("")
+    def _icon_button(self, tip: str, slot, kind=QPushButton) -> QPushButton:
+        btn = kind()
         btn.setObjectName("IconBtn")
         btn.setIconSize(QSize(18, 18))
         btn.setFixedSize(ICON_COL, ICON_COL)
@@ -172,10 +183,13 @@ class TrackRow(QFrame):
 
         # número, símbolo de reproducir o indicador de «está sonando»
         if self._hot:
+            self.now_bars.hide()
             self.idx_label.setPixmap(icon("play.svg", HOT).pixmap(16, 16))
         elif self._playing:
-            self.idx_label.setPixmap(icon("volume.svg", accent()).pixmap(16, 16))
+            self.idx_label.clear()
+            self.now_bars.show()
         else:
+            self.now_bars.hide()
             self.idx_label.setText(str(self.number))
 
         saved = bool(PlaylistService.lists_containing(self.item_info))
@@ -187,18 +201,21 @@ class TrackRow(QFrame):
         local = bool(self.item_info.get("local_path"))
         pending = (not local) and getattr(self.parent_window, "is_pending", lambda _i: False)(self.item_info)
         if local:
-            self.dl_btn.setIcon(icon("check_circle.svg", accent()))
+            self.dl_btn.set_done(animate=self._was_downloading)
+            self._was_downloading = False
             self.dl_btn.setToolTip("Descargada en tu equipo")
             self.dl_btn.setEnabled(False)
         elif pending and not self._downloading:
+            self.dl_btn.set_idle()
             self.dl_btn.setIcon(icon("clock.svg", "#FFD166"))
             self.dl_btn.setToolTip("Pendiente: se descargará cuando vuelva internet")
             self.dl_btn.setEnabled(False)
         elif self._downloading:
-            self.dl_btn.setIcon(icon("clock.svg", accent()))
+            self.dl_btn.set_busy(self._download_fraction())     # anillo con el avance (o girando si no se sabe)
             self.dl_btn.setToolTip("Descargando…")
             self.dl_btn.setEnabled(False)
         else:
+            self.dl_btn.set_idle()
             self.dl_btn.setIcon(icon("download.svg", color) if active else _EMPTY)
             self.dl_btn.setToolTip("Descargar")
             self.dl_btn.setEnabled(True)
@@ -294,15 +311,40 @@ class TrackRow(QFrame):
         if self.item_info.get("local_path") or self._downloading:
             return
         self._downloading = True
+        self._was_downloading = True
         self.refresh_state()
+        tracker = getattr(self.parent_window, "downloads", None)
+        if tracker is not None:
+            tracker.changed.connect(self._on_downloads_changed)
         self.parent_window.quick_download(dict(self.item_info), on_done=self._download_done)
+
+    def _download_fraction(self):
+        getter = getattr(self.parent_window, "download_fraction", None)
+        return getter(self.item_info) if getter else None
+
+    def _on_downloads_changed(self):
+        try:
+            if self._downloading:
+                self.dl_btn.set_busy(self._download_fraction())
+        except RuntimeError:
+            pass
 
     def _download_done(self, result: dict):
         try:
             self._downloading = False
-            if result.get("success") and result.get("mp3_path"):
+            tracker = getattr(self.parent_window, "downloads", None)
+            if tracker is not None:
+                try:
+                    tracker.changed.disconnect(self._on_downloads_changed)
+                except (RuntimeError, TypeError):
+                    pass
+            ok = bool(result.get("success") and result.get("mp3_path"))
+            if ok:
                 self.item_info = dict(self.item_info, local_path=result["mp3_path"], already_downloaded=True)
+            self._was_downloading = ok
             self.refresh_state()
+            if ok:
+                flash(self, accent(), 0.22, 700, 8)            # final feliz: un destello suave
         except RuntimeError:
             pass
 
@@ -313,13 +355,19 @@ class TrackRow(QFrame):
     # ----------------------------------------------------------------- ratón
     def enterEvent(self, event):
         self._hot = True
+        self.hover_to(True)
         self.refresh_state()
         super().enterEvent(event)
 
     def leaveEvent(self, event):
         self._hot = False
+        self.hover_to(False)
         self.refresh_state()
         super().leaveEvent(event)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        self.paint_hover()
 
     def mouseMoveEvent(self, event):
         """Arrastrar la canción (o todas las marcadas) hacia una lista de la barra lateral las añade a ella;

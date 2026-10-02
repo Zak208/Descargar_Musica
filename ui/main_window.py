@@ -50,7 +50,9 @@ from services.equalizer_service import (
 from ui.toast import Toast
 from ui.topbar import TopBar
 from ui.downloads_panel import DownloadsTracker, DownloadsPanel
-from ui.animations import pop_icon
+from ui.animations import pop_icon, press_pulse
+from ui import motion, snapshot, frames
+from ui.anim_clock import clock
 from ui.dialogs import ask_text, ask_confirm, show_message
 from ui.imageloader import prune_disk_cache, clear_memory_cache
 from ui import perf
@@ -105,6 +107,8 @@ class FFmpegDownloadWorker(QThread):
 
 class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin, DownloadsMixin, OfflineMixin,
                  UsabilityMixin, PlaybackOptionsMixin):
+    playing_changed = Signal(bool)          # empieza o se detiene el sonido (los indicadores de «sonando» lo siguen)
+
     def __init__(self):
         super().__init__()
         web.warm_up()          # prepara en segundo plano la conexión segura compartida (ahorra CPU en cada petición)
@@ -120,6 +124,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self.current_item_info = None
         self.preview_worker = None
         self.is_updating_seek = False
+        self._page_scroll = {}
 
         # Modos y estados
         self.is_loop_enabled = False
@@ -163,6 +168,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self._theme_filter = ThemeEventFilter(self)
         self._set_theme_filter(self.current_theme != "spotify" or high_contrast_enabled())   # con el tema por defecto no hace falta vigilar nada
         self.toast = Toast(self)
+        clock().degraded.connect(self._on_clock_degraded)
         self.downloads = DownloadsTracker(self)
         self._download_info_reset = QTimer(self)
         self._download_info_reset.setSingleShot(True)
@@ -191,6 +197,11 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         QTimer.singleShot(150, self.rescan_library)          # lee la biblioteca en segundo plano
         QTimer.singleShot(0, self.watch_library)
         QTimer.singleShot(4000, prune_disk_cache)
+
+    def _on_clock_degraded(self, interval: int):
+        """El equipo va justo: las animaciones continuas bajan de velocidad (o se limitan a las puntuales)."""
+        if interval == 0:
+            self.notify("Tu equipo va justo: se han reducido las animaciones para que todo vaya fluido.")
 
     def init_ui(self):
         # Aplicar tema visual activo
@@ -328,18 +339,26 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             event.accept()
             return
         if key == Qt.Key_Space:
+            press_pulse(self.btn_play_pause)          # se ve qué botón hace el atajo
             self.toggle_play_pause()
             event.accept()
             return
         elif key == Qt.Key_Left:
             cur = self.player.position()
             self.player.setPosition(max(0, cur - 5000))
+            self.show_seek_osd(-5)
             event.accept()
             return
         elif key == Qt.Key_Right:
             cur = self.player.position()
             dur = self.player.duration()
             self.player.setPosition(min(dur, cur + 5000))
+            self.show_seek_osd(5)
+            event.accept()
+            return
+        elif key in (Qt.Key_Up, Qt.Key_Down) and event.modifiers() == Qt.ControlModifier:
+            self.volume_slider.setValue(max(0, min(100, self.volume_slider.value() + (5 if key == Qt.Key_Up else -5))))
+            self.show_volume_osd()
             event.accept()
             return
         elif key == Qt.Key_M:
@@ -349,6 +368,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
                 self.volume_slider.setValue(0)
             else:
                 self.volume_slider.setValue(getattr(self, '_prev_vol', 100))
+            self.show_volume_osd()
             event.accept()
             return
         elif event.modifiers() == Qt.ControlModifier and key == Qt.Key_F:
@@ -356,14 +376,17 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             event.accept()
             return
         elif key in [Qt.Key_MediaPlay, Qt.Key_MediaPause, Qt.Key_MediaTogglePlayPause]:
+            press_pulse(self.btn_play_pause)
             self.toggle_play_pause()
             event.accept()
             return
         elif key == Qt.Key_MediaNext:
+            press_pulse(self.btn_next)
             self.play_next()
             event.accept()
             return
         elif key == Qt.Key_MediaPrevious:
+            press_pulse(self.btn_prev)
             self.play_previous()
             event.accept()
             return
@@ -604,6 +627,8 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             return
 
         self.is_mini_mode = not self.is_mini_mode
+        if not self.is_mini_mode:
+            self.btn_play_pause.set_ring(None)
         extras = [
             self.btn_shuffle, self.btn_loop, self.btn_lyrics, self.btn_queue, self.btn_eq, self.btn_panel, self.btn_options,
             self.vol_icon, self.volume_slider, self.player_status, self.visualizer,
@@ -669,6 +694,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
 
     def _set_background(self, background: bool):
         self._in_background = background
+        clock().set_paused(background)          # minimizada: no se anima nada
         if hasattr(self, "visualizer"):
             self.visualizer.set_window_active(not background)
         if background:
@@ -877,8 +903,11 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             "Solo tienen sentido si vas a editar el audio.</p>",
             ok="Entendido")
 
+    _PAGE_DEPTH = {0: 0, 5: 0, 1: 1, 4: 1, 2: 2, 3: 3}      # inicio y biblioteca arriba; el detalle, más hondo
+
     def switch_to_page(self, target_index: int):
-        """Cambia de página con una animación suave de desvanecimiento (Fade-in)."""
+        """Cambia de página con un cruce suave: se hace una foto de la página que se va y esa foto se desvanece (y se
+        desplaza un poco hacia donde se «avanza» o se «vuelve»). Al volver, la lista recupera el punto de scroll."""
         current = self.stacked_widget.currentIndex()
         if current == target_index:
             return
@@ -889,27 +918,43 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         if not target_widget:
             return
         QTimer.singleShot(0, self.apply_accessibility_names)
+        old_widget = self.stacked_widget.currentWidget()
+        self._remember_scroll(old_widget, current)
+        snap = snapshot.grab(old_widget) if (motion.enabled() and old_widget is not None and old_widget.isVisible()) else None
         self.stacked_widget.setCurrentIndex(target_index)
+        direction = self._PAGE_DEPTH.get(target_index, 1) - self._PAGE_DEPTH.get(current, 1)
+        if direction < 0:
+            QTimer.singleShot(0, lambda: self._restore_scroll(target_widget, target_index))
+        if snap is not None:
+            snapshot.crossfade(self.stacked_widget, snap, motion.DUR_BASE - 40,
+                               dx=-24.0 if direction > 0 else (24.0 if direction < 0 else 0.0))
 
-        eff = QGraphicsOpacityEffect(target_widget)
-        target_widget.setGraphicsEffect(eff)
-        anim = QPropertyAnimation(eff, b"opacity", self)
-        anim.setDuration(220)
-        anim.setStartValue(0.15)
-        anim.setEndValue(1.0)
-        anim.setEasingCurve(QEasingCurve.OutCubic)
-        anim.start(QPropertyAnimation.DeleteWhenStopped)
-        self._page_transition_anim = anim
+    def _remember_scroll(self, page, index: int):
+        from PySide6.QtWidgets import QScrollArea
+        if page is None:
+            return
+        area = page.findChild(QScrollArea)
+        if area is not None:
+            self._page_scroll[index] = area.verticalScrollBar().value()
+
+    def _restore_scroll(self, page, index: int):
+        from PySide6.QtWidgets import QScrollArea
+        value = self._page_scroll.get(index)
+        area = page.findChild(QScrollArea) if page is not None else None
+        if area is not None and value:
+            area.verticalScrollBar().setValue(value)
 
     def toggle_loop(self):
         self.is_loop_enabled = not self.is_loop_enabled
         icon_name = "repeat_active.svg" if self.is_loop_enabled else "repeat.svg"
         self.btn_loop.setIcon(QIcon(resource_path(os.path.join("assets", "icons", icon_name))))
+        self.btn_loop.set_active(self.is_loop_enabled)
 
     def toggle_shuffle(self):
         self.is_shuffle_enabled = not self.is_shuffle_enabled
         icon_name = "shuffle_active.svg" if self.is_shuffle_enabled else "shuffle.svg"
         self.btn_shuffle.setIcon(QIcon(resource_path(os.path.join("assets", "icons", icon_name))))
+        self.btn_shuffle.set_active(self.is_shuffle_enabled)
         self.reset_shuffle()                      # el orden de lo que viene se decide de nuevo
         if hasattr(self, "now_panel") and self.now_panel.isVisible():
             self.now_panel.refresh_next()         # y el panel «A continuación» enseña lo que de verdad sonará
@@ -1056,6 +1101,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             accent_hex = THEME_CONFIGS.get(theme_key, {}).get("accent", "#1ED760")
             if hasattr(self, 'visualizer'):
                 self.visualizer.set_accent_color(accent_hex)
+            frames.clear()
             self.update_player_heart_icon()
             self.topbar.refresh_accent()
             for w in self.findChildren(QWidget):
@@ -1576,6 +1622,9 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             if not self.seek_slider.isSliderDown():
                 self.seek_slider.setValue(position_ms)
             self.time_current_label.setText(self.format_time(position_ms))
+            if self.is_mini_mode:
+                duration = self.player.duration()
+                self.btn_play_pause.set_ring(position_ms / duration if duration > 0 else 0.0)
 
             if hasattr(self, 'lyrics_dialog') and self.lyrics_dialog and self.lyrics_dialog.isVisible():
                 self.lyrics_dialog.update_position(position_ms)
@@ -1615,19 +1664,19 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self.player.setSource(QUrl(stream_url))
         self.player.play()
         self.player_status.setText("Reproduciendo")
-        self.btn_play_pause.setIcon(QIcon(resource_path(os.path.join("assets", "icons", "pause_black.svg"))))
+        self.btn_play_pause.set_state(True)
         self.btn_play_pause.setEnabled(True)
 
     def _on_preview_error(self, error_msg):
         self.player_status.setText(friendly_error(error_msg))
-        self.btn_play_pause.setIcon(QIcon(resource_path(os.path.join("assets", "icons", "play_black.svg"))))
+        self.btn_play_pause.set_state(False)
         self._safe_set_btn_text(self.current_preview_btn, " Escuchar", "play.svg")
         self.player.stop()
 
     def handle_player_error(self, error, error_string):
         self._safe_set_btn_text(self.current_preview_btn, " Escuchar", "play.svg")
         self.player_status.setText(friendly_error(error_string))
-        self.btn_play_pause.setIcon(QIcon(resource_path(os.path.join("assets", "icons", "play_black.svg"))))
+        self.btn_play_pause.set_state(False)
         self.player.stop()
 
     def handle_media_status(self, status):
@@ -1643,36 +1692,44 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
                 self.on_end_of_track()          # marca el avance natural (para el fundido de entrada)
                 self.play_next()
 
+    def is_playing_now(self) -> bool:
+        return self.player.playbackState() == QMediaPlayer.PlayingState
+
     def handle_playback_state(self, state):
         self.update_system_status(state == QMediaPlayer.PlayingState)
+        self.playing_changed.emit(state == QMediaPlayer.PlayingState)
         if state == QMediaPlayer.PlayingState:
-            self.info_anim.stop()
-            self.info_anim.setEndValue(1.0)
-            self.info_anim.start()
+            self._set_info_dim(False)
             self.player_status.setText("Reproduciendo")
-            self.btn_play_pause.setIcon(QIcon(resource_path(os.path.join("assets", "icons", "pause_black.svg"))))
+            self.btn_play_pause.set_state(True)
             self._safe_set_btn_text(self.current_preview_btn, " Pausa", "pause.svg")
             if hasattr(self, 'visualizer'):
                 self.visualizer.set_playing(True)
         elif state == QMediaPlayer.PausedState:
             self._finish_crossfade()            # si se pausa a mitad de un fundido, la canción que se apagaba se corta
-            self.info_anim.stop()
-            self.info_anim.setEndValue(0.5)
-            self.info_anim.start()
+            self._set_info_dim(True)
             self.player_status.setText("Pausado")
-            self.btn_play_pause.setIcon(QIcon(resource_path(os.path.join("assets", "icons", "play_black.svg"))))
+            self.btn_play_pause.set_state(False)
             self._safe_set_btn_text(self.current_preview_btn, " Escuchar", "play.svg")
             if hasattr(self, 'visualizer'):
                 self.visualizer.set_playing(False)
         elif state == QMediaPlayer.StoppedState:
-            self.info_anim.stop()
-            self.info_anim.setEndValue(0.5)
-            self.info_anim.start()
+            self._set_info_dim(True)
             self.player_status.setText("Detenido")
-            self.btn_play_pause.setIcon(QIcon(resource_path(os.path.join("assets", "icons", "play_black.svg"))))
+            self.btn_play_pause.set_state(False)
             self._safe_set_btn_text(self.current_preview_btn, " Escuchar", "play.svg")
             if hasattr(self, 'visualizer'):
                 self.visualizer.set_playing(False)
+
+    def _set_info_dim(self, dim: bool):
+        """Con la música en pausa, la portada y el texto de la barra se ven más apagados."""
+        self.player_thumb.set_dim(dim)
+        for label in (self.player_title, self.player_artist):
+            if bool(label.property("dim")) != dim:
+                label.setProperty("dim", dim)
+                label.style().unpolish(label)
+                label.style().polish(label)
+                label.update()
 
     def toggle_play_pause(self):
         if self.player.playbackState() == QMediaPlayer.PlayingState:

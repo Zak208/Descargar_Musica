@@ -1,8 +1,8 @@
 """Ventana de Ajustes: calidad, destino de descargas, espacio, copia de seguridad, rendimiento y tema visual."""
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, QSize, QTimer
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox,
-    QFrame, QGridLayout, QCheckBox, QScrollArea, QWidget, QFileDialog
+    QFrame, QGridLayout, QScrollArea, QWidget, QFileDialog
 )
 
 from config import (
@@ -14,7 +14,10 @@ from ui.styles import THEME_CONFIGS
 from ui.icons import icon
 from version import __version__
 from ui.overlay import InlineDialog
+from ui import motion, perf
+from ui.controls import SegmentedControl, ToggleSwitch as QCheckBox
 from ui.perf import eco, set_eco, visualizer_enabled, set_visualizer
+from ui.playback_options import FADES
 
 
 def _group(title: str, hint: str = "") -> tuple[QFrame, QVBoxLayout]:
@@ -132,7 +135,7 @@ class SettingsDialog(InlineDialog):
         # --- Rendimiento ---
         perf_box, perf_lay = _group(
             "Rendimiento",
-            "El modo ahorro reduce animaciones y memoria. Es lo mejor para ordenadores modestos. "
+            "El modo ahorro reduce la memoria y el trabajo en segundo plano. Es lo mejor para ordenadores modestos. "
             "Algunos cambios se notan por completo al reiniciar la aplicación.")
         self.chk_eco = QCheckBox("Modo ahorro de recursos (recomendado)")
         self.chk_eco.setChecked(eco())
@@ -142,6 +145,30 @@ class SettingsDialog(InlineDialog):
         self.chk_visualizer.setChecked(visualizer_enabled())
         self.chk_visualizer.toggled.connect(set_visualizer)
         perf_lay.addWidget(self.chk_visualizer)
+        mot_label = QLabel("Animaciones")
+        mot_label.setStyleSheet("background: transparent; margin-top: 6px;")
+        perf_lay.addWidget(mot_label)
+        self.motion_seg = SegmentedControl([(k, motion.LEVEL_NAMES[k]) for k in motion.LEVELS], motion.stored_level())
+        self.motion_seg.changed.connect(self._motion_changed)
+        perf_lay.addWidget(self.motion_seg)
+        mot_hint = QLabel("«Suaves» solo anima lo que haces (apenas gasta). «Completas» añade detalles continuos. "
+                          "«Ninguna» lo deja todo instantáneo. Con la batería baja se reducen solas.")
+        mot_hint.setObjectName("SettingsHint")
+        mot_hint.setWordWrap(True)
+        perf_lay.addWidget(mot_hint)
+        meter_row = QHBoxLayout()
+        self.lbl_meter = QLabel("")
+        self.lbl_meter.setObjectName("SettingsHint")
+        meter_row.addWidget(self.lbl_meter, stretch=1)
+        self.btn_calibrate = _button("Probar animaciones")
+        self.btn_calibrate.setToolTip("Mide cuánto gasta tu equipo con las animaciones y elige el nivel que mejor le va")
+        self.btn_calibrate.clicked.connect(self._calibrate)
+        meter_row.addWidget(self.btn_calibrate)
+        perf_lay.addLayout(meter_row)
+        self._meter = None
+        self._meter_timer = QTimer(self)
+        self._meter_timer.setInterval(2000)
+        self._meter_timer.timeout.connect(self._update_meter)
         self.perf_extra_lay = perf_lay
         root.addWidget(perf_box)
 
@@ -156,7 +183,7 @@ class SettingsDialog(InlineDialog):
         fade_row = QHBoxLayout()
         fade_row.addWidget(QLabel("Fundido entre canciones"))
         self.fade_combo = QComboBox()
-        for seconds, text in ((0, "Sin fundido"), (2, "2 segundos"), (4, "4 segundos"), (6, "6 segundos")):
+        for seconds, text in FADES:
             self.fade_combo.addItem(text, seconds)
         self.fade_combo.setCurrentIndex(max(0, self.fade_combo.findData(int(load_settings().get("fade_seconds", 0)))))
         self.fade_combo.currentIndexChanged.connect(lambda _i: self.window_ref.set_fade_seconds(self.fade_combo.currentData()))
@@ -288,6 +315,45 @@ class SettingsDialog(InlineDialog):
         outer.addLayout(footer)
 
         self.refresh_space()
+
+    # ------------------------------------------------------- animaciones y consumo
+    def _motion_changed(self, key: str):
+        motion.set_level(key)
+        if self.window_ref is not None and hasattr(self.window_ref, "notify"):
+            self.window_ref.notify(f"Animaciones: {motion.LEVEL_NAMES[key].lower()}")
+
+    def showEvent(self, event):
+        if hasattr(self, "_meter_timer"):
+            self._meter = perf.CpuMeter()
+            self._update_meter()
+            self._meter_timer.start()         # solo mientras esta ventana se ve
+        super().showEvent(event)
+
+    def hideEvent(self, event):
+        if hasattr(self, "_meter_timer"):
+            self._meter_timer.stop()
+        super().hideEvent(event)
+
+    def _update_meter(self):
+        if self._meter is None:
+            self._meter = perf.CpuMeter()
+        cpu = self._meter.read()
+        self.lbl_meter.setText(f"La aplicación está usando ahora: {cpu:.1f} % de CPU · {perf.memory_mb():.0f} MB de memoria")
+
+    def _calibrate(self):
+        from ui.calibrate import run_calibration
+        self.btn_calibrate.setEnabled(False)
+        self.btn_calibrate.setText("Midiendo...")
+
+        def done(level_key: str, cpu: float):
+            self.btn_calibrate.setEnabled(True)
+            self.btn_calibrate.setText("Probar animaciones")
+            self.motion_seg.set_current(level_key)
+            if self.window_ref is not None and hasattr(self.window_ref, "notify"):
+                self.window_ref.notify(f"Listo: tu equipo va bien con animaciones {motion.LEVEL_NAMES[level_key].lower()} "
+                                       f"({cpu:.0f} % de CPU en la prueba)")
+
+        run_calibration(self.window_ref, done)
 
     @staticmethod
     def _save_value(name: str, value):

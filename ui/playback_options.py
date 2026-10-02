@@ -115,6 +115,24 @@ class PlaybackOptionsMixin:
     def change_volume(self, value):
         self._volume_master = value / 100.0
         self._apply_volume()
+        self._update_volume_icon(value)
+
+    def _update_volume_icon(self, value: int):
+        """El icono del altavoz cambia con el nivel (silencio, bajo, alto) con un cruce breve."""
+        level = 0 if value <= 0 else (1 if value < 35 else 2)
+        if level == getattr(self, "_vol_level", None) or not hasattr(self, "vol_icon"):
+            return
+        self._vol_level = level
+        name = ("volume_mute.svg", "volume_low.svg", "volume.svg")[level]
+        self.vol_icon.setPixmap(icon(name, "#B3B3B3").pixmap(16, 16))
+
+    def show_volume_osd(self):
+        value = self.volume_slider.value()
+        name = "volume_mute.svg" if value <= 0 else ("volume_low.svg" if value < 35 else "volume.svg")
+        self.osd.show_osd(name, "Silencio" if value <= 0 else f"Volumen {value} %", value / 100.0)
+
+    def show_seek_osd(self, seconds: int):
+        self.osd.show_osd("forward.svg" if seconds > 0 else "rewind.svg", f"{'+' if seconds > 0 else '−'}{abs(seconds)} s")
 
     def _apply_volume(self):
         master = self._volume_master * self._sleep_factor
@@ -398,6 +416,24 @@ class PlaybackOptionsMixin:
 
     # ------------------------------------------------------------- menú
     def _refresh_options_icon(self):
+        self.seek_slider.set_marks(*self._ab)          # el tramo que se repite se ve sobre la barra
+        chip = getattr(self, "sleep_chip", None)
+        if chip is not None:
+            if self._sleep_deadline:
+                left = self.sleep_remaining()
+                chip.setText(f"{left // 60}:{left % 60:02d}")
+                urgent = left <= 60
+            elif self._sleep_end_of_track:
+                chip.setText("Al terminar")
+                urgent = False
+            else:
+                chip.setText("")
+                urgent = False
+            chip.setVisible(bool(chip.text()))
+            if bool(chip.property("urgent")) != urgent:
+                chip.setProperty("urgent", urgent)
+                chip.style().unpolish(chip)
+                chip.style().polish(chip)
         active = bool(self._sleep_deadline or self._sleep_end_of_track or self._ab[0] is not None
                       or abs(self.player.playbackRate() - 1.0) > 0.01)
         self.btn_options.setIcon(icon("timer.svg", accent() if active else "#B3B3B3"))

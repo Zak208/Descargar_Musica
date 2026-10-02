@@ -1,9 +1,10 @@
 import random
 import math
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QPainter, QColor, QBrush
 from PySide6.QtWidgets import QWidget
 
+from ui.anim_clock import clock
 from ui.perf import eco, visualizer_enabled
 
 
@@ -28,9 +29,8 @@ class AudioVisualizerWidget(QWidget):
         if not self.enabled:
             self.hide()
 
-        self.timer = QTimer(self)
-        self.timer.setInterval(100 if eco() else 45)
-        self.timer.timeout.connect(self._animate_step)
+        self._token = None          # suscripción al reloj compartido: solo existe mientras se anima
+        self._fps = 10 if eco() else 22
 
     def set_accent_color(self, hex_color: str):
         self.accent_color = QColor(hex_color)
@@ -40,7 +40,7 @@ class AudioVisualizerWidget(QWidget):
         self.enabled = bool(enabled)
         self.setVisible(self.enabled)
         if not self.enabled:
-            self.timer.stop()
+            self._stop()
         elif self.is_playing:
             self.set_playing(True)
 
@@ -48,20 +48,29 @@ class AudioVisualizerWidget(QWidget):
         """Con la ventana minimizada se detiene la animación (y se retoma al volver)."""
         self.paused_by_window = not active
         if not active:
-            self.timer.stop()
+            self._stop()
         elif self.is_playing and self.enabled:
-            self.timer.start()
+            self._start()
 
     def set_playing(self, playing: bool):
         self.is_playing = playing
         if playing:
-            if self.enabled and not self.paused_by_window and not self.timer.isActive():
-                self.timer.start()
+            if self.enabled and not self.paused_by_window:
+                self._start()
         else:
             # Desvanecer barras al pausar
             self.target_heights = [3.0] * self.num_bars
 
-    def _animate_step(self):
+    def _start(self):
+        if self._token is None:
+            self._token = clock().subscribe(self._animate_step, self._fps)
+
+    def _stop(self):
+        if self._token is not None:
+            clock().unsubscribe(self._token)
+            self._token = None
+
+    def _animate_step(self, _dt=0):
         self.phase += 0.25
         max_h = self.height() - 4
 
@@ -74,7 +83,7 @@ class AudioVisualizerWidget(QWidget):
         else:
             self.target_heights = [3.0] * self.num_bars
             if all(abs(h - 3.0) < 0.5 for h in self.bar_heights):
-                self.timer.stop()
+                self._stop()
 
         # Interpolación suave (LERP) hacia los objetivos
         for i in range(self.num_bars):

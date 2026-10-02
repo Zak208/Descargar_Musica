@@ -192,9 +192,6 @@ QFrame#TrackRow {
     background-color: transparent;
     border-radius: 8px;
 }
-QFrame#TrackRow:hover {
-    background-color: rgba(255, 255, 255, 0.10);
-}
 QFrame#TrackRow[selected="true"] {
     background-color: rgba(255, 255, 255, 0.20);
 }
@@ -581,6 +578,12 @@ QComboBox QAbstractItemView {
 }
 
 /* TARJETA DE CANCIÓN */
+#SongCard {
+    background-color: transparent;
+    border-radius: 8px;
+    border: none;
+}
+
 #ResultCard {
     background-color: transparent;
     border-radius: 8px;
@@ -749,6 +752,24 @@ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
 #PlayerStatus {
     font-size: 12px;
     color: #B3B3B3;
+}
+#PlayerTitle[dim="true"] {
+    color: #A8A8A8;
+}
+#PlayerArtist[dim="true"] {
+    color: #808080;
+}
+#SleepChip {
+    background-color: rgba(255, 255, 255, 0.10);
+    color: #FFFFFF;
+    border-radius: 11px;
+    padding: 3px 9px;
+    font-size: 11px;
+    font-weight: bold;
+}
+#SleepChip[urgent="true"] {
+    background-color: #1ED760;
+    color: #000000;
 }
 
 QPushButton#PlayPauseBtn {
