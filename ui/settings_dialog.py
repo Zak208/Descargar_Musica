@@ -299,6 +299,10 @@ class SettingsDialog(InlineDialog):
         self.theme_name_lbl = QLabel(THEME_CONFIGS.get(current_theme, {}).get("name", ""))
         self.theme_name_lbl.setObjectName("SettingsHint")
         look_lay.addWidget(self.theme_name_lbl)
+        self.chk_dynamic = QCheckBox("La barra de reproducción toma el color de la portada de cada canción")
+        self.chk_dynamic.setChecked(bool(load_settings().get("dynamic_accent", False)))
+        self.chk_dynamic.toggled.connect(self._dynamic_toggled)
+        look_lay.addWidget(self.chk_dynamic)
         self.look_extra_lay = look_lay
         root.addWidget(look_box)
         root.addStretch(1)
@@ -316,6 +320,10 @@ class SettingsDialog(InlineDialog):
         outer.addLayout(footer)
 
         self.refresh_space()
+
+    def _dynamic_toggled(self, on: bool):
+        self._save_flag("dynamic_accent", on)
+        self.window_ref._update_live_accent()
 
     def _contrast_toggled(self, on: bool):
         """Se aplica al instante y se pregunta «¿se ve bien?»: si nadie responde en 10 s, se deshace solo."""

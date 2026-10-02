@@ -1208,6 +1208,19 @@ def theme_color(name: str) -> str:
     return THEME_CONFIGS[_active_theme][name]
 
 
+_live_accent = None
+
+
+def set_live_accent(color) -> None:
+    """Color que sigue a la portada de la canción (solo lo usan los elementos pintados a mano). None = el del tema."""
+    global _live_accent
+    _live_accent = color
+
+
+def live_accent() -> str:
+    return _live_accent or accent()
+
+
 def accent() -> str:
     return theme_color("accent")
 

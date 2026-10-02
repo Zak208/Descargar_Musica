@@ -5,7 +5,7 @@ from PySide6.QtGui import QPainter, QColor
 from PySide6.QtWidgets import QSlider, QWidget
 
 from ui import motion
-from ui.styles import accent
+from ui.styles import accent, live_accent
 
 
 class TimeBubble(QWidget):
@@ -186,15 +186,15 @@ class SmoothSlider(QSlider):
         p.drawRoundedRect(groove, 2, 2)
         a, b = self._marks
         if a is not None and b is not None and self.maximum() > 0:
-            band = QColor(accent())
+            band = QColor(live_accent())
             band.setAlphaF(0.55)
             p.setBrush(band)
             p.drawRoundedRect(QRectF(self._x_of(a), cy - 3, max(2.0, self._x_of(b) - self._x_of(a)), 6), 3, 3)
         elif a is not None and self.maximum() > 0:
-            p.setBrush(QColor(accent()))
+            p.setBrush(QColor(live_accent()))
             p.drawRoundedRect(QRectF(self._x_of(a) - 1, cy - 5, 2, 10), 1, 1)
         x = self._x_of(self.value())
-        fill = QColor(accent()) if self._hover_t > 0.5 else QColor("#FFFFFF")
+        fill = QColor(live_accent()) if self._hover_t > 0.5 else QColor("#FFFFFF")
         p.setBrush(fill)
         p.drawRoundedRect(QRectF(left, cy - 2, max(0.0, x - left), 4), 2, 2)
         r = 6.0 * self._hover_t

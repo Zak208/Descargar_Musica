@@ -5,7 +5,7 @@ from PySide6.QtGui import QPainter, QColor, QPainterPath, QPixmap, QFontMetrics,
 from PySide6.QtWidgets import QCheckBox, QWidget, QLabel, QFrame, QPushButton, QSizePolicy
 
 from ui import motion
-from ui.styles import accent
+from ui.styles import accent, live_accent
 
 
 def _mix(a: QColor, b: QColor, t: float) -> QColor:
@@ -408,7 +408,7 @@ class PlayPauseButton(QPushButton):
         if self._ring is not None:
             p.setOpacity(1.0)
             p.setRenderHint(QPainter.Antialiasing)
-            pen = QPen(QColor(accent()), 3)
+            pen = QPen(QColor(live_accent()), 3)
             pen.setCapStyle(Qt.RoundCap)
             p.setPen(pen)
             p.setBrush(Qt.NoBrush)
@@ -638,3 +638,49 @@ class SpinIconButton(QPushButton):
         p.setRenderHint(QPainter.SmoothPixmapTransform)
         rect = QRectF((self.width() - self._size) / 2, (self.height() - self._size) / 2, self._size, self._size)
         p.drawPixmap(rect, strip[self._i % 12], QRectF(strip[self._i % 12].rect()))
+
+
+class ProgressDots(QWidget):
+    """Puntitos de los pasos de un asistente: el actual se alarga (de 6 a 18 px) y los demás quedan pequeños."""
+
+    def __init__(self, count: int, parent=None):
+        super().__init__(parent)
+        self._count = count
+        self._index = 0
+        self._shown = 0.0
+        self._anim = QVariantAnimation(self)
+        self._anim.setDuration(motion.DUR_BASE)
+        self._anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._anim.valueChanged.connect(self._on_value)
+        self.setFixedHeight(10)
+        self.setFixedWidth(count * 16 + 24)
+
+    def set_index(self, index: int):
+        if index == self._index:
+            return
+        self._index = index
+        if not motion.enabled() or not self.isVisible():
+            self._shown = float(index)
+            self.update()
+            return
+        self._anim.stop()
+        self._anim.setStartValue(self._shown)
+        self._anim.setEndValue(float(index))
+        self._anim.start()
+
+    def _on_value(self, v):
+        self._shown = float(v)
+        self.update()
+
+    def paintEvent(self, _event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(Qt.NoPen)
+        x = 0.0
+        for i in range(self._count):
+            k = max(0.0, 1.0 - abs(i - self._shown))              # cuánto de «actual» tiene este punto
+            w = 6 + 12 * k
+            c = QColor(accent()) if k > 0.5 else QColor(255, 255, 255, 70)
+            p.setBrush(c)
+            p.drawRoundedRect(QRectF(x, 2, w, 6), 3, 3)
+            x += w + 6

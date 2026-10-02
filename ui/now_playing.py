@@ -1,8 +1,8 @@
 """Panel lateral derecho «En reproducción» (como el de Spotify): portada, acciones, letra, artista y siguiente canción."""
 import os
 
-from PySide6.QtCore import Qt, Signal, QSize, QTimer, QPropertyAnimation, QEasingCurve
-from PySide6.QtGui import QColor, QImage
+from PySide6.QtCore import Qt, Signal, QSize, QTimer, QPropertyAnimation, QEasingCurve, QRectF, QVariantAnimation
+from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QLinearGradient
 from PySide6.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QScrollArea, QWidget, QProgressBar
 )
@@ -20,6 +20,7 @@ from ui.imageloader import ImageLoaderThread, LocalCoverLoader
 from ui.lyric_line import LyricLine
 from ui.lyric_follow import LyricsFollower
 from ui import motion
+from ui.anim_clock import clock
 from ui.styles import accent
 from ui.textfx import CountLabel, DotsLabel, grow_underline
 from ui.widgets import ElidedLabel
@@ -324,6 +325,15 @@ class NowPlayingPanel(QFrame):
         self._cover_loader = None
         self._artist_loader = None
         self._artist_worker = None
+        self._bg_color = None
+        self._bg_old = None
+        self._bg_t = 1.0
+        self._breath = 0.0
+        self._breath_token = None
+        self._bg_anim = QVariantAnimation(self)
+        self._bg_anim.setDuration(400)
+        self._bg_anim.valueChanged.connect(self._bg_value)
+        window.playing_changed.connect(self._breath_sync)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 12, 0, 12)
@@ -556,9 +566,72 @@ class NowPlayingPanel(QFrame):
             self.lyrics.set_color(color)
             top = QColor(color)
             top.setHslF(top.hslHueF(), top.hslSaturationF(), 0.26)
-            self.setStyleSheet(
-                "QFrame#SidePanel { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
-                f"stop:0 {top.name()}, stop:0.5 #121212, stop:1 #121212); border-radius: 14px; }}")
+            self._set_bg(top)
+
+    # ---- fondo con el color de la portada: se mezcla al cambiar de canción y, en «Completas», respira despacio
+    def _set_bg(self, color: QColor):
+        if self._bg_color is not None and color == self._bg_color:
+            return
+        self._bg_old = self._bg_color
+        self._bg_color = QColor(color)
+        if motion.enabled() and self.isVisible() and self._bg_old is not None:
+            self._bg_t = 0.0
+            self._bg_anim.stop()
+            self._bg_anim.setStartValue(0.0)
+            self._bg_anim.setEndValue(1.0)
+            self._bg_anim.start()
+        else:
+            self._bg_t = 1.0
+            self.update()
+
+    def _bg_value(self, v):
+        self._bg_t = float(v)
+        self.update()
+
+    def _breath_sync(self, *_):
+        want = motion.full() and self.isVisible() and self._bg_color is not None and self.window_ref.is_playing_now()
+        if want and self._breath_token is None:
+            self._breath_token = clock().subscribe(self._breath_tick, 8)
+        elif not want and self._breath_token is not None:
+            clock().unsubscribe(self._breath_token)
+            self._breath_token = None
+
+    def _breath_tick(self, dt):
+        self._breath = (self._breath + dt / 9000.0) % 1.0
+        self.update()
+
+    def showEvent(self, event):
+        self._breath_sync()
+        super().showEvent(event)
+
+    def hideEvent(self, event):
+        self._breath_sync()
+        super().hideEvent(event)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if self._bg_color is None:
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        clip = QPainterPath()
+        clip.addRoundedRect(QRectF(self.rect()), 14, 14)
+        p.setClipPath(clip)
+        for color, alpha in ((self._bg_old, 1.0 - self._bg_t), (self._bg_color, self._bg_t)):
+            if color is None or alpha <= 0.002:
+                continue
+            c = QColor(color)
+            if self._breath_token is not None:
+                import math
+                c.setHslF(c.hslHueF(), c.hslSaturationF(), max(0.0, min(1.0, c.lightnessF() + 0.025 * math.sin(self._breath * 6.283))))
+            top = QColor(c)
+            bottom = QColor(c)
+            bottom.setAlpha(0)
+            grad = QLinearGradient(0, 0, 0, self.height() * 0.5)
+            grad.setColorAt(0.0, top)
+            grad.setColorAt(1.0, bottom)
+            p.setOpacity(alpha)
+            p.fillRect(QRectF(0, 0, self.width(), self.height() * 0.5), grad)
 
     @staticmethod
     def _safe_set(label, pix):

@@ -5,6 +5,8 @@ from PySide6.QtWidgets import (
 )
 
 from config import get_download_dir, get_audio_quality, set_audio_quality
+from ui import motion, snapshot
+from ui.controls import ProgressDots
 from ui.overlay import InlineDialog
 from ui.styles import THEME_CONFIGS
 
@@ -135,8 +137,7 @@ class WelcomeDialog(InlineDialog):
 
         # ---- botones
         row = QHBoxLayout()
-        self.dots = QLabel("")
-        self.dots.setObjectName("SectionSubtitle")
+        self.dots = ProgressDots(self.steps.count())
         row.addWidget(self.dots)
         row.addStretch()
         self.btn_skip = QPushButton("Saltar")
@@ -164,7 +165,7 @@ class WelcomeDialog(InlineDialog):
 
     def _refresh_buttons(self):
         i, n = self.steps.currentIndex(), self.steps.count()
-        self.dots.setText(f"Paso {i + 1} de {n}")
+        self.dots.set_index(i)
         last = i == n - 1
         self.btn_next.setText("Ver el recorrido" if last else "Siguiente")
         self.btn_skip.setText("Ahora no" if last else "Saltar")
@@ -188,7 +189,10 @@ class WelcomeDialog(InlineDialog):
             self.start_tour = True
             self.accept()
             return
+        old = snapshot.grab(self.steps) if motion.enabled() else None
         self.steps.setCurrentIndex(i + 1)
+        if old is not None:
+            snapshot.crossfade(self.steps, old, motion.DUR_BASE, dx=-36.0)      # el paso anterior sale deslizando
         self._refresh_buttons()
 
     def _skip(self):

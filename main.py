@@ -151,6 +151,34 @@ def selftest() -> int:
     return 0 if all(ok for _, ok in results) else 1
 
 
+def _make_splash():
+    """Pantalla de arranque sencilla (una imagen estática: no gasta nada)."""
+    from PySide6.QtGui import QPixmap, QPainter, QColor, QFont
+    from PySide6.QtWidgets import QSplashScreen
+    from ui.icons import icon
+    from ui.styles import accent
+    pix = QPixmap(420, 220)
+    pix.fill(QColor("#121212"))
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setPen(QColor("#2A2A2A"))
+    p.drawRoundedRect(0, 0, 419, 219, 14, 14)
+    p.drawPixmap(174, 40, icon("music.svg", accent(), 64).pixmap(72, 72))
+    font = QFont("Poppins")
+    font.setBold(True)
+    font.setPixelSize(22)
+    p.setFont(font)
+    p.setPen(QColor("#FFFFFF"))
+    p.drawText(pix.rect().adjusted(0, 120, 0, 0), Qt.AlignHCenter | Qt.AlignTop, "Descargador de Música")
+    font.setBold(False)
+    font.setPixelSize(13)
+    p.setFont(font)
+    p.setPen(QColor("#B3B3B3"))
+    p.drawText(pix.rect().adjusted(0, 160, 0, 0), Qt.AlignHCenter | Qt.AlignTop, "Abriendo…")
+    p.end()
+    return QSplashScreen(pix, Qt.WindowStaysOnTopHint)
+
+
 def main():
     logging.info("=== INICIANDO APLICACIÓN ===")
 
@@ -175,8 +203,27 @@ def main():
     app.setApplicationName("Descargador de Música YouTube Pro")
     app.setOrganizationName("Antigravity")
 
+    splash = _make_splash()
+    splash.show()
+    app.processEvents()                  # se ve al instante, mientras se construye la ventana principal
+
     window = MainWindow()
+    from ui import motion
+    fade = motion.enabled()
+    if fade:
+        window.setWindowOpacity(0.0)
     window.show()
+    splash.finish(window)
+    if fade:
+        from PySide6.QtCore import QVariantAnimation
+        anim = QVariantAnimation(window)
+        anim.setStartValue(0.0)
+        anim.setEndValue(1.0)
+        anim.setDuration(160)
+        anim.valueChanged.connect(lambda v: window.setWindowOpacity(float(v)))
+        anim.finished.connect(lambda: window.setWindowOpacity(1.0))
+        window._fade_in_anim = anim
+        anim.start()
 
     sys.exit(app.exec())
 

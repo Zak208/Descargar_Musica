@@ -7,7 +7,7 @@ from PySide6.QtWidgets import QWidget
 
 from ui import motion
 from ui.anim_clock import clock
-from ui.styles import accent
+from ui.styles import accent, live_accent
 
 
 class HoverFader:
@@ -105,7 +105,7 @@ class NowPlayingBars(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         p.setPen(Qt.NoPen)
-        p.setBrush(QColor(accent()))
+        p.setBrush(QColor(live_accent()))
         h = self.height()
         w = max(2.0, self.width() / 5.0)
         gap = (self.width() - 3 * w) / 2

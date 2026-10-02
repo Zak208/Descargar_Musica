@@ -34,6 +34,7 @@ class HomeMixin:
         if not hasattr(self, "home_recents_layout"):
             return
 
+        self.home_continue.refresh()
         offline = self.is_offline()
         self.home_offline_box.setVisible(offline)
         if offline:

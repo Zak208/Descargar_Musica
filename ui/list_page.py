@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
 
 from services import recycle
 from services.playlist_service import PlaylistService
+from ui import motion, snapshot
 from ui.animations import fade_in, expand_widget
 from ui.controls import TabStrip
 from ui.emptystate import EmptyState
@@ -502,6 +503,27 @@ class ListPage(QWidget):
         self.scroll.setWidget(content)
         main.addWidget(self.scroll, stretch=1)
         self.back_top = BackToTop(self.scroll, self)
+        self.sticky = QFrame(self)
+        self.sticky.setObjectName("StickyBar")
+        self.sticky.setStyleSheet("QFrame#StickyBar { background-color: rgba(18, 18, 18, 235); border-radius: 12px; }")
+        sl = QHBoxLayout(self.sticky)
+        sl.setContentsMargins(12, 6, 14, 6)
+        sl.setSpacing(12)
+        self.sticky_play = QPushButton("")
+        self.sticky_play.setObjectName("BigPlayBtn")
+        self.sticky_play.setIcon(icon("play_black.svg"))
+        self.sticky_play.setIconSize(QSize(16, 16))
+        self.sticky_play.setStyleSheet("QPushButton#BigPlayBtn { min-width: 36px; max-width: 36px; min-height: 36px; "
+                                       "max-height: 36px; border-radius: 18px; }")
+        self.sticky_play.setCursor(Qt.PointingHandCursor)
+        self.sticky_play.clicked.connect(self.play_all)
+        sl.addWidget(self.sticky_play)
+        self.sticky_title = QLabel("")
+        self.sticky_title.setStyleSheet("font-size: 16px; font-weight: 800; background: transparent;")
+        sl.addWidget(self.sticky_title, stretch=1)
+        self.sticky.hide()
+        self._sticky_shown = False
+        self.scroll.verticalScrollBar().valueChanged.connect(self._update_sticky)
 
     # ------------------------------------------------------------- datos
     def _prepare_items(self, tracks: list) -> list:
@@ -656,6 +678,19 @@ class ListPage(QWidget):
         menu.exec(self.btn_sort.mapToGlobal(self.btn_sort.rect().bottomLeft()))
 
     # ------------------------------------------------- filas (creación perezosa)
+    def _update_sticky(self, value: int):
+        """Al salir la cabecera grande de la vista, aparece arriba una barrita con el nombre y el botón ▶."""
+        show = value > self.header.height() + 40
+        if show != self._sticky_shown:
+            self._sticky_shown = show
+            self.sticky_title.setText(self.list_name)
+            top = self.scroll.mapTo(self, self.scroll.rect().topLeft())
+            self.sticky.setGeometry(top.x(), top.y() + 4, self.scroll.width() - 22, 48)
+            self.sticky.raise_()
+            from ui.animations import reveal_widget
+            self.sticky.setProperty("_revealBase", self.sticky.pos())
+            reveal_widget(self.sticky, show, dy=-8, duration=150)
+
     def _on_scroll(self, value: int):
         if value >= self.scroll.verticalScrollBar().maximum() - 500:
             self._grow()
@@ -693,11 +728,17 @@ class ListPage(QWidget):
         keys = [self._item_key(i) for i in visible]
         wanted = set(keys)
 
-        for key in [k for k in self._cards if k not in wanted]:
+        gone = [k for k in self._cards if k not in wanted]
+        for key in gone:
             card = self._cards.pop(key)
+            ghost_at = self.tracks_container.indexOf(card)
+            ghost_h = card.height()
+            ghost_pix = snapshot.grab(card) if (len(gone) <= 2 and motion.enabled() and card.isVisible()) else None
             self.tracks_container.removeWidget(card)
             card.setParent(None)
             card.deleteLater()
+            if ghost_pix is not None and not ghost_pix.isNull():
+                self._collapse_ghost(ghost_at, ghost_h, ghost_pix)
 
         for pos, item in enumerate(visible):
             key = keys[pos]
@@ -730,6 +771,38 @@ class ListPage(QWidget):
         self._update_texts(full)
         if len(full) > len(visible):
             QTimer.singleShot(150, self._fill_viewport)
+
+    def _collapse_ghost(self, index: int, height: int, pix):
+        """Al quitar una fila, su foto se desvanece y el hueco se pliega (las de debajo suben poco a poco)."""
+        from PySide6.QtCore import QVariantAnimation, QEasingCurve
+        from ui.snapshot import Layer
+        holder = QWidget()
+        holder.setFixedHeight(height)
+        self.tracks_container.insertWidget(max(0, index), holder)
+        holder.show()
+        layer = Layer(holder, pix, holder.rect())
+        anim = QVariantAnimation(holder)
+        anim.setStartValue(1.0)
+        anim.setEndValue(0.0)
+        anim.setDuration(motion.DUR_BASE)
+        anim.setEasingCurve(QEasingCurve.OutCubic)
+
+        def on_value(v):
+            k = float(v)
+            layer.opacity = k
+            layer.dx = -24 * (1 - k)
+            layer.update()
+            holder.setFixedHeight(max(0, int(height * k)))
+
+        def done():
+            self.tracks_container.removeWidget(holder)
+            holder.hide()
+            holder.deleteLater()
+
+        anim.valueChanged.connect(on_value)
+        anim.finished.connect(done)
+        holder._anim = anim
+        anim.start()
 
     def update_playing(self):
         """Marca en la lista la canción que está sonando."""

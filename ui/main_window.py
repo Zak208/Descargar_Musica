@@ -452,6 +452,25 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         fp.set_position(self.player.position())
         fp.showFullScreen()
 
+    def _update_live_accent(self):
+        """«Colores que cambian con la canción» (apagado por defecto): lo pintado a mano en la barra de reproducción toma un
+        tono de la portada. La hoja de estilos global no se toca (reaplicarla cada canción costaría decenas de ms)."""
+        from PySide6.QtGui import QColor
+        from ui import styles
+        color = None
+        if load_settings().get("dynamic_accent", False) and self.current_item_info:
+            c = self._cover_color()
+            if c is not None:
+                tone = QColor(c)
+                tone.setHslF(max(tone.hslHueF(), 0.0), max(0.55, min(0.85, tone.hslSaturationF() + 0.2)), 0.60)
+                color = tone.name()
+        styles.set_live_accent(color)
+        live = styles.live_accent()
+        if hasattr(self, "visualizer"):
+            self.visualizer.set_accent_color(live)
+        for w in (self.seek_slider, self.volume_slider, self.btn_play_pause):
+            w.update()
+
     def _full_player_visible(self) -> bool:
         fp = getattr(self, "full_player", None)
         try:
@@ -1661,6 +1680,8 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
                 except RuntimeError:
                     pass
         self.on_track_started()
+        if load_settings().get("dynamic_accent", False):
+            QTimer.singleShot(900, self._update_live_accent)         # cuando ya llegó la portada
         if self._full_player_visible() and self.current_item_info:
             self.full_player.set_track(self.current_item_info, None, None)
             QTimer.singleShot(900, lambda: self._full_player_visible() and self.full_player.set_track(
@@ -1861,6 +1882,10 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
     def handle_playback_state(self, state):
         self.update_system_status(state == QMediaPlayer.PlayingState)
         self.playing_changed.emit(state == QMediaPlayer.PlayingState)
+        if state == QMediaPlayer.PlayingState:
+            self._resume_pending = False
+        if hasattr(self, "home_continue"):
+            self.home_continue.refresh()
         if self._full_player_visible():
             self.full_player.set_playing(state == QMediaPlayer.PlayingState)
         if getattr(self, "taskbar", None) is not None and self.taskbar.ok:

@@ -157,7 +157,7 @@ class AlbumDetailsPage(QWidget):
         cover_url = data.get("cover")
         if cover_url:
             self._loader = ImageLoaderThread(cover_url, False, (COVER, COVER), 8)
-            self._loader.image_loaded.connect(self.cover_lbl.setPixmap)
+            self._loader.image_loaded.connect(self._cover_loaded)
             self._loader.start()
 
         for b in (self.btn_play, self.btn_download_album, self.btn_save_list):
@@ -168,6 +168,21 @@ class AlbumDetailsPage(QWidget):
                                                       list_mode=False))
         fade_in(self.header_frame, 300)
         reveal_up(self.title_lbl, 60)
+
+    def _cover_loaded(self, pix):
+        """La cabecera toma el color de la portada (con un fundido) en vez del color del tema."""
+        try:
+            self.cover_lbl.setPixmap(pix)
+            from ui.now_playing import cover_color
+            color = cover_color(pix)
+            if color is not None:
+                self.header_frame.setStyleSheet(
+                    "#AlbumHeader { background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+                    f" stop:0 rgba({color.red()}, {color.green()}, {color.blue()}, 140),"
+                    f" stop:1 rgba({color.red()}, {color.green()}, {color.blue()}, 0)); border-radius: 16px; }}")
+                fade_in(self.header_frame, 400)
+        except RuntimeError:
+            pass
 
     def _play(self):
         tracks = self.album_data.get("tracks", [])

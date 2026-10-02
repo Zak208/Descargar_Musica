@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
 )
 
 from ui.home_shelves import make_shelf
+from ui.continue_card import ContinueCard
 from ui.controls import SpinIconButton
 from ui.icons import icon
 from ui.scrolling import BackToTop, polish_scroll_area
@@ -92,6 +93,10 @@ def build_home_page(self):
     self.home_stats_lbl = CountLabel("")
     self.home_stats_lbl.setObjectName("SectionSubtitle")
     self.home_layout.addWidget(self.home_stats_lbl)
+
+    # Seguir escuchando (solo si hay una canción de la sesión anterior esperando)
+    self.home_continue = ContinueCard(self)
+    self.home_layout.addWidget(self.home_continue)
 
     # Accesos rápidos (tus listas y artistas)
     self.home_quick_box = QWidget()
