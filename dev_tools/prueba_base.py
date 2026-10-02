@@ -142,4 +142,44 @@ dlg.group.buttons()[1].setChecked(True)
 dlg._next()
 check("asistente: la calidad elegida se guarda", config.get_audio_quality() == "128")
 config.set_audio_quality("320")
+
+# primer uso: el asistente aparece solo si no hay datos, y una sola vez
+import ui.main_window as mw
+shown = []
+real_welcome = mw.WelcomeDialog
+
+
+class FakeWelcome:
+    start_tour = False
+
+    def __init__(self, window):
+        shown.append(window)
+
+    def exec(self):
+        return 1
+
+
+mw.WelcomeDialog = FakeWelcome
+settings = config.load_settings()
+for key in ("first_run_done", "theme", "quality", "download_dir"):
+    settings.pop(key, None)
+config.save_settings(settings)
+from services.playlist_service import PlaylistService as _PS
+for _pid in list(_PS.get_playlists()):          # la restauración de la copia dejó una lista de prueba
+    _PS.delete_playlist(_pid)
+for _fav in list(_PS.get_favorites()):
+    _PS.toggle_favorite(_fav)
+real_items = w.library_items
+w.library_items = lambda: []
+w.maybe_show_welcome()
+check("primer uso: sin datos aparece el asistente", len(shown) == 1)
+w.maybe_show_welcome()
+check("primer uso: no se repite", len(shown) == 1 and config.load_settings().get("first_run_done"))
+settings = config.load_settings()
+settings.pop("first_run_done", None)
+config.save_settings(settings)
+w.library_items = real_items
+w.maybe_show_welcome()
+check("primer uso: con música ya descargada no molesta", len(shown) == 1 and config.load_settings().get("first_run_done"))
+mw.WelcomeDialog = real_welcome
 print("FIN")
