@@ -64,6 +64,21 @@ jobs:
           "$hash  $zip" | Set-Content -Path "$zip.sha256" -Encoding ascii
           "VERSION=$ver" | Out-File -FilePath $env:GITHUB_ENV -Append
 
+      - name: Instalador de Windows
+        # si falla, la versión se publica igualmente con el .zip (que es lo que usa la actualización automática)
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $iscc = Get-Command iscc -ErrorAction SilentlyContinue
+          $path = if ($iscc) { $iscc.Source } else { "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
+          if (-not (Test-Path $path)) {
+            choco install innosetup -y --no-progress
+            $path = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          }
+          & $path "/DAppVersion=$env:VERSION" installer\Descargador.iss
+          if ($LASTEXITCODE -ne 0) { throw "No se pudo crear el instalador" }
+          Move-Item "installer\Output\Descargador_Musica-Setup-v$env:VERSION.exe" .
+
       - name: Notas de esta versión
         shell: pwsh
         run: |
@@ -78,5 +93,6 @@ jobs:
           files: |
             Descargar_Musica-v${{ env.VERSION }}-windows.zip
             Descargar_Musica-v${{ env.VERSION }}-windows.zip.sha256
+            Descargador_Musica-Setup-v${{ env.VERSION }}.exe
           body_path: release_notes.md
           name: Descargador de Música ${{ env.VERSION }}

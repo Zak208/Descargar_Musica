@@ -1,6 +1,6 @@
 # Descargador de Música
 
-**Versión actual: 1.13.0** · [Historial de versiones](CHANGELOG.md) · cada versión subida tiene su etiqueta `vX.Y.Z` en GitHub
+**Versión actual: 1.13.1** · [Historial de versiones](CHANGELOG.md) · cada versión subida tiene su etiqueta `vX.Y.Z` en GitHub
 
 Aplicación de escritorio para **Windows** que combina un reproductor con aspecto de Spotify y un descargador de música:
 buscas una canción, un artista o un álbum, escuchas un adelanto y la descargas a tu equipo en MP3, M4A, FLAC o WAV,
@@ -130,6 +130,10 @@ informática. **Tu música descargada y tus listas funcionan también sin intern
   a `main.py` (`ffprobe.exe` no hace falta).
 
 ## Instalación y ejecución
+
+**Como una aplicación más de Windows (lo normal):** en [Releases](https://github.com/Zak208/Descargar_Musica/releases) descarga `Descargador_Musica-Setup-vX.Y.Z.exe` y ábrelo. Se instala solo para tu usuario (sin permisos de administrador), crea el acceso en el menú Inicio y aparece en **Configuración de Windows → Aplicaciones → Aplicaciones instaladas**, desde donde se desinstala (tus listas y ajustes se conservan). Después se actualiza sola con el botón azul.
+
+**Desde el código:**
 
 ```bash
 git clone https://github.com/Zak208/Descargar_Musica.git

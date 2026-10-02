@@ -210,6 +210,12 @@ def main():
     load_app_fonts(app)
     app.setApplicationName("Descargador de Música YouTube Pro")
     app.setOrganizationName("Antigravity")
+    try:
+        from PySide6.QtGui import QIcon
+        from ui.icons import ICONS_DIR
+        app.setWindowIcon(QIcon(str(ICONS_DIR.parent / "app.ico")))
+    except Exception:
+        pass
 
     splash = _make_splash()
     splash.show()

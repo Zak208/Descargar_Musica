@@ -3,6 +3,16 @@
 Formato: `MAYOR.MENOR.PARCHE`. MAYOR = cambios que rompen datos o uso, MENOR = funciones nuevas, PARCHE = arreglos.
 Cada versión subida a GitHub tiene su etiqueta `vX.Y.Z` (pestaña *Releases/Tags*).
 
+## 1.13.1
+**Arreglos**
+- **La actualización automática se quedaba a medias**: la aplicación se cerraba pero no se instalaba la versión nueva ni se volvía a abrir. El script de instalación se quedaba esperando para siempre porque, lanzado sin consola, no podía enlazar dos programas de Windows. Ahora no usa tuberías, espera como mucho 90 segundos y deja un registro en `%APPDATA%\Descargador de Músicactualizacion.log`. Prueba nueva: una «aplicación» de mentira que sigue abierta unos segundos, con el mismo modo de lanzamiento que la real.
+- Importante: las versiones 1.12.x y 1.13.0 llevan el script antiguo, así que **esta actualización hay que hacerla una vez a mano** (con el instalador de abajo). Desde la 1.13.1 todo es automático.
+
+**Instalador de Windows**
+- Cada versión publica ahora también `Descargador_Musica-Setup-vX.Y.Z.exe`: se instala solo para tu usuario (sin administrador), crea el acceso en el menú Inicio (y en el escritorio si quieres) y **aparece en Configuración de Windows → Aplicaciones**, con su icono, versión y botón de desinstalar. La actualización automática también pone la versión nueva en esa lista. Los datos no se borran al desinstalar.
+- La aplicación tiene por fin **icono propio** (nota musical sobre fondo verde) en la ventana, la barra de tareas y el .exe.
+- Al abrir la aplicación comprueba las novedades a los 5 segundos (no a los 12).
+
 ## 1.13.0
 **Letra tipo karaoke que sigue la voz palabra a palabra**
 - Antes la frase se rellenaba a velocidad uniforme por letra desde que empezaba hasta un tiempo estimado, y las palabras no coincidían con el cantante. Ahora cada palabra tiene su propio tiempo: se reparte el de la frase según las sílabas de cada palabra, usando el ritmo medio de esa canción (la última palabra de la frase se alarga) y respetando que la frase acaba antes de que empiece la siguiente.

@@ -152,10 +152,19 @@ if sys.platform == "win32":
     (staged / "_internal" / "lib.dll").write_text("lib nueva y más grande")
     (staged / "_internal" / "extra.dll").write_text("extra")
     stage_work = base / "trabajo"
-    script = app_updater.build_script(staged, target, 99999999, "run.cmd", stage_work)
-    proc = subprocess.Popen(["cmd", "/c", str(script)], creationflags=subprocess.CREATE_NO_WINDOW)
-    proc.wait(timeout=60)
-    for _ in range(100):                     # el programa se abre aparte: se espera a que escriba su resultado
+    # una «aplicación» de mentira que sigue abierta unos segundos: el script tiene que esperar a que se cierre
+    fake_app = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(4)"], creationflags=subprocess.CREATE_NO_WINDOW)
+    script = app_updater.build_script(staged, target, fake_app.pid, "run.cmd", stage_work, version="99.0.0")
+    t_start = time.time()
+    proc = subprocess.Popen([os.path.join(os.environ["SystemRoot"], "System32", "cmd.exe"), "/c", str(script)],
+                            creationflags=app_updater.script_flags(), stdin=subprocess.DEVNULL,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    time.sleep(1.5)
+    check("el script espera a que la aplicación se cierre antes de copiar", fake_app.poll() is None
+          and (target / "_internal" / "lib.dll").read_text() == "lib vieja")
+    proc.wait(timeout=90)
+    check("y no se queda esperando para siempre", time.time() - t_start < 40)
+    for _ in range(100):                   # el programa se abre aparte: se espera a que escriba su resultado
         if (target / "resultado.txt").exists() and (target / "resultado.txt").read_text().strip():
             break
         time.sleep(0.1)
@@ -163,6 +172,8 @@ if sys.platform == "win32":
           and (target / "_internal" / "extra.dll").exists())
     check("y vuelve a abrir el programa", (target / "resultado.txt").exists() and "nuevo" in (target / "resultado.txt").read_text())
     check("y limpia la carpeta de preparación", not stage_work.exists())
+    log = Path(str(stage_work) + ".log")
+    check("deja un registro de lo que hizo", log.exists() and "listo" in log.read_text(errors="ignore"))
 
 # ---------------------------------------------------------------- el botón azul
 from ui.main_window import MainWindow

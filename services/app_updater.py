@@ -30,6 +30,8 @@ API_LATEST = f"https://api.github.com/repos/{REPO}/releases/latest"
 ALLOWED_PREFIX = f"https://github.com/{REPO}/releases/download/"
 UPDATE_DIR = APP_DATA_DIR / "actualizacion"
 STAGED_DIR = UPDATE_DIR / "preparada"
+# entrada de «Aplicaciones» de Windows que crea el instalador (installer/Descargador.iss, AppId + «_is1»)
+UNINSTALL_KEY = "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{B6E1C1F2-5A47-4D0B-9C6E-2D1F7A3E8C54}_is1"
 EXE_NAME = "Descargar_Musica.exe"
 FOLDER_NAME = "Descargar_Musica"          # carpeta que contiene el .zip publicado
 _SHA = re.compile(r"\b([0-9a-fA-F]{64})\b")
@@ -164,8 +166,17 @@ class AppUpdateWorker(QThread):
 
 
 # ------------------------------------------------------------------ instalar y reiniciar
-def build_script(staged: Path, target: Path, pid: int, exe_name: str = EXE_NAME, workdir: Path = UPDATE_DIR) -> Path:
-    """Script de Windows que espera a que la aplicación se cierre, copia los archivos nuevos y la vuelve a abrir."""
+def script_flags() -> int:
+    """Cómo se lanza el script: sin ventana y en su propio grupo, para que sobreviva al cierre de la aplicación.
+    (No se usa DETACHED_PROCESS: sin consola, los programas que el script enlazaba con «|» se quedaban esperando
+    para siempre y la aplicación nunca se volvía a abrir.)"""
+    return getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+
+
+def build_script(staged: Path, target: Path, pid: int, exe_name: str = EXE_NAME, workdir: Path = UPDATE_DIR,
+                 version: str = "") -> Path:
+    """Script de Windows que espera a que la aplicación se cierre, copia los archivos nuevos, anota la versión nueva en
+    «Aplicaciones» de Windows (si se instaló con el instalador) y la vuelve a abrir. Deja un registro en `<carpeta>.log`."""
     workdir.mkdir(parents=True, exist_ok=True)
     script = workdir / "instalar.cmd"
     lines = [
@@ -175,15 +186,40 @@ def build_script(staged: Path, target: Path, pid: int, exe_name: str = EXE_NAME,
         f'set "SRC={staged}"',
         f'set "DST={target}"',
         f'set "STAGE={workdir}"',
+        'set "LOG=%STAGE%.log"',
+        'set "TMPLIST=%TEMP%\\descargador_pid_%RANDOM%.txt"',
         f"set PID={pid}",
+        "set /a TRIES=0",
+        'echo %DATE% %TIME% espera al cierre de la aplicacion (PID %PID%)> "%LOG%"',
         ":espera",
-        r'"%SYS%\tasklist.exe" /FI "PID eq %PID%" 2>nul | "%SYS%\find.exe" "%PID%" >nul',
+        # sin tuberías: la lista de procesos va a un archivo y se busca ahí
+        r'"%SYS%\tasklist.exe" /FI "PID eq %PID%" /NH > "%TMPLIST%" 2>nul',
+        r'"%SYS%\findstr.exe" /C:" %PID% " "%TMPLIST%" >nul 2>&1',
         "if not errorlevel 1 (",
-        r'  "%SYS%\ping.exe" -n 2 127.0.0.1 >nul',
-        "  goto espera",
+        "  set /a TRIES+=1",
+        "  if %TRIES% LSS 90 (",
+        r'    "%SYS%\ping.exe" -n 2 127.0.0.1 >nul',
+        "    goto espera",
+        "  )",
         ")",
-        r'"%SYS%\robocopy.exe" "%SRC%" "%DST%" /E /R:5 /W:1 /NFL /NDL /NJH /NJS /NP >nul',
+        'del "%TMPLIST%" >nul 2>&1',
+        'echo %DATE% %TIME% copiando archivos>> "%LOG%"',
+        r'"%SYS%\robocopy.exe" "%SRC%" "%DST%" /E /R:10 /W:1 /NFL /NDL /NJH /NJS /NP >> "%LOG%" 2>&1',
+        "if errorlevel 8 (",
+        '  echo %DATE% %TIME% ERROR al copiar>> "%LOG%"',
+        ")",
+    ]
+    if version:
+        key = "HKCU\\" + UNINSTALL_KEY
+        lines += [
+            f'"%SYS%\\reg.exe" query "{key}" >nul 2>&1',
+            "if not errorlevel 1 (",
+            f'  "%SYS%\\reg.exe" add "{key}" /v DisplayVersion /t REG_SZ /d "{version}" /f >nul 2>&1',
+            ")",
+        ]
+    lines += [
         f'start "" "%DST%\\{exe_name}"',
+        'echo %DATE% %TIME% listo>> "%LOG%"',
         'rd /s /q "%STAGE%" >nul 2>&1',
     ]
     script.write_text("\r\n".join(lines) + "\r\n", encoding="utf-8")
@@ -196,9 +232,10 @@ def install_and_restart() -> bool:
     if folder is None or not (folder / EXE_NAME).is_file() or not can_self_update():
         return False
     try:
-        script = build_script(folder, install_dir(), os.getpid())
-        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
-        subprocess.Popen(["cmd", "/c", str(script)], creationflags=flags, close_fds=True)
+        script = build_script(folder, install_dir(), os.getpid(), version=staged_version() or "")
+        cmd = os.path.join(os.environ.get("SystemRoot", "C:\\Windows"), "System32", "cmd.exe")
+        subprocess.Popen([cmd, "/c", str(script)], creationflags=script_flags(), close_fds=True,
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         settings = load_settings()
         settings.pop("staged_update", None)
         save_settings(settings)

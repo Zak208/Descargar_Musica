@@ -190,7 +190,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self._session_timer.timeout.connect(lambda: self.player_bar.isVisible() and self.save_session())
         self._session_timer.start()
         QTimer.singleShot(8000, backup_service.auto_backup_if_due)
-        QTimer.singleShot(12000, self.check_updates)         # como mucho cada hora, solo con conexión
+        QTimer.singleShot(5000, self.check_updates)          # al abrir (si no se miró hace menos de 5 minutos), solo con conexión
         self._update_timer = QTimer(self)                     # y mientras la aplicación sigue abierta, cada 10 minutos
         self._update_timer.setInterval(UPDATE_POLL_MS)         # (son dos peticiones pequeñas; una versión nueva aparece sin reiniciar)
         self._update_timer.timeout.connect(self.check_updates)
