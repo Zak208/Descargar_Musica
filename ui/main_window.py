@@ -918,6 +918,8 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self.btn_shuffle.setIcon(QIcon(resource_path(os.path.join("assets", "icons", icon_name))))
 
     def check_ffmpeg_and_update(self):
+        if os.environ.get("SELFTEST_SIN_FFMPEG"):
+            return          # la autocomprobación de la compilación automática no descarga FFmpeg
         if not FFmpegService.is_ffmpeg_available():
             self.status_label.setText("Preparando la aplicación por primera vez, un momento...")
             self.ffmpeg_worker = FFmpegDownloadWorker()

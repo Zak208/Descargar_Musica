@@ -62,6 +62,24 @@ def selftest() -> int:
     def check(label, ok):
         results.append((label, bool(ok)))
 
+    # Seguridad: si algo se queda esperando (por ejemplo un cuadro de diálogo que nadie puede pulsar), se termina solo.
+    import threading
+
+    def _watchdog():
+        out_path = os.path.join(os.path.dirname(sys.executable if getattr(sys, "frozen", False) else __file__), "selftest.log")
+        with open(out_path, "w", encoding="utf-8") as f:
+            f.write("FALLO tiempo agotado: la autocomprobación se quedó esperando" + chr(10))
+        os._exit(2)
+
+    _timer = threading.Timer(240, _watchdog)
+    _timer.daemon = True
+    _timer.start()
+    # sin primer uso: el asistente de bienvenida es un cuadro de diálogo y la autocomprobación no tiene quien lo cierre
+    from config import load_settings, save_settings
+    _settings = load_settings()
+    _settings["first_run_done"] = True
+    save_settings(_settings)
+
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     from ui.fonts import load_app_fonts
@@ -164,5 +182,7 @@ def main():
 
 if __name__ == "__main__":
     if "--selftest" in sys.argv:
-        sys.exit(selftest())
+        _code = selftest()
+        logging.shutdown()
+        os._exit(_code)         # salida directa: ningún hilo pendiente puede dejar el proceso colgado
     main()

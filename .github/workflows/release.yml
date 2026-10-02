@@ -12,9 +12,15 @@ on:
 permissions:
   contents: write
 
+# si se vuelve a subir la misma etiqueta, la ejecución anterior se cancela
+concurrency:
+  group: publicar-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   windows:
     runs-on: windows-latest
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
 
@@ -36,12 +42,14 @@ jobs:
 
       - name: Comprobar el programa compilado
         shell: pwsh
+        timeout-minutes: 8
         env:
           QT_QPA_PLATFORM: offscreen
           SELFTEST_SIN_FFMPEG: "1"
         run: |
-          $p = Start-Process -FilePath "dist_app\Descargar_Musica\Descargar_Musica.exe" -ArgumentList "--selftest" -PassThru -Wait
-          Get-Content "dist_app\Descargar_Musica\selftest.log"
+          $p = Start-Process -FilePath "dist_app\Descargar_Musica\Descargar_Musica.exe" -ArgumentList "--selftest" -PassThru
+          if (-not $p.WaitForExit(300000)) { $p.Kill($true); Write-Host "Tiempo agotado" }
+          if (Test-Path "dist_app\Descargar_Musica\selftest.log") { Get-Content "dist_app\Descargar_Musica\selftest.log" }
           if ($p.ExitCode -ne 0) { throw "La autocomprobación falló" }
           Remove-Item "dist_app\Descargar_Musica\selftest.log"
 
