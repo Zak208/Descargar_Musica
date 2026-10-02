@@ -24,16 +24,20 @@ class PlaybackMixin:
         self._forward = []        # canciones a las que se puede volver con 'siguiente' tras usar 'anterior'
         self._navigating = False  # True mientras se salta usando el historial
         self._context = []        # lista de canciones de la que se está reproduciendo (álbum, playlist, biblioteca...)
+        self._shuffle_plan = []   # con el aleatorio: el orden ya decidido de lo que viene (el que se muestra es el que suena)
+        self._xf_request = 0      # >0 mientras se pide pasar a la siguiente canción con fundido cruzado (milisegundos)
 
     # ---------- contexto ----------
     def set_context(self, tracks: list):
         """Define la lista de la que se está reproduciendo; 'siguiente' y 'anterior' se mueven solo dentro de ella."""
         self._context = list(tracks)
+        self._shuffle_plan = []
 
     def set_context_from_card(self, card):
         """El contexto son todas las canciones visibles junto a la tarjeta pulsada (misma lista o misma página)."""
         from ui.song_card import SongResultCard
         from ui.track_row import TrackRow
+        self._shuffle_plan = []
         parent = card.parentWidget()
         if parent is None:
             self._context = [card.item_info]
@@ -65,11 +69,63 @@ class PlaybackMixin:
                 return i
         return -1
 
+    @staticmethod
+    def _same_track(a: dict, b: dict) -> bool:
+        if not a or not b:
+            return False
+        if track_key(a) == track_key(b):
+            return True
+        return bool(a.get("id")) and str(a.get("id")) == str(b.get("id"))
+
+    def _shuffle_active(self) -> bool:
+        return bool(self.is_shuffle_enabled and len(self._context) > 1)
+
+    def reset_shuffle(self):
+        """El aleatorio se activó, se apagó o cambió la lista: el orden de lo que viene se decide de nuevo."""
+        self._shuffle_plan = []
+
+    def _ensure_shuffle_plan(self) -> list:
+        """Con el aleatorio, el orden de las canciones que vienen se decide de antemano, una sola vez. Así lo que
+        muestran «A continuación» y la cola es exactamente lo que va a sonar (y no se repite hasta agotar la lista)."""
+        cur = self.current_item_info
+        plan = [t for t in self._shuffle_plan
+                if not self._same_track(t, cur) and any(self._same_track(t, c) for c in self._context)]
+        if not any(self.playable(t) for t in plan):
+            pool = [t for t in self._context if not self._same_track(t, cur) and self.playable(t)]
+            random.shuffle(pool)
+            plan = pool
+        self._shuffle_plan = plan
+        return plan
+
     def upcoming_tracks(self, limit: int = 30) -> list:
+        if self._shuffle_active():
+            return [t for t in self._ensure_shuffle_plan() if self.playable(t)][:limit]
         pos = self._context_position()
         if pos < 0:
             return []
         return self._context[pos + 1: pos + 1 + limit]
+
+    def _next_in_context(self):
+        """La siguiente canción de la lista (en orden, o la que ya tocaba en el aleatorio) que se puede reproducir."""
+        if self._shuffle_active():
+            return next((t for t in self._ensure_shuffle_plan() if self.playable(t)), None)
+        pos = self._context_position()
+        if pos >= 0:
+            idx = self.first_playable_index(self._context, pos + 1)
+            if idx >= 0:
+                return self._context[idx]
+        return None
+
+    def peek_next(self):
+        """Qué sonará después, sin cambiar nada: primero la cola que has añadido, luego lo que se dejó atrás con
+        «anterior» y luego la lista. Es lo mismo que decide `play_next`."""
+        for nxt in self.playback_queue:
+            if self.playable(nxt):
+                return nxt
+        for entry in reversed(self._forward):
+            if self.playable(entry["info"]):
+                return entry["info"]
+        return self._next_in_context()
 
     # ---------- historial ----------
     def _snapshot(self) -> dict:
@@ -85,16 +141,20 @@ class PlaybackMixin:
         del self._history[:-50]
         self._forward.clear()
 
-    def _play_entry(self, info: dict, pixmap=None):
+    def _play_entry(self, info: dict, pixmap=None, crossfade_ms: int = 0):
         if info.get('local_path'):
-            self.play_local_file(info['local_path'])
+            self._xf_request = int(crossfade_ms)
+            try:
+                self.play_local_file(info['local_path'])
+            finally:
+                self._xf_request = 0
         else:
             self.play_preview(info, None, pixmap)
 
-    def _play_navigating(self, entry: dict):
+    def _play_navigating(self, entry: dict, crossfade_ms: int = 0):
         self._navigating = True
         try:
-            self._play_entry(entry['info'], entry.get('pixmap'))
+            self._play_entry(entry['info'], entry.get('pixmap'), crossfade_ms)
         finally:
             self._navigating = False
 
@@ -106,17 +166,18 @@ class PlaybackMixin:
         if self.player.position() > RESTART_THRESHOLD_MS:
             self._restart_current()
             return
+        xf = self.crossfade_ms(natural=False)
         while self._history:
             entry = self._history.pop()
             if not self.playable(entry["info"]):      # sin conexión se saltan las que no están descargadas
                 continue
             self._forward.append(self._snapshot())
-            self._play_navigating(entry)
+            self._play_navigating(entry, xf)
             return
         pos = self._context_position()
         for i in range(pos - 1, -1, -1):
             if self.playable(self._context[i]):
-                self._play_entry(self._context[i])
+                self._play_entry(self._context[i], crossfade_ms=xf)
                 return
         self._restart_current()
 
@@ -125,33 +186,29 @@ class PlaybackMixin:
         if self.player.playbackState() != QMediaPlayer.PlayingState:
             self.player.play()
 
-    def play_next(self):
-        """Siguiente: primero la cola manual, luego lo que se dejó atrás con 'anterior', luego la lista."""
+    def play_next(self, natural: bool = False):
+        """Siguiente: primero la cola manual, luego lo que se dejó atrás con 'anterior', luego la lista.
+        `natural`: lo pide el fundido cruzado al acercarse el final de la canción."""
         if not self.current_item_info:
             return
+        xf = self.crossfade_ms(natural)
         while self.playback_queue:
             nxt = self.playback_queue.pop(0)
             if self.playable(nxt):
-                self._play_entry(nxt)
+                self._play_entry(nxt, crossfade_ms=xf)
                 return
         while self._forward:
             entry = self._forward.pop()
             if not self.playable(entry["info"]):
                 continue
             self._history.append(self._snapshot())
-            self._play_navigating(entry)
+            self._play_navigating(entry, xf)
             return
-        pos = self._context_position()
-        if self.is_shuffle_enabled and len(self._context) > 1:
-            options = [t for i, t in enumerate(self._context) if i != pos and self.playable(t)]
-            if options:
-                self._play_entry(random.choice(options))
-                return
-        elif pos >= 0:
-            nxt = self.first_playable_index(self._context, pos + 1)
-            if nxt >= 0:
-                self._play_entry(self._context[nxt])
-                return
+        nxt = self._next_in_context()
+        if nxt is not None:
+            self._shuffle_plan = [t for t in self._shuffle_plan if not self._same_track(t, nxt)]
+            self._play_entry(nxt, crossfade_ms=xf)
+            return
         # Fin de la lista: se detiene pero el reproductor sigue visible
         self.player.stop()
         self.player_status.setText("Fin de la lista")

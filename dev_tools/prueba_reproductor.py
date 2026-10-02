@@ -107,7 +107,8 @@ check("tramo: al llegar al final vuelve al inicio", abs(w.player.position() - w.
 w.clear_ab()
 check("tramo: se puede quitar", w._ab == [None, None])
 
-# ---- fundido entre canciones
+# ---- fundido entre canciones (sin canción siguiente: solo baja el volumen; el fundido cruzado tiene su propia prueba)
+w.set_context([])
 w.set_fade_seconds(2)
 w.player.duration = lambda: 60000
 w.player.playbackState = lambda: QMediaPlayer.PlayingState

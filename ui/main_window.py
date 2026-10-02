@@ -115,9 +115,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self.setStyleSheet(MAIN_STYLE)
 
         # Reproductor
-        self.player = QMediaPlayer()
-        self.audio_output = QAudioOutput()
-        self.player.setAudioOutput(self.audio_output)
+        self.player, self.audio_output = self._new_deck()
         self.current_preview_btn = None
         self.current_item_info = None
         self.preview_worker = None
@@ -158,11 +156,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self._eq_active_render = None
         clean_cache()
 
-        self.player.errorOccurred.connect(self.handle_player_error)
-        self.player.mediaStatusChanged.connect(self.handle_media_status)
-        self.player.playbackStateChanged.connect(self.handle_playback_state)
-        self.player.positionChanged.connect(self.update_position)
-        self.player.durationChanged.connect(self.update_duration)
+        self._wire_player(self.player)
 
         self.current_theme = get_theme()
         set_active_theme(self.current_theme)
@@ -395,7 +389,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
 
         title = self.current_item_info.get('title', '')
         artist = self.current_item_info.get('uploader', '')
-        dlg = LyricsDialog(title, artist, player=self.player, color=self._cover_color(), parent=self)
+        dlg = LyricsDialog(title, artist, player=self.active_player, color=self._cover_color(), parent=self)
         dlg.setAttribute(Qt.WA_DeleteOnClose, True)
         dlg.destroyed.connect(lambda *_: setattr(self, 'lyrics_dialog', None))
         self.lyrics_dialog = dlg
@@ -587,7 +581,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         stored = lyrics_store.load(key)
         host = self._lyrics_host(origin)
         local = info.get("local_path") or ""
-        editor = LyricsEditorDialog(host, info.get("title", ""), text, player=self.player,
+        editor = LyricsEditorDialog(host, info.get("title", ""), text, player=self.active_player,
                                     can_restore=bool(stored and stored.get("source") == "user"),
                                     audio_path=local if os.path.isfile(local) else "")
         editor.sync_requested.connect(lambda phrases: self._sync_lyrics(editor, phrases, local))
@@ -916,6 +910,9 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self.is_shuffle_enabled = not self.is_shuffle_enabled
         icon_name = "shuffle_active.svg" if self.is_shuffle_enabled else "shuffle.svg"
         self.btn_shuffle.setIcon(QIcon(resource_path(os.path.join("assets", "icons", icon_name))))
+        self.reset_shuffle()                      # el orden de lo que viene se decide de nuevo
+        if hasattr(self, "now_panel") and self.now_panel.isVisible():
+            self.now_panel.refresh_next()         # y el panel «A continuación» enseña lo que de verdad sonará
 
     def check_ffmpeg_and_update(self):
         if os.environ.get("SELFTEST_SIN_FFMPEG"):
@@ -1015,6 +1012,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         cur = self.current_item_info or {}
         dialog = QueueDialog(cur, self.playback_queue, self.upcoming_tracks(), self)
         dialog.play_item_requested.connect(lambda item: self._play_entry(item))
+        dialog.queue_updated.connect(lambda: self.now_panel.isVisible() and self.now_panel.refresh_next())
         dialog.exec()
 
     def open_equalizer(self):
@@ -1139,6 +1137,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             except Exception:
                 pass
 
+        self._finish_crossfade()
         self.player.stop()
 
         self.preview_worker = PreviewAudioWorker(url)
@@ -1206,7 +1205,13 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             return
 
         self._remember_current({'local_path': path})
-        self.player.stop()
+        xf_ms = self._xf_request if (autoplay and self.player.playbackState() == QMediaPlayer.PlayingState) else 0
+        self._xf_request = 0
+        if xf_ms > 0:
+            self._begin_crossfade(xf_ms)       # lo que suena sigue sonando en otro reproductor y baja; este recibe la nueva
+        else:
+            self._finish_crossfade()
+            self.player.stop()
         if hasattr(self, 'preview_worker') and self.preview_worker and self.preview_worker.isRunning():
             self.preview_worker.is_cancelled = True
 
@@ -1242,7 +1247,9 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
 
         self._current_audio_device = QMediaDevices.defaultAudioOutput()
         self.audio_output.setDevice(self._current_audio_device)
-        self.player.setSource(QUrl.fromLocalFile(path))
+        # Ecualizador: si la versión ajustada ya está lista se usa directamente; si no, se empieza con el original
+        source, render = self._eq_source(path)
+        self.player.setSource(QUrl.fromLocalFile(source))
         if autoplay:
             self.player.play()
         else:
@@ -1250,10 +1257,18 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             if start_ms > 0:
                 self._seek_when_loaded(start_ms)
 
-        # Ecualizador: se empieza con el original y se cambia a la versión ajustada cuando está lista
         self._eq_source_path = path
-        self._eq_active_render = None
+        self._eq_active_render = render
         self._apply_eq_if_needed()
+
+    def _eq_source(self, path: str):
+        """(archivo que debe sonar, versión con ecualizador si ya existe)."""
+        bands = active_bands(self.eq_settings)
+        if bands is not None:
+            out = rendered_path_for(path, bands)
+            if out.exists():
+                return str(out), str(out)
+        return path, None
 
     def _seek_when_loaded(self, ms: int):
         """Coloca la canción en `ms` en cuanto el reproductor la tiene cargada (sin hacerla sonar)."""
@@ -1640,6 +1655,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             if hasattr(self, 'visualizer'):
                 self.visualizer.set_playing(True)
         elif state == QMediaPlayer.PausedState:
+            self._finish_crossfade()            # si se pausa a mitad de un fundido, la canción que se apagaba se corta
             self.info_anim.stop()
             self.info_anim.setEndValue(0.5)
             self.info_anim.start()
@@ -1682,6 +1698,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
     def stop_player(self):
         if self.is_mini_mode:
             self.toggle_mini_player()
+        self._finish_crossfade()
         self.player.stop()
         self.player_bar.setVisible(False)
         self.seek_slider.setValue(0)

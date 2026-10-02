@@ -1,11 +1,13 @@
 """Más opciones de reproducción: temporizador para dormir, velocidad, repetir un tramo, fundido entre canciones,
 igualar el volumen entre canciones, control multimedia de Windows y controles en la bandeja del sistema."""
 import logging
+import math
+import os
 import time
 
-from PySide6.QtCore import QBuffer, QIODevice, QEasingCurve, QTimer, QVariantAnimation, Qt
+from PySide6.QtCore import QBuffer, QIODevice, QEasingCurve, QTimer, QUrl, QVariantAnimation, Qt
 from PySide6.QtGui import QAction, QActionGroup, QIcon
-from PySide6.QtMultimedia import QMediaPlayer
+from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from config import load_settings, save_settings
@@ -16,8 +18,36 @@ from ui.styles import accent
 
 SLEEP_CHOICES = ((15, "15 minutos"), (30, "30 minutos"), (45, "45 minutos"), (60, "1 hora"), (120, "2 horas"))
 SPEEDS = ((0.75, "0,75×"), (1.0, "Normal"), (1.25, "1,25×"), (1.5, "1,5×"), (2.0, "2×"))
-FADES = ((0, "Sin fundido"), (2, "2 segundos"), (4, "4 segundos"), (6, "6 segundos"))
+FADES = ((0, "Sin fundido"), (2, "2 segundos"), (4, "4 segundos"), (6, "6 segundos"), (8, "8 segundos"),
+         (10, "10 segundos"), (12, "12 segundos"))
 SLEEP_FADE_SECONDS = 20          # el volumen baja poco a poco durante los últimos 20 s del temporizador
+MANUAL_CROSSFADE_MS = 1500       # al saltar tú de canción, el fundido cruzado es más corto
+
+
+class ActivePlayer:
+    """Para las ventanas que necesitan el reproductor (letra, editor): apunta siempre al que suena ahora,
+    aunque el fundido cruzado haya cambiado de reproductor."""
+
+    def __init__(self, window):
+        self._w = window
+
+    def position(self):
+        return self._w.player.position()
+
+    def duration(self):
+        return self._w.player.duration()
+
+    def setPosition(self, ms):
+        self._w.player.setPosition(ms)
+
+    def play(self):
+        self._w.player.play()
+
+    def pause(self):
+        self._w.player.pause()
+
+    def playbackState(self):
+        return self._w.player.playbackState()
 
 
 def _setting(name, default):
@@ -53,6 +83,21 @@ class PlaybackOptionsMixin:
         self._sleep_timer.timeout.connect(self._sleep_tick)
         self._fade_anim = QVariantAnimation(self)
         self._fade_anim.valueChanged.connect(lambda v: self._set_fade(float(v)))
+        # fundido cruzado: dos reproductores a la vez. El que suena (self.player) recibe la canción nueva y sube;
+        # el anterior (_out_deck) sigue con la suya y baja, hasta que termina el fundido
+        self._xf_active = False
+        self._out_deck = None            # (reproductor, salida de audio) que se está apagando
+        self._spare_deck = None          # reproductor libre, listo para el próximo fundido
+        self._out_factor = 0.0
+        self._out_gain = 1.0
+        self._out_start = 1.0
+        self.active_player = ActivePlayer(self)
+        self._xf_anim = QVariantAnimation(self)
+        self._xf_anim.setStartValue(0.0)
+        self._xf_anim.setEndValue(1.0)
+        self._xf_anim.setEasingCurve(QEasingCurve.Linear)
+        self._xf_anim.valueChanged.connect(lambda v: self._on_xf_value(float(v)))
+        self._xf_anim.finished.connect(self._finish_crossfade)
         self._credit_timer = QTimer(self)             # una reproducción cuenta tras 30 s escuchando (como en Spotify)
         self._credit_timer.setSingleShot(True)
         self._credit_timer.setInterval(30000)
@@ -72,12 +117,92 @@ class PlaybackOptionsMixin:
         self._apply_volume()
 
     def _apply_volume(self):
-        factor = self._volume_master * self._fade_factor * self._gain_factor * self._sleep_factor
-        self.audio_output.setVolume(max(0.0, min(1.0, factor)))
+        master = self._volume_master * self._sleep_factor
+        self.audio_output.setVolume(max(0.0, min(1.0, master * self._fade_factor * self._gain_factor)))
+        if self._out_deck is not None:
+            self._out_deck[1].setVolume(max(0.0, min(1.0, master * self._out_factor * self._out_gain)))
 
     def _set_fade(self, value: float):
         self._fade_factor = max(0.0, min(1.0, value))
         self._apply_volume()
+
+    # ------------------------------------------------- fundido cruzado (dos reproductores)
+    @staticmethod
+    def _new_deck():
+        player = QMediaPlayer()
+        output = QAudioOutput()
+        player.setAudioOutput(output)
+        return player, output
+
+    def _wire_player(self, player):
+        """Las señales de un reproductor solo cuentan mientras es el que suena: el otro está apagándose en el fundido."""
+        player.errorOccurred.connect(lambda e, s, p=player: p is self.player and self.handle_player_error(e, s))
+        player.mediaStatusChanged.connect(lambda st, p=player: p is self.player and self.handle_media_status(st))
+        player.playbackStateChanged.connect(lambda st, p=player: p is self.player and self.handle_playback_state(st))
+        player.positionChanged.connect(lambda v, p=player: p is self.player and self.update_position(v))
+        player.durationChanged.connect(lambda v, p=player: p is self.player and self.update_duration(v))
+
+    def crossfade_ms(self, natural: bool = False) -> int:
+        """Cuánto dura el fundido cruzado del salto que se va a hacer (0 = sin fundido: corte normal).
+        `natural`: la canción se acerca a su final y empieza la siguiente; si no, lo pediste tú con «siguiente»."""
+        if self._fade_ms <= 0 or self._sleep_end_of_track:
+            return 0
+        if self.player.playbackState() != QMediaPlayer.PlayingState:
+            return 0
+        if natural:
+            remaining = int(self.player.duration() - self.player.position())
+            return max(500, min(self._fade_ms, remaining))
+        return min(self._fade_ms, MANUAL_CROSSFADE_MS)
+
+    def _begin_crossfade(self, ms: int):
+        """La canción que suena pasa a un reproductor aparte que baja el volumen; el reproductor libre queda como
+        el principal para recibir la canción nueva, que sube a la vez. Se llama antes de cargar la nueva."""
+        start = self._fade_factor
+        self._finish_crossfade()
+        out_player, out_audio = self.player, self.audio_output
+        spare = self._spare_deck
+        self._spare_deck = None
+        if spare is None:
+            spare = self._new_deck()
+            self._wire_player(spare[0])
+        self._out_deck = (out_player, out_audio)
+        self._out_gain = self._gain_factor
+        self._out_start = start
+        self._out_factor = start
+        self.player, self.audio_output = spare
+        self.player.setPlaybackRate(out_player.playbackRate())
+        self._fade_factor = 0.0
+        self._fading_out = False
+        self._fade_anim.stop()
+        self._xf_active = True
+        self._xf_anim.stop()
+        self._xf_anim.setDuration(max(200, int(ms)))
+        self._xf_anim.start()
+
+    def _on_xf_value(self, t: float):
+        t = max(0.0, min(1.0, t))
+        self._fade_factor = math.sin(t * math.pi / 2)          # potencia constante: la suma suena pareja
+        self._out_factor = self._out_start * math.cos(t * math.pi / 2)
+        self._apply_volume()
+
+    def _finish_crossfade(self):
+        """Termina (o corta) el fundido: el reproductor que se apagaba se detiene y queda libre."""
+        self._xf_anim.stop()
+        out = self._out_deck
+        if out is not None:
+            player = out[0]
+            try:
+                player.stop()
+                player.setSource(QUrl())
+            except RuntimeError:
+                pass
+            self._spare_deck = out
+            self._out_deck = None
+        self._out_factor = 0.0
+        if self._xf_active:
+            self._xf_active = False
+            self._fade_factor = 1.0
+            self._apply_volume()
 
     # ---------------------------------------------- empieza una canción nueva
     def on_track_started(self):
@@ -85,7 +210,9 @@ class PlaybackOptionsMixin:
         self._ab = [None, None]
         self._fading_out = False
         self._fade_anim.stop()
-        if self._natural_advance and self._fade_ms > 0 and info:
+        if self._xf_active:
+            self._natural_advance = False       # el fundido cruzado ya lleva el volumen de la canción nueva
+        elif self._natural_advance and self._fade_ms > 0 and info:
             self._natural_advance = False
             self._fade_factor = 0.0
             self._fade_anim.setDuration(self._fade_ms)
@@ -124,8 +251,8 @@ class PlaybackOptionsMixin:
 
     def _next_local_path(self):
         try:
-            nxt = self.upcoming_tracks(1)
-            return nxt[0].get("local_path") if nxt else None
+            nxt = self.peek_next()
+            return nxt.get("local_path") if nxt else None
         except Exception:
             return None
 
@@ -162,11 +289,16 @@ class PlaybackOptionsMixin:
             self.player.setPosition(a)
             return
         duration = self.player.duration()
-        if self._fade_ms > 0 and duration > self._fade_ms * 3 and not self.is_loop_enabled:
+        if self._fade_ms > 0 and duration > self._fade_ms * 3 and not self.is_loop_enabled and not self._xf_active:
             remaining = duration - position_ms
             if 0 < remaining <= self._fade_ms and not self._fading_out \
                     and self.player.playbackState() == QMediaPlayer.PlayingState:
-                self._fading_out = True
+                nxt = None if self._sleep_end_of_track else self.peek_next()
+                path = (nxt or {}).get("local_path")
+                if path and os.path.isfile(path):
+                    self.play_next(natural=True)        # fundido cruzado: la siguiente empieza ya, mientras esta se apaga
+                    return
+                self._fading_out = True      # no hay siguiente en tu equipo: solo baja el volumen, como antes
                 self._fade_anim.stop()
                 self._fade_anim.setDuration(int(remaining))
                 self._fade_anim.setStartValue(self._fade_factor)
@@ -426,4 +558,7 @@ class PlaybackOptionsMixin:
                                        QSystemTrayIcon.Information, 6000)
 
     def shutdown_playback_options(self):
+        self._finish_crossfade()
+        if self._spare_deck is not None:
+            self._spare_deck[0].setSource(QUrl())
         self.media_controls.shutdown()

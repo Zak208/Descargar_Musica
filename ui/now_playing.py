@@ -595,11 +595,7 @@ class NowPlayingPanel(QFrame):
 
     def refresh_next(self):
         """Siguiente canción: primero la cola que has añadido, luego la siguiente de la lista."""
-        w = self.window_ref
-        nxt = (w.playback_queue[0] if w.playback_queue else None)
-        if nxt is None:
-            upcoming = w.upcoming_tracks(1)
-            nxt = upcoming[0] if upcoming else None
+        nxt = self.window_ref.peek_next()      # exactamente lo que sonará (también con el aleatorio)
         if not nxt:
             self.next_title.setText("")
             self.next_artist.setText("")
