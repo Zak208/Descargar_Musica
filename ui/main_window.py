@@ -57,6 +57,8 @@ from ui.sidebar import build_sidebar
 from ui.home_page import build_home_page
 from ui.player_bar import build_player_bar
 from ui.lyrics_dialog import LyricsDialog
+from ui.lyrics_editor import LyricsEditorDialog
+from services import lyrics_store, transcribe_service
 from ui.metadata_dialog import MetadataDialog
 from ui.equalizer_dialog import EqualizerDialog
 from ui.queue_dialog import QueueDialog
@@ -317,6 +319,124 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         dlg.destroyed.connect(lambda *_: setattr(self, 'lyrics_dialog', None))
         self.lyrics_dialog = dlg
         dlg.show()
+
+    # ---------- letras propias y generadas por el sistema ----------
+    def lyrics_key(self) -> str:
+        """Identificador con el que se guardan las letras de la canción actual."""
+        info = self.current_item_info
+        if not info:
+            return ""
+        return lyrics_store.key_for(info.get("title", ""), info.get("uploader", ""))
+
+    def reload_lyrics(self):
+        """Vuelve a cargar la letra en el panel y en la ventana de letras (tras editarla o generarla)."""
+        if self.now_panel.isVisible():
+            self.now_panel.lyrics.reload()
+        else:
+            self.now_panel._key = None
+        dlg = self.lyrics_dialog
+        try:
+            if dlg is not None and dlg.isVisible():
+                dlg.reload()
+        except RuntimeError:
+            self.lyrics_dialog = None
+
+    def _lyrics_busy(self, text: str, percent: int = -1):
+        if self.lyrics_key() != getattr(self, "_busy_key", self.lyrics_key()):
+            return      # mientras tanto cambió la canción: el aviso ya no corresponde a la que se ve
+        self.now_panel.lyrics.set_busy(text, percent)
+        dlg = self.lyrics_dialog
+        try:
+            if dlg is not None and dlg.isVisible():
+                dlg.set_busy(text, percent)
+        except RuntimeError:
+            self.lyrics_dialog = None
+
+    def generate_lyrics(self):
+        """El programa escucha la canción descargada y escribe su letra (la primera vez descarga el reconocedor de voz)."""
+        info = self.current_item_info
+        path = info.get("local_path") if info else None
+        if not path or not os.path.isfile(path):
+            self.notify("Solo se puede generar la letra de canciones descargadas.")
+            return
+        job = getattr(self, "_lyrics_job", None)
+        if job is not None and job.isRunning():
+            self.notify("Ya se está generando una letra. Espera a que termine.")
+            return
+        self._busy_key = self.lyrics_key()
+        if not transcribe_service.is_ready():
+            self.raise_()
+            self.activateWindow()
+            if not ask_confirm(
+                    self, "Generar letras con el sistema",
+                    f"Para escuchar las canciones el programa necesita un reconocedor de voz (unos {transcribe_service.DOWNLOAD_MB} MB). "
+                    "Se descarga una sola vez, se guarda en tu equipo y después funciona sin internet.\n\n"
+                    "La letra generada puede tener errores; podrás corregirla con «Editar». ¿Descargarlo ahora?",
+                    ok="Descargar"):
+                return
+            setup = transcribe_service.SetupWorker(self)
+            setup.progress.connect(lambda pct: self._lyrics_busy("Descargando el reconocedor de voz…", pct))
+            setup.done.connect(lambda: self._start_transcription(path))
+            setup.failed.connect(lambda msg: (self.notify(f"No se pudo descargar: {friendly_error(msg)}"), self.reload_lyrics()))
+            self._lyrics_job = setup
+            self._lyrics_busy("Descargando el reconocedor de voz…", 0)
+            setup.start()
+            return
+        self._start_transcription(path)
+
+    def _start_transcription(self, path: str):
+        key = self.lyrics_key()
+        worker = transcribe_service.TranscribeWorker(path, key, self)
+        worker.done.connect(self._on_lyrics_generated)
+        worker.failed.connect(self._on_lyrics_generation_failed)
+        self._lyrics_job = worker
+        self._lyrics_busy("Escuchando la canción… puede tardar uno o dos minutos. Puedes seguir usando la aplicación.")
+        worker.start()
+
+    def _on_lyrics_generated(self, key: str, _data: dict):
+        self.notify("Letra generada. Revísala: puede tener errores.")
+        if key == self.lyrics_key():
+            self.reload_lyrics()
+
+    def _on_lyrics_generation_failed(self, key: str, reason: str):
+        self.notify(reason or "No se pudo generar la letra.")
+        if key == self.lyrics_key():
+            self.reload_lyrics()
+
+    def edit_lyrics(self):
+        """Editor de letra: sirve para escribirla desde cero o corregir la que hay (la propia queda guardada y manda)."""
+        info = self.current_item_info
+        if not info:
+            self.notify("Reproduce una canción primero.")
+            return
+        key = self.lyrics_key()
+        data = self.now_panel.lyrics.data
+        dlg_open = self.lyrics_dialog
+        try:
+            if data is None and dlg_open is not None and dlg_open.isVisible():
+                data = dlg_open.lyrics_data
+        except RuntimeError:
+            self.lyrics_dialog = None
+        text = ""
+        if data:
+            if data.get("is_synced") and data.get("synced_lines"):
+                text = "\n".join(f"{lyrics_store.format_ms(ms)} {t}" for ms, t in data["synced_lines"])
+            else:
+                text = data.get("plain_text", "")
+        stored = lyrics_store.load(key)
+        self.raise_()
+        self.activateWindow()
+        editor = LyricsEditorDialog(self, info.get("title", ""), text, player=self.player,
+                                    can_restore=bool(stored and stored.get("source") == "user"))
+        if editor.exec() != 1:
+            return
+        if editor.restore:
+            lyrics_store.delete(key, "user")
+            self.notify("Se ha vuelto a la letra original.")
+        else:
+            lyrics_store.save(key, editor.text, "user")
+            self.notify("Letra guardada.")
+        self.reload_lyrics()
 
     def toggle_mini_player(self):
         """Reproductor pequeño: solo la barra de reproducción, siempre visible encima de otras ventanas."""

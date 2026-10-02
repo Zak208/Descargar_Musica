@@ -1,6 +1,6 @@
 # Descargador de Música
 
-**Versión actual: 1.5.0** · [Historial de versiones](CHANGELOG.md) · cada versión subida tiene su etiqueta `vX.Y.Z` en GitHub
+**Versión actual: 1.6.0** · [Historial de versiones](CHANGELOG.md) · cada versión subida tiene su etiqueta `vX.Y.Z` en GitHub
 
 Aplicación de escritorio para **Windows** que combina un reproductor con aspecto de Spotify y un descargador de música:
 buscas una canción, un artista o un álbum, escuchas un adelanto y la descargas a tu equipo en MP3, M4A, FLAC o WAV,
@@ -69,6 +69,12 @@ sin cuentas ni claves.
 
 - **Windows 10 u 11** (es donde se ha desarrollado y probado; el código no depende de nada exclusivo de Windows salvo detalles menores, como abrir el Explorador).
 - **Python 3.12** (para ejecutar desde el código). Con el `.exe` compilado no hace falta instalar nada.
+- **Letras**: se oscurecen las frases ya leídas, se subraya la que tienes bajo el ratón y al pulsarla la canción salta a ese
+  momento. Si una canción no tiene letra, en las canciones **descargadas** puedes pulsar **«Generar con el sistema»**: el
+  programa escucha la canción y escribe lo que canta (con tiempos). Queda marcada como «generada por el sistema» porque puede
+  tener errores. Con **«Editar»** (o «Escribir la letra yo») abres un editor dentro de la app para corregirla o escribir la tuya;
+  la letra propia manda sobre cualquier otra y se puede restaurar. La primera vez, y solo si aceptas, se descarga el reconocedor
+  de voz (whisper.cpp, ≈ 68 MB, con comprobación SHA-256); después funciona sin internet.
 - Conexión a internet para buscar, escuchar adelantos, descargar, letras y recomendaciones.
 - **FFmpeg** (convierte el audio y aplica el ecualizador). No hace falta instalarlo a mano: si no lo encuentra,
   la aplicación lo descarga sola la primera vez (carpeta `app_data/ffmpeg`).
@@ -172,7 +178,9 @@ services/                  lógica sin interfaz
     playlist_service.py      favoritos y listas
     artist_service.py        artistas seguidos
     recommendation_service.py  recomendaciones (Deezer + iTunes)
-    lyrics_service.py        letras
+    lyrics_service.py        letras de internet (solo del artista correcto)
+    lyrics_store.py          letras propias y generadas (app_data/letras)
+    transcribe_service.py    «generar letra»: reconocimiento de voz local (whisper.cpp)
     equalizer_service.py     ecualizador con FFmpeg
     ffmpeg_service.py        localiza o descarga FFmpeg
 ui/                        interfaz
@@ -199,9 +207,11 @@ Todo se guarda en la carpeta `app_data/` junto al programa (no se envía a ning�
 | `recomendaciones.json` | última recomendación calculada |
 | `covers/`, `img_cache/`, `eq_cache/` | imágenes y copias temporales |
 | `ffmpeg/` | FFmpeg descargado automáticamente |
+| `letras/` | letras que escribes tú o que genera el sistema |
+| `whisper/` | reconocedor de voz (solo si aceptas generar letras) |
 
 La aplicación **no usa cuentas, claves ni telemetría**. Lo único que sale de tu equipo son las búsquedas y peticiones
-a los servicios públicos que usa (iTunes, Deezer, LRCLIB, lyrics.ovh, YouTube mediante yt-dlp, la página pública de Spotify si pegas un enlace suyo, y la descarga de FFmpeg desde GitHub).
+a los servicios públicos que usa (iTunes, Deezer, LRCLIB, lyrics.ovh, YouTube mediante yt-dlp, la página pública de Spotify si pegas un enlace suyo, y la descarga de FFmpeg desde GitHub y, solo si aceptas generar letras, la del reconocedor de voz desde GitHub y Hugging Face).
 `app_data/` y los registros están excluidos del repositorio (`.gitignore`) para que tus listas e historial nunca se suban.
 
 ## Rendimiento y modo ahorro
@@ -222,6 +232,7 @@ Se ejecutan sin abrir ventanas, desde la raíz del proyecto (algunas usan intern
 python dev_tools/prueba_interfaz.py     # ventanas internas, búsqueda, álbumes, orden, vigilancia de la carpeta...
 python dev_tools/prueba_listas.py       # listas, artistas, sin recargas
 python dev_tools/prueba_detalles.py     # fechas «añadida», rueda lateral, géneros, ventanas sueltas
+python dev_tools/prueba_letras.py       # coincidencia de artista, letras propias/generadas, estados de las frases
 python dev_tools/prueba_filas.py        # filas estilo Spotify, menú, panel «En reproducción», ecualizador siempre activo
 ```
 

@@ -412,11 +412,11 @@ QPushButton#SidebarBtn {
     border-radius: 8px;
 }
 QPushButton#SidebarBtn:hover {
-    background-color: #1A1A1A;
+    background-color: rgba(255, 255, 255, 0.12);
     color: #FFFFFF;
 }
 QPushButton#SidebarBtn:checked {
-    background-color: #242424;
+    background-color: rgba(255, 255, 255, 0.08);
     color: #1ED760;
 }
 

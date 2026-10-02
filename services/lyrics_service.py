@@ -181,20 +181,30 @@ def fetch_lyrics(title: str, artist: str = "") -> dict | None:
 
 
 class LyricsWorker(QThread):
+    """Busca la letra: primero la que escribió el usuario, luego internet y, si no hay, la generada por el sistema."""
     lyrics_ready = Signal(dict)
     lyrics_error = Signal(str)
 
-    def __init__(self, title: str, artist: str = "", parent=None):
+    def __init__(self, title: str, artist: str = "", store_key: str = "", parent=None):
         super().__init__(parent)
         self.title = title
         self.artist = artist
+        self.store_key = store_key
         self.is_cancelled = False
 
     def run(self):
+        from services import lyrics_store
+        stored = lyrics_store.load(self.store_key) if self.store_key else None
+        if stored and stored.get("source") == "user":
+            self.lyrics_ready.emit(lyrics_store.to_result(stored, self.title, self.artist))
+            return
         result = fetch_lyrics(self.title, self.artist)
         if self.is_cancelled:
             return
         if result:
+            result["source"] = "online"
             self.lyrics_ready.emit(result)
+        elif stored:
+            self.lyrics_ready.emit(lyrics_store.to_result(stored, self.title, self.artist))
         else:
             self.lyrics_error.emit("No hemos encontrado la letra de esta canción.")

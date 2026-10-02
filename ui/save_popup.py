@@ -69,7 +69,8 @@ class SavePopup(QFrame):
         self.rows = {}
         member = PlaylistService.lists_containing(self.info)
         body = QWidget()
-        body.setStyleSheet("background: transparent;")
+        body.setObjectName("SaveBody")
+        body.setStyleSheet("#SaveBody { background: transparent; }")
         body_lay = QVBoxLayout(body)
         body_lay.setContentsMargins(0, 0, 0, 0)
         body_lay.setSpacing(2)

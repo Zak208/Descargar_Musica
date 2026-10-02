@@ -3,6 +3,12 @@
 Formato: `MAYOR.MENOR.PARCHE`. MAYOR = cambios que rompen datos o uso, MENOR = funciones nuevas, PARCHE = arreglos.
 Cada versión subida a GitHub tiene su etiqueta `vX.Y.Z` (pestaña *Releases/Tags*).
 
+## 1.6.0
+- Letra: las frases ya leídas se oscurecen, la que está bajo el ratón se subraya y al pulsarla la canción salta a ese momento (panel lateral y ventana de letras).
+- Canciones sin letra: botón «Generar con el sistema» (solo descargadas; reconocimiento de voz local con whisper.cpp, se descarga la primera vez con permiso) y «Escribir la letra yo». Las generadas se marcan como tales.
+- Editor de letras dentro de la app (con «Poner el tiempo actual»), letra propia con prioridad y opción de volver a la original.
+- La barra lateral izquierda (Inicio, Abrir carpeta, Ajustes y tus listas) se ilumina bien al pasar el ratón.
+
 ## 1.5.0
 - Las tarjetas (mixes, canciones, artistas, géneros, accesos rápidos, listas de la barra lateral) se iluminan y se marcan al pasar el ratón, igual que las filas de las listas. Antes su fondo no se llegaba a pintar.
 - Arreglo de letras: ya no se muestra la letra de otro artista con el mismo título de la canción (ej. «Cosas pendientes» de Dib salía con la de Maluma). Si no hay letra del artista correcto, se avisa de que no se encontró.

@@ -32,6 +32,7 @@ class SideListItem(QFrame):
     def __init__(self, kind: str, list_id: str, title: str, subtitle: str, parent=None):
         super().__init__(parent)
         self.setObjectName("SideListItem")
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self.setCursor(Qt.PointingHandCursor)
         self.setFixedHeight(THUMB + 14)
         lay = QHBoxLayout(self)
@@ -128,7 +129,8 @@ def build_sidebar(self):
     scroll.setWidgetResizable(True)
     scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
     lists_widget = QWidget()
-    lists_widget.setStyleSheet("background: transparent;")
+    lists_widget.setObjectName("SideLists")
+    lists_widget.setStyleSheet("#SideLists { background: transparent; }")
     self.playlists_container = QVBoxLayout(lists_widget)
     self.playlists_container.setContentsMargins(0, 0, 0, 0)
     self.playlists_container.setSpacing(2)

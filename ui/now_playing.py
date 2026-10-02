@@ -4,7 +4,7 @@ import os
 from PySide6.QtCore import Qt, Signal, QSize, QTimer, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import QColor, QImage
 from PySide6.QtWidgets import (
-    QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QScrollArea, QWidget
+    QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QScrollArea, QWidget, QProgressBar
 )
 
 from services.artist_service import ArtistService
@@ -15,6 +15,7 @@ from ui.formatting import split_artists
 from ui.icons import icon
 from ui.save_popup import save_icon
 from ui.imageloader import ImageLoaderThread, LocalCoverLoader
+from ui.lyric_line import LyricLine
 from ui.perf import eco
 from ui.styles import accent
 from ui.widgets import ElidedLabel
@@ -30,10 +31,6 @@ class ClickableLabel(QLabel):
         if ev.button() == Qt.LeftButton and self.rect().contains(ev.pos()):
             self.clicked.emit()
         super().mouseReleaseEvent(ev)
-
-
-LINE_IDLE = "color: #D2D2D2; font-size: 19px; font-weight: 700; background: transparent;"
-LINE_ACTIVE = "color: #FFFFFF; font-size: 19px; font-weight: 800; background: transparent;"
 
 
 def cover_color(pix):
@@ -64,7 +61,8 @@ class AutoScrollArea(QScrollArea):
 
 
 class LyricsBox(QFrame):
-    """Letra de la canción dentro del panel (las sincronizadas avanzan solas)."""
+    """Letra de la canción dentro del panel: avanza sola, se oscurece lo ya leído y se puede pulsar una frase para saltar a ella.
+    Si no hay letra, permite generarla con el sistema (canciones descargadas) o escribirla uno mismo."""
 
     def __init__(self, window, parent=None):
         super().__init__(parent)
@@ -76,8 +74,10 @@ class LyricsBox(QFrame):
         self.set_color(QColor("#3D5A4A"))
         self._worker = None
         self._key = None
-        self._lines = []      # [(ms, QLabel)]
+        self._info_key = None
+        self._lines = []      # [(ms, LyricLine)]
         self._active = -1
+        self.data = None      # última letra mostrada (para poder editarla)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(16, 14, 16, 14)
         lay.setSpacing(8)
@@ -86,18 +86,64 @@ class LyricsBox(QFrame):
         title.setStyleSheet("color: #FFFFFF; font-size: 15px; font-weight: 800; background: transparent;")
         head.addWidget(title)
         head.addStretch()
+        link_css = "color: #FFFFFF; background: transparent; border: none; font-weight: 700;"
+        self.btn_edit = QPushButton("Editar")
+        self.btn_edit.setObjectName("LinkBtn")
+        self.btn_edit.setStyleSheet(link_css)
+        self.btn_edit.setCursor(Qt.PointingHandCursor)
+        self.btn_edit.setToolTip("Corrige la letra o escribe la tuya")
+        self.btn_edit.clicked.connect(self.window_ref.edit_lyrics)
+        head.addWidget(self.btn_edit)
         self.btn_full = QPushButton("Ver completa")
         self.btn_full.setObjectName("LinkBtn")
-        self.btn_full.setStyleSheet("color: #FFFFFF; background: transparent; border: none; font-weight: 700;")
+        self.btn_full.setStyleSheet(link_css)
         self.btn_full.setCursor(Qt.PointingHandCursor)
         self.btn_full.clicked.connect(self.window_ref.open_lyrics)
         head.addWidget(self.btn_full)
         lay.addLayout(head)
 
+        self.badge = QLabel("")
+        self.badge.setWordWrap(True)
+        self.badge.setStyleSheet("color: #FFFFFF; background: rgba(0, 0, 0, 0.28); border-radius: 8px; "
+                                 "font-size: 12px; font-weight: 600; padding: 5px 9px;")
+        self.badge.setVisible(False)
+        lay.addWidget(self.badge)
+
         self.status = QLabel("")
         self.status.setStyleSheet("color: #E6E6E6; background: transparent; font-size: 14px;")
         self.status.setWordWrap(True)
         lay.addWidget(self.status)
+
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        self.progress.setTextVisible(False)
+        self.progress.setFixedHeight(6)
+        self.progress.setStyleSheet("QProgressBar { background: rgba(0,0,0,0.3); border: none; border-radius: 3px; }"
+                                    "QProgressBar::chunk { background: #FFFFFF; border-radius: 3px; }")
+        self.progress.setVisible(False)
+        lay.addWidget(self.progress)
+
+        self.actions = QWidget()
+        self.actions.setStyleSheet("background: transparent;")
+        act = QVBoxLayout(self.actions)
+        act.setContentsMargins(0, 0, 0, 0)
+        act.setSpacing(6)
+        pill = ("QPushButton { color: #FFFFFF; background: rgba(0,0,0,0.30); border: 1px solid rgba(255,255,255,0.35); "
+                "border-radius: 16px; padding: 8px 12px; font-weight: 700; font-size: 13px; }"
+                "QPushButton:hover { background: rgba(0,0,0,0.45); border-color: #FFFFFF; }")
+        self.btn_generate = QPushButton("Generar con el sistema")
+        self.btn_generate.setStyleSheet(pill)
+        self.btn_generate.setCursor(Qt.PointingHandCursor)
+        self.btn_generate.setToolTip("El programa escucha la canción y escribe lo que canta (solo canciones descargadas)")
+        self.btn_generate.clicked.connect(self.window_ref.generate_lyrics)
+        act.addWidget(self.btn_generate)
+        self.btn_write = QPushButton("Escribir la letra yo")
+        self.btn_write.setStyleSheet(pill)
+        self.btn_write.setCursor(Qt.PointingHandCursor)
+        self.btn_write.clicked.connect(self.window_ref.edit_lyrics)
+        act.addWidget(self.btn_write)
+        self.actions.setVisible(False)
+        lay.addWidget(self.actions)
 
         self.scroll = AutoScrollArea()
         self.scroll.setWidgetResizable(True)
@@ -115,16 +161,22 @@ class LyricsBox(QFrame):
         self.body.setAlignment(Qt.AlignTop)
         self.scroll.setWidget(inner)
         lay.addWidget(self.scroll)
+        self._show_idle_buttons(False)
 
     def set_color(self, color):
         """Fondo de la tarjeta: el tono que sale de mezclar los colores de la portada."""
         self.setStyleSheet(f"QFrame#LyricsCard {{ background-color: {color.name()}; border-radius: 14px; }}")
 
+    # ------------------------------------------------------------- carga
     def load(self, title: str, artist: str, key: str):
         if key == self._key:
             return
         self._key = key
         self._clear()
+        self.data = None
+        self._show_idle_buttons(False)
+        self.badge.setVisible(False)
+        self.progress.setVisible(False)
         self.status.setText("Buscando la letra...")
         self.status.setVisible(True)
         self.scroll.setVisible(False)
@@ -134,10 +186,37 @@ class LyricsBox(QFrame):
                 self._worker.lyrics_error.disconnect()
             except (RuntimeError, TypeError):
                 pass
-        self._worker = LyricsWorker(title, artist)
+        self._worker = LyricsWorker(title, artist, self.window_ref.lyrics_key())
         self._worker.lyrics_ready.connect(lambda data, k=key: self._on_ready(data, k))
         self._worker.lyrics_error.connect(lambda msg, k=key: self._on_error(msg, k))
         self._worker.start()
+
+    def reload(self):
+        """Vuelve a pedir la letra de la canción actual (tras editarla o generarla)."""
+        info = self.window_ref.current_item_info
+        if info:
+            self._key = None
+            self.load(info.get("title", ""), info.get("uploader", ""), self._current_key())
+
+    def _current_key(self):
+        from ui.playback_mixin import track_key
+        return track_key(self.window_ref.current_item_info)
+
+    def set_busy(self, text: str, percent: int = -1):
+        """Muestra un mensaje de trabajo (descargando el reconocedor, escuchando la canción…)."""
+        self.status.setText(text)
+        self.status.setVisible(True)
+        self.actions.setVisible(False)
+        self.progress.setVisible(percent >= 0)
+        if percent >= 0:
+            self.progress.setValue(percent)
+
+    def _show_idle_buttons(self, show: bool):
+        self.actions.setVisible(show)
+        if show:
+            info = self.window_ref.current_item_info or {}
+            local = info.get("local_path")
+            self.btn_generate.setVisible(bool(local and os.path.isfile(local)))
 
     def _clear(self):
         self._lines = []
@@ -149,20 +228,34 @@ class LyricsBox(QFrame):
                 widget.deleteLater()
 
     def _on_error(self, msg: str, key: str):
-        if key == self._key:
-            self.status.setText("No hemos encontrado la letra de esta canción.")
+        if key != self._key:
+            return
+        self.progress.setVisible(False)
+        info = self.window_ref.current_item_info or {}
+        local = info.get("local_path")
+        has_file = bool(local and os.path.isfile(local))
+        self.status.setText("No hemos encontrado la letra de esta canción."
+                            + ("" if has_file else " Descárgala para que el sistema pueda generarla, o escríbela tú."))
+        self._show_idle_buttons(True)
+        self.btn_edit.setVisible(False)
 
     def _on_ready(self, data: dict, key: str):
         if key != self._key:
             return
         self._clear()
+        self.data = data
+        self.progress.setVisible(False)
+        self._show_idle_buttons(False)
+        self.btn_edit.setVisible(True)
+        source = data.get("source")
+        self.badge.setText({"auto": "Letra generada por el sistema: puede tener errores. Pulsa «Editar» para corregirla.",
+                            "user": "Letra escrita por ti."}.get(source, ""))
+        self.badge.setVisible(source in ("auto", "user"))
         synced = data.get("is_synced") and data.get("synced_lines")
         lines = [(ms, text) for ms, text in data["synced_lines"]] if synced else \
                 [(0, t.strip()) for t in data.get("plain_text", "").splitlines() if t.strip()]
         for ms, text in lines:
-            lbl = QLabel(text)
-            lbl.setWordWrap(True)
-            lbl.setStyleSheet(LINE_IDLE)
+            lbl = LyricLine(ms, text, self._seek if synced else None, size=19)
             self.body.addWidget(lbl)
             if synced:
                 self._lines.append((ms, lbl))
@@ -172,7 +265,13 @@ class LyricsBox(QFrame):
         if not lines:
             self.status.setText("No hemos encontrado la letra de esta canción.")
         self.scroll.setVisible(bool(lines))
+        if self.window_ref.player.position() and self._lines:
+            self.update_position(self.window_ref.player.position())
 
+    def _seek(self, ms: int):
+        self.window_ref.player.setPosition(ms)
+
+    # ---------------------------------------------------------- seguimiento
     def update_position(self, ms: int):
         if self._plain:     # letra sin tiempos: baja poco a poco según lo que lleva la canción
             dur = self.window_ref.player.duration()
@@ -190,11 +289,11 @@ class LyricsBox(QFrame):
                 break
         if new == self._active or new < 0:
             return
-        if 0 <= self._active < len(self._lines):
-            self._lines[self._active][1].setStyleSheet(LINE_IDLE)
+        lo, hi = sorted((self._active if self._active >= 0 else 0, new))
         self._active = new
+        for i in range(lo, hi + 1):      # solo se repintan las frases que cambiaron de estado
+            self._lines[i][1].set_state("past" if i < new else "active" if i == new else "idle")
         lbl = self._lines[new][1]
-        lbl.setStyleSheet(LINE_ACTIVE)
         QTimer.singleShot(0, lambda l=lbl: self._center(l))
 
     def _center(self, lbl):
@@ -257,7 +356,8 @@ class NowPlayingPanel(QFrame):
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         inner = QWidget()
-        inner.setStyleSheet("background: transparent;")
+        inner.setObjectName("PanelInner")
+        inner.setStyleSheet("#PanelInner { background: transparent; }")
         self.body = QVBoxLayout(inner)
         self.body.setContentsMargins(18, 4, 18, 18)
         self.body.setSpacing(14)
