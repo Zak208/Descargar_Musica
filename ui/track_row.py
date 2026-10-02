@@ -8,7 +8,7 @@ import os
 
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QSizePolicy, QWidget
+from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QSizePolicy, QWidget
 
 from services.playlist_service import PlaylistService
 from ui.formatting import format_added
@@ -47,6 +47,9 @@ class TrackRow(QFrame):
         self._playing = False
         self._downloading = False
         self._thumb_loader = None
+        self._press_pos = None
+        self._collapse_on_release = False
+        self.drag_source = None
         self._blocked = False       # sin conexión y sin descargar: oscurecida y no se puede usar
         self._veil = None
         self._detect_downloaded()
@@ -318,14 +321,48 @@ class TrackRow(QFrame):
         self.refresh_state()
         super().leaveEvent(event)
 
+    def mouseMoveEvent(self, event):
+        """Arrastrar la canción (o todas las marcadas) hacia una lista de la barra lateral las añade a ella;
+        dentro de una playlist, arrastrarlas cambia su orden."""
+        if (event.buttons() & Qt.LeftButton) and self._press_pos is not None and not self._blocked:
+            if (event.position().toPoint() - self._press_pos).manhattanLength() > QApplication.startDragDistance() + 6:
+                self._press_pos = None
+                self._collapse_on_release = False
+                from ui.dragdrop import start_track_drag
+                infos = [dict(self.item_info)]
+                alive = getattr(self.parent_window, "_alive_rows", lambda: [])()
+                if self in alive and len(alive) > 1:
+                    infos = [dict(r.item_info) for r in alive]
+                start_track_drag(self, infos, getattr(self, "drag_source", None))
+                return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._press_pos = None
+        if self._collapse_on_release and event.button() == Qt.LeftButton:
+            self._collapse_on_release = False
+            if hasattr(self.parent_window, "select_row"):
+                self.parent_window.select_row(self)        # un clic sin arrastrar deja solo esta fila marcada
+        super().mouseReleaseEvent(event)
+
     def mousePressEvent(self, event):
+        self._press_pos = event.position().toPoint() if event.button() == Qt.LeftButton else None
         if event.button() == Qt.LeftButton:
             if self._hot and self.idx_label.geometry().contains(event.position().toPoint()):
                 self.play()          # un clic sobre el símbolo ▶ reproduce directamente
                 event.accept()
                 return
             if hasattr(self.parent_window, "select_row"):
-                self.parent_window.select_row(self)
+                mods = event.modifiers()
+                alive = getattr(self.parent_window, "_alive_rows", lambda: [])()
+                if mods & Qt.ControlModifier:
+                    self.parent_window.select_row(self, "toggle")
+                elif mods & Qt.ShiftModifier:
+                    self.parent_window.select_row(self, "range")
+                elif self in alive and len(alive) > 1:
+                    self._collapse_on_release = True           # puede que vaya a arrastrar todas las marcadas
+                else:
+                    self.parent_window.select_row(self)
         super().mousePressEvent(event)
 
     def mouseDoubleClickEvent(self, event):

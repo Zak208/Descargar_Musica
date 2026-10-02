@@ -8,6 +8,7 @@ from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QMenu, QFileDialog
 
 from config import HISTORY_FILE, get_download_dir
+from services import library_db, local_mixes
 from services.library_service import LibraryScanWorker, LibraryWatcher, load_items_sync
 from services.recommendation_service import AlbumResolver, ArtistResolver
 from services.playlist_service import PlaylistService
@@ -193,6 +194,7 @@ class ListsMixin:
                     item.context_requested.connect(lambda pos_, a=art: a and self._artist_menu(a, pos_))
                 else:
                     item.clicked.connect(lambda k=kind, lid=list_id: self.open_list(k, lid))
+                    item.track_dropped.connect(lambda info, k=kind, lid=list_id: self.on_track_dropped(k, lid, info))
                     if kind == "playlist":
                         item.context_requested.connect(lambda pos_, pid=list_id: self._playlist_menu(pid, pos_))
                 layout.insertWidget(pos, item)
@@ -219,7 +221,8 @@ class ListsMixin:
             job.start()
             self.notify(f"Ahora sigues a {name}")
         else:
-            self.notify(f"Has dejado de seguir a {name}")
+            self.notify_undo(f"Has dejado de seguir a {name}",
+                             lambda: self.toggle_follow_artist(artist_id, name, avatar))
         self.refresh_playlists_sidebar()
         self.refresh_home()
         if self.stacked_widget.currentIndex() == 5:
@@ -292,14 +295,19 @@ class ListsMixin:
                 self.open_library()
 
     def delete_playlist(self, p_id: str):
+        """Elimina la lista al momento y ofrece «Deshacer» (tus canciones descargadas nunca se borran)."""
         name = PlaylistService.get_playlists().get(p_id, {}).get("name", "esta lista")
-        if ask_confirm(self, "Eliminar lista",
-                       f"¿Seguro que quieres eliminar «{name}»?\nTus canciones descargadas no se borran.",
-                       ok="Eliminar", danger=True):
-            PlaylistService.delete_playlist(p_id)
-            self.refresh_playlists_sidebar()
-            self.open_library()
-            self.notify("Lista eliminada")
+        snapshot = PlaylistService.snapshot_playlist(p_id)
+        if not PlaylistService.delete_playlist(p_id):
+            return
+        self.refresh_playlists_sidebar()
+        self.open_library()
+
+        def undo():
+            if PlaylistService.restore_playlist(p_id, snapshot):
+                self.refresh_playlists_sidebar()
+                self.open_library()
+        self.notify_undo(f"Lista «{name}» eliminada", undo)
 
     # ------------------------------------------------------------ navegación
     def open_library(self):
@@ -378,8 +386,9 @@ class ListsMixin:
     refresh_current_list = reload_current_list
 
     def _load_library_page(self, animate: bool = True):
+        smart = [(k, n, len(t)) for k, n, t in local_mixes.smart_lists(self.library_items(), library_db.play_stats())]
         self.page_library.load(len(PlaylistService.get_favorites()), len(self.library_items()),
-                               PlaylistService.get_playlists(), ArtistService.get_followed(), animate)
+                               PlaylistService.get_playlists(), ArtistService.get_followed(), animate, smart)
 
     # ----------------------------------------------------------- reproducción
     def play_list(self, items: list, start, shuffle: bool = False):
@@ -497,6 +506,33 @@ class ListsMixin:
         self._follow_resolver = resolver
         resolver.start()
 
+    def on_track_dropped(self, kind: str, list_id, infos):
+        """Canciones soltadas sobre una lista de la barra lateral: se añaden a ella."""
+        infos = [infos] if isinstance(infos, dict) else list(infos)
+        self.add_tracks_to_list(kind, list_id, infos)
+
+    def add_tracks_to_list(self, kind: str, list_id, infos: list):
+        """Añade varias canciones a «Canciones que te gustan» o a una playlist (sin repetir las que ya están)."""
+        added = 0
+        for info in infos:
+            if kind == "favorites":
+                if not PlaylistService.is_favorite(info.get("id"), info.get("title")):
+                    PlaylistService.toggle_favorite(info)
+                    added += 1
+            elif kind == "playlist":
+                if PlaylistService.add_track_to_playlist(list_id, info):
+                    added += 1
+        name = ("Canciones que te gustan" if kind == "favorites"
+                else PlaylistService.get_playlists().get(list_id, {}).get("name", "la lista"))
+        if added:
+            self.notify(f"{added} canción{'es' if added != 1 else ''} añadida{'s' if added != 1 else ''} a «{name}»")
+        else:
+            self.notify(f"Ya estaban en «{name}»")
+        self.refresh_playlists_sidebar()
+        self.refresh_current_list()
+        self.sync_favorite_hearts()
+        return added
+
     def save_button_clicked(self, info: dict, button):
         """Botón «+»: la primera vez guarda en «Canciones que te gustan»; si ya está guardada, abre la lista de listas."""
         if not PlaylistService.lists_containing(info):
@@ -518,8 +554,19 @@ class ListsMixin:
         self.refresh_current_list()
 
     def toggle_info_favorite(self, info: dict):
+        stored = PlaylistService.get_favorite(str(info.get("id", "")), info.get("title", ""))
         is_fav = PlaylistService.toggle_favorite(info)
         self.sync_favorite_hearts()
-        self.notify("Añadida a «Canciones que te gustan»" if is_fav else "Quitada de «Canciones que te gustan»")
+        if is_fav:
+            self.notify("Añadida a «Canciones que te gustan»")
+        elif stored:
+            def undo():
+                PlaylistService.restore_favorite(stored)
+                self.sync_favorite_hearts()
+                self.refresh_playlists_sidebar()
+                self.refresh_current_list()
+            self.notify_undo("Quitada de «Canciones que te gustan»", undo)
+        else:
+            self.notify("Quitada de «Canciones que te gustan»")
         self.refresh_playlists_sidebar()
         self.refresh_current_list()

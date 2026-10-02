@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
 )
 
 from config import (
-    get_download_dir, get_audio_quality
+    get_download_dir, get_audio_quality, load_settings, save_settings
 )
 from services import backup_service, quality, storage_service
 from ui.dialogs import ask_confirm, show_message
@@ -132,6 +132,62 @@ class SettingsDialog(InlineDialog):
         self.perf_extra_lay = perf_lay
         root.addWidget(perf_box)
 
+        # --- Reproducción ---
+        play_box, play_lay = _group(
+            "Reproducción",
+            "Estas opciones también están en el botón del reloj de la barra de reproducción.")
+        self.chk_normalize = QCheckBox("Igualar el volumen entre canciones")
+        self.chk_normalize.setChecked(bool(load_settings().get("normalize_volume", True)))
+        self.chk_normalize.toggled.connect(lambda on: self.window_ref.set_normalize(on))
+        play_lay.addWidget(self.chk_normalize)
+        fade_row = QHBoxLayout()
+        fade_row.addWidget(QLabel("Fundido entre canciones"))
+        self.fade_combo = QComboBox()
+        for seconds, text in ((0, "Sin fundido"), (2, "2 segundos"), (4, "4 segundos"), (6, "6 segundos")):
+            self.fade_combo.addItem(text, seconds)
+        self.fade_combo.setCurrentIndex(max(0, self.fade_combo.findData(int(load_settings().get("fade_seconds", 0)))))
+        self.fade_combo.currentIndexChanged.connect(lambda _i: self.window_ref.set_fade_seconds(self.fade_combo.currentData()))
+        fade_row.addWidget(self.fade_combo)
+        fade_row.addStretch()
+        play_lay.addLayout(fade_row)
+        self.chk_notify = QCheckBox("Avisar al cambiar de canción")
+        self.chk_notify.setChecked(bool(load_settings().get("notify_track_change", True)))
+        self.chk_notify.toggled.connect(lambda on: self._save_flag("notify_track_change", on))
+        play_lay.addWidget(self.chk_notify)
+        self.chk_tray = QCheckBox("Al cerrar la ventana, seguir sonando en la bandeja del sistema")
+        self.chk_tray.setChecked(bool(load_settings().get("close_to_tray", False)))
+        self.chk_tray.toggled.connect(lambda on: self._save_flag("close_to_tray", on))
+        play_lay.addWidget(self.chk_tray)
+        root.addWidget(play_box)
+
+        # --- Accesibilidad ---
+        acc_box, acc_lay = _group(
+            "Accesibilidad",
+            "Hazlo todo más grande o con más contraste. El tamaño se aplica al reiniciar; el contraste, al instante. "
+            "Con las flechas ↑ ↓, Intro y Supr puedes mover las listas sin ratón.")
+        row_scale = QHBoxLayout()
+        row_scale.addWidget(QLabel("Tamaño de la aplicación"))
+        self.scale_combo = QComboBox()
+        for label, value in (("Normal", 1.0), ("Grande", 1.15), ("Muy grande", 1.3)):
+            self.scale_combo.addItem(label, value)
+        current_scale = float(load_settings().get("ui_scale", 1.0) or 1.0)
+        idx_scale = min(range(3), key=lambda i: abs(self.scale_combo.itemData(i) - current_scale))
+        self.scale_combo.setCurrentIndex(idx_scale)
+        self._scale_at_start = self.scale_combo.itemData(idx_scale)
+        self.scale_combo.currentIndexChanged.connect(self._scale_changed)
+        row_scale.addWidget(self.scale_combo)
+        row_scale.addStretch()
+        acc_lay.addLayout(row_scale)
+        self.btn_restart = _button("Reiniciar para aplicar el tamaño")
+        self.btn_restart.setVisible(False)
+        self.btn_restart.clicked.connect(lambda: self.window_ref.restart_app())
+        acc_lay.addWidget(self.btn_restart, alignment=Qt.AlignLeft)
+        self.chk_contrast = QCheckBox("Alto contraste (textos y bordes más claros)")
+        self.chk_contrast.setChecked(bool(load_settings().get("high_contrast", False)))
+        self.chk_contrast.toggled.connect(lambda on: self.window_ref.set_high_contrast(on))
+        acc_lay.addWidget(self.chk_contrast)
+        root.addWidget(acc_box)
+
         # --- Conexión ---
         net_box, net_lay = _group(
             "Conexión",
@@ -219,6 +275,19 @@ class SettingsDialog(InlineDialog):
         outer.addLayout(footer)
 
         self.refresh_space()
+
+    @staticmethod
+    def _save_flag(name: str, value: bool):
+        settings = load_settings()
+        settings[name] = bool(value)
+        save_settings(settings)
+
+    # ------------------------------------------------------------- tamaño
+    def _scale_changed(self, _index: int):
+        settings = load_settings()
+        settings["ui_scale"] = float(self.scale_combo.currentData())
+        save_settings(settings)
+        self.btn_restart.setVisible(abs(self.scale_combo.currentData() - self._scale_at_start) > 0.01)
 
     # ------------------------------------------------------------- tema
     def _pick_theme(self, key: str):

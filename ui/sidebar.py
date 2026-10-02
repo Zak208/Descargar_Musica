@@ -28,11 +28,14 @@ class SideListItem(QFrame):
     """Fila de la biblioteca: portada, nombre y tipo de lista (como en Spotify)."""
     clicked = Signal()
     context_requested = Signal(object)
+    track_dropped = Signal(object)       # canciones (lista) arrastradas y soltadas sobre esta lista
 
     def __init__(self, kind: str, list_id: str, title: str, subtitle: str, parent=None):
         super().__init__(parent)
         self.setObjectName("SideListItem")
         self.setAttribute(Qt.WA_StyledBackground, True)
+        self.accepts_tracks = kind in ("playlist", "favorites")
+        self.setAcceptDrops(self.accepts_tracks)
         self.setCursor(Qt.PointingHandCursor)
         self.setFixedHeight(THUMB + 14)
         lay = QHBoxLayout(self)
@@ -63,6 +66,32 @@ class SideListItem(QFrame):
 
     def contextMenuEvent(self, ev):
         self.context_requested.emit(ev.globalPos())
+
+    # ---- soltar canciones
+    def _set_drop(self, on: bool):
+        self.setProperty("drop", on)
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+    def dragEnterEvent(self, ev):
+        from ui.dragdrop import TRACK_MIME
+        if self.accepts_tracks and ev.mimeData().hasFormat(TRACK_MIME):
+            ev.acceptProposedAction()
+            self._set_drop(True)
+        else:
+            ev.ignore()
+
+    def dragLeaveEvent(self, ev):
+        self._set_drop(False)
+        super().dragLeaveEvent(ev)
+
+    def dropEvent(self, ev):
+        from ui.dragdrop import read_dropped_tracks
+        self._set_drop(False)
+        infos = read_dropped_tracks(ev.mimeData())
+        if infos:
+            ev.acceptProposedAction()
+            self.track_dropped.emit(infos)
 
 
 def _panel() -> tuple:

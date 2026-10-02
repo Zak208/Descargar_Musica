@@ -103,6 +103,10 @@ def build_home_page(self):
     self.home_mixes_box, self.home_mixes_row = _section(
         self, "Mixes hechos para ti", 292, "Creados a partir de la música que tienes y de lo que sigues")
     self.home_recents_box, self.home_recents_layout = _section(self, "Añadidas recientemente", 258)
+    self.home_top_box, self.home_top_layout = _section(
+        self, "Lo más escuchado", 258, "Lo que más has puesto (se calcula en tu equipo, no se envía a nadie)")
+    self.home_rediscover_box, self.home_rediscover_layout = _section(
+        self, "Redescubre", 258, "Canciones que llevas más de un mes sin escuchar")
     self.home_releases_box, self.home_releases_row = _section(
         self, "Novedades de los artistas que sigues", 262)
     self.home_because_layout = QVBoxLayout()

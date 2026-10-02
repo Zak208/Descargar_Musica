@@ -2,6 +2,7 @@
 import logging
 
 from ui import perf
+from services import library_db, local_mixes
 
 
 from services.artist_service import ArtistService
@@ -62,6 +63,13 @@ class HomeMixin:
         paths = recent
         self.home_recents_box.setVisible(bool(recent))
 
+        # Lo más escuchado y Redescubre (estadísticas locales)
+        self._fill_local_shelf(self.home_top_box, self.home_top_layout,
+                               local_mixes.smart_lists(self.library_items(), library_db.play_stats()), "top")
+        self._fill_local_shelf(self.home_rediscover_box, self.home_rediscover_layout,
+                               [("rediscover", "Redescubre", local_mixes.rediscover(self.library_items(), library_db.play_stats()))],
+                               "rediscover")
+
         # Accesos rápidos
         clear_layout(self.home_quick_grid)
         entries = [("favorites", "favorites", "Canciones que te gustan"), ("downloads", "downloads", "Mis descargas")]
@@ -105,6 +113,20 @@ class HomeMixin:
         parts.append(f"{len(PlaylistService.get_favorites())} favoritas")
         parts.append(f"{len(PlaylistService.get_playlists())} listas")
         self.home_stats_lbl.setText("Tu música: " + "  ·  ".join(parts) if items else "")
+
+    def _fill_local_shelf(self, box, layout, lists: list, key: str):
+        tracks = next((t for k, _n, t in lists if k == key), [])
+        clear_layout(layout)
+        for info in tracks[:14]:
+            card = RecentTrackCard(info)
+            card.clicked.connect(lambda path, shelf=tracks[:14]: self._play_from_shelf(shelf, path))
+            layout.addWidget(card)
+        box.setVisible(bool(tracks))
+
+    def _play_from_shelf(self, shelf: list, path: str):
+        item = next((i for i in shelf if i["local_path"] == path), None)
+        if item:
+            self.play_shelf(shelf, item)
 
     # ------------------------------------------------------ recomendaciones
     def refresh_recommendations(self, force: bool = False):

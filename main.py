@@ -115,6 +115,15 @@ def selftest() -> int:
 
 def main():
     logging.info("=== INICIANDO APLICACIÓN ===")
+
+    # Tamaño de la interfaz elegido en Ajustes → Accesibilidad (1,0 / 1,15 / 1,3)
+    try:
+        from config import load_settings
+        scale = float(load_settings().get("ui_scale", 1.0) or 1.0)
+        if abs(scale - 1.0) > 0.01 and "QT_SCALE_FACTOR" not in os.environ:
+            os.environ["QT_SCALE_FACTOR"] = f"{scale:.2f}"
+    except Exception:
+        pass
     
     # Soporte para pantallas de alta resolución (High DPI)
     QApplication.setHighDpiScaleFactorRoundingPolicy(

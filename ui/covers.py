@@ -97,8 +97,19 @@ def genre_cover(label: str, color_index: int, size: int = 140, radius: int = 12)
     return pix
 
 
+SMART_ICONS = {"week": "clock.svg", "untagged": "tag.svg", "long": "timer.svg", "top": "volume.svg",
+               "never": "music.svg", "rediscover": "refresh.svg"}
+
+
 def list_cover_pixmap(kind: str, list_id, size: int = 48, radius: int = 8, label: str = "") -> QPixmap:
     """Portada de una lista: imagen elegida (playlists), nombre del género o degradado con icono."""
+    if kind == "localmix":
+        return mix_cover(int(list_id or 0), size, radius)
+    if kind in ("smart", "artist_local", "album_local"):
+        idx = sum(ord(ch) for ch in str(list_id)) % len(MIX_COLORS)
+        c1, c2 = MIX_COLORS[idx]
+        icon_name = SMART_ICONS.get(str(list_id), "album.svg" if kind == "album_local" else "user.svg" if kind == "artist_local" else "music.svg")
+        return cover_tile(icon_name, c1, c2, size, radius)
     if kind == "genre":
         return genre_cover(label, int(list_id or 0), size, radius)
     if kind == "artist":

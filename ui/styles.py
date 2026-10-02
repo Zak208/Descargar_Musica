@@ -110,6 +110,10 @@ QFrame#SideListItem {
 QFrame#SideListItem:hover {
     background-color: rgba(255, 255, 255, 0.14);
 }
+QFrame#SideListItem[drop="true"] {
+    background-color: rgba(30, 215, 96, 0.22);
+    border: 1px dashed #1ED760;
+}
 QLabel#SideItemTitle {
     font-size: 13px;
     font-weight: 600;
@@ -219,6 +223,15 @@ QLabel#PanelArtistLink {
 }
 QLabel#PanelArtistLink:hover {
     color: #FFFFFF;
+}
+QFrame#NewListCard {
+    background-color: transparent;
+    border: 2px dashed #4A4A4A;
+    border-radius: 10px;
+}
+QFrame#NewListCard:hover {
+    background-color: rgba(255, 255, 255, 0.07);
+    border-color: #B3B3B3;
 }
 QFrame#OfflineBanner {
     background-color: rgba(255, 209, 102, 0.14);
@@ -1107,6 +1120,29 @@ def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
     return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
 
 
+# Alto contraste: los grises de los textos y bordes se aclaran para que se lean mucho mejor
+CONTRAST_MAP = {
+    "#B3B3B3": "#F0F0F0", "#A7A7A7": "#F0F0F0", "#A0A0A0": "#EAEAEA", "#8A8A8A": "#DCDCDC", "#888888": "#DCDCDC",
+    "#7A7A7A": "#D2D2D2", "#727272": "#CCCCCC", "#6A6A6A": "#C4C4C4", "#B0B0B0": "#EEEEEE",
+    "#3E3E3E": "#8A8A8A", "#383838": "#7A7A7A", "#3A3A3A": "#7A7A7A", "#4A4A4A": "#8A8A8A", "#2A2A2A": "#555555",
+}
+_CONTRAST_RE = None
+
+
+def contrast_stylesheet(qss: str) -> str:
+    """Aplica el alto contraste a una hoja de estilo (la principal o la de un widget)."""
+    import re
+    global _CONTRAST_RE
+    if _CONTRAST_RE is None:
+        _CONTRAST_RE = re.compile("|".join(re.escape(c) for c in CONTRAST_MAP), re.IGNORECASE)
+    return _CONTRAST_RE.sub(lambda m: CONTRAST_MAP[m.group(0).upper()], qss)
+
+
+def high_contrast_enabled() -> bool:
+    from config import load_settings
+    return bool(load_settings().get("high_contrast", False))
+
+
 def get_theme_stylesheet(theme_key: str = "spotify") -> str:
     cfg = THEME_CONFIGS.get(theme_key, THEME_CONFIGS["spotify"])
     from config import BASE_DIR
@@ -1123,6 +1159,8 @@ def get_theme_stylesheet(theme_key: str = "spotify") -> str:
     style = style.replace("#050505", QColor(cfg["bg_main"]).darker(260).name())
     r, g, b = _hex_to_rgb(cfg["accent"])
     style = style.replace("30, 215, 96", f"{r}, {g}, {b}")
+    if high_contrast_enabled():
+        style = contrast_stylesheet(style)
     return style
 
 

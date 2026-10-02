@@ -36,6 +36,8 @@ PRESETS = {
     "Cine": (5, 0, 4),
     "Electrónica": (5, -1, 4),
     "Jazz": (3, 0, 3),
+    "Auriculares": (2, 0, 1),
+    "Noche": (-3, 1, -3),
 }
 
 DEFAULT_SETTINGS = {"enabled": True, "preset": "Normal", "bass": 0, "mid": 0, "treble": 0}

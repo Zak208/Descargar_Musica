@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QListWidget, QListWidgetItem, QMenu
 )
 
+from services import recycle
 from services.playlist_service import PlaylistService
 from ui.animations import fade_in
 from ui.covers import list_cover_pixmap, tile_colors, MIX_COLORS, GENRE_COLORS
@@ -47,6 +48,90 @@ def _sort_value(key: str, item: dict):
     if key == "duration":
         return int(item.get("duration_secs", 0) or 0)
     return item.get("_order", 0)
+
+
+class TracksArea(QWidget):
+    """Zona de las filas. En una playlist con su orden propio se pueden soltar canciones aquí para reordenarlas:
+    una línea marca dónde caerán."""
+    reordered = Signal(list, int)        # (ids de las canciones, posición de destino)
+
+    def __init__(self, page, parent=None):
+        super().__init__(parent)
+        self.page = page
+        self.setAcceptDrops(True)
+        self.line = QFrame(self)
+        self.line.setObjectName("DropLine")
+        self.line.setFixedHeight(3)
+        self.line.setStyleSheet("background-color: #1ED760; border-radius: 1px;")
+        self.line.hide()
+
+    def _slot(self, y: int):
+        """(índice de destino, y de la línea) según la altura del ratón."""
+        rows = self.page._ordered_rows()
+        for i, row in enumerate(rows):
+            if y < row.y() + row.height() / 2:
+                return i, max(0, row.y() - 1)
+        last = rows[-1] if rows else None
+        return len(rows), (last.y() + last.height()) if last else 0
+
+    def _acceptable(self, ev) -> bool:
+        from ui.dragdrop import read_drop
+        data = read_drop(ev.mimeData())
+        return bool(data and self.page.reorder_enabled() and data.get("source")
+                    and tuple(data["source"]) == (self.page.kind, self.page.list_id))
+
+    def dragEnterEvent(self, ev):
+        if self._acceptable(ev):
+            ev.acceptProposedAction()
+        else:
+            ev.ignore()
+
+    def dragMoveEvent(self, ev):
+        if self._acceptable(ev):
+            _i, y = self._slot(int(ev.position().y()))
+            self.line.setGeometry(0, y, self.width(), 3)
+            self.line.show()
+            self.line.raise_()
+            ev.acceptProposedAction()
+
+    def dragLeaveEvent(self, ev):
+        self.line.hide()
+
+    def dropEvent(self, ev):
+        from ui.dragdrop import read_drop
+        self.line.hide()
+        if not self._acceptable(ev):
+            return
+        data = read_drop(ev.mimeData())
+        index, _y = self._slot(int(ev.position().y()))
+        ev.acceptProposedAction()
+        self.reordered.emit([str(t.get("id")) for t in data["tracks"]], index)
+
+
+class SelectionBar(QFrame):
+    """Barra que aparece al marcar varias canciones (Ctrl o Mayús + clic): acciones para todas a la vez."""
+
+    def __init__(self, page, parent=None):
+        super().__init__(parent)
+        self.page = page
+        self.setObjectName("OfflineBanner")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(14, 8, 10, 8)
+        lay.setSpacing(8)
+        self.count = QLabel("")
+        self.count.setStyleSheet("background: transparent; font-weight: 700;")
+        lay.addWidget(self.count)
+        lay.addStretch()
+        self.buttons = {}
+        for key, text in (("add", "Añadir a una lista"), ("queue", "Reproducir a continuación"), ("download", "Descargar"),
+                          ("remove", "Quitar de la lista"), ("trash", "Enviar a la papelera"), ("clear", "Cancelar")):
+            b = QPushButton(text)
+            b.setCursor(Qt.PointingHandCursor)
+            b.clicked.connect(lambda _=False, k=key: page.selection_action(k))
+            lay.addWidget(b)
+            self.buttons[key] = b
+        self.setVisible(False)
 
 
 class CoverTileButton(QPushButton):
@@ -413,7 +498,10 @@ class ListPage(QWidget):
         self.content_layout.addWidget(self.empty_btn, alignment=Qt.AlignHCenter)
         self.empty_btn.setVisible(False)
 
-        self.tracks_widget = QWidget()
+        self.selection_bar = SelectionBar(self)
+        self.content_layout.insertWidget(self.content_layout.indexOf(self.columns), self.selection_bar)
+        self.tracks_widget = TracksArea(self)
+        self.tracks_widget.reordered.connect(self._reorder)
         self.tracks_container = QVBoxLayout(self.tracks_widget)
         self.tracks_container.setContentsMargins(0, 0, 0, 0)
         self.tracks_container.setSpacing(2)
@@ -467,7 +555,7 @@ class ListPage(QWidget):
         if self.title_lbl.text() != name:
             self.title_lbl.setText(name)
         self.btn_add.setVisible(kind == "playlist")
-        self.btn_more.setVisible(kind == "playlist")
+        self.btn_more.setVisible(kind in ("playlist", "downloads"))
         self.btn_save.setVisible(kind in ("mix", "genre", "localmix", "smart", "artist_local", "album_local"))
         self.tabs_box.setVisible(kind in TAB_KINDS)
 
@@ -484,6 +572,8 @@ class ListPage(QWidget):
         self.tab = "downloaded" if (kind in TAB_KINDS and self.window_ref.is_offline()) else "all"
         self.sort_key, self.sort_desc = ("added", True) if kind in ("favorites", "downloads") else ("custom", False)
         self._materialized = ROW_BATCH
+        self.window_ref._selected_rows = []
+        self.selection_bar.setVisible(False)
         self._clear_cards()
         self._cover_sig = None
         self.items = []
@@ -626,6 +716,7 @@ class ListPage(QWidget):
                 card = TrackRow(item, self.window_ref, number=pos + 1, list_mode=True)
                 card.set_columns_visible(self._columns_shown)
                 card.context_provider = self._visible_items
+                card.drag_source = (self.kind, self.list_id)
                 card.set_playing(self.window_ref.is_current(card.item_info))
                 if self.kind == "playlist":
                     card.extra_menu = [("Quitar de esta lista", lambda it=item: self._remove_track(it))]
@@ -744,12 +835,145 @@ class ListPage(QWidget):
             self.download_all_requested.emit(missing)
 
     def _remove_track(self, item: dict):
-        if self.kind == "playlist" and PlaylistService.remove_track_from_playlist(self.list_id, str(item.get("id"))):
+        if self.kind != "playlist":
+            return
+        index = PlaylistService.track_index(self.list_id, str(item.get("id")))
+        stored = next((dict(t) for t in PlaylistService.get_playlists().get(self.list_id, {}).get("tracks", [])
+                       if str(t.get("id")) == str(item.get("id"))), None)
+        list_id = self.list_id
+        if PlaylistService.remove_track_from_playlist(list_id, str(item.get("id"))):
             self.window_ref.reload_current_list()
-            self.window_ref.notify("Quitada de la lista")
+
+            def undo():
+                if stored and PlaylistService.insert_track(list_id, stored, index):
+                    self.window_ref.reload_current_list()
+            self.window_ref.notify_undo("Quitada de la lista", undo)
+
+    # ----------------------------------------------- herramientas de la biblioteca
+    def _find_duplicates(self):
+        from ui.library_tools import DuplicatesDialog
+        DuplicatesDialog(self.window_ref).open()
+
+    def _fix_tags(self):
+        from ui.library_tools import TagFixDialog
+        TagFixDialog(self.window_ref).open()
+
+    # --------------------------------------------------- reordenar la playlist
+    def reorder_enabled(self) -> bool:
+        """Solo se puede reordenar una playlist propia que se ve en su orden, sin filtros ni búsquedas."""
+        return (self.kind == "playlist" and self.sort_key == "custom" and not self.sort_desc
+                and not self.search.text().strip() and self.tab == "all")
+
+    def _reorder(self, ids: list, index: int):
+        if PlaylistService.move_tracks(self.list_id, ids, index):
+            self.window_ref.reload_current_list()
+
+    # ----------------------------------------------- selección de varias canciones
+    def update_selection_bar(self, rows: list):
+        multi = len(rows) >= 2
+        self.selection_bar.setVisible(multi)
+        if not multi:
+            return
+        infos = [r.item_info for r in rows]
+        self.selection_bar.count.setText(f"{len(rows)} canciones seleccionadas")
+        missing = [i for i in infos if not i.get("local_path")]
+        b = self.selection_bar.buttons
+        b["download"].setVisible(bool(missing))
+        b["remove"].setVisible(self.kind == "playlist")
+        b["trash"].setVisible(self.kind == "downloads")
+
+    def selection_action(self, key: str):
+        w = self.window_ref
+        rows = w._alive_rows()
+        infos = [dict(r.item_info) for r in rows]
+        if key == "clear" or not infos:
+            w.clear_selection()
+            return
+        if key == "queue":
+            for info in infos:
+                w.playback_queue.append(info)
+            w.notify(f"{len(infos)} canciones sonarán a continuación")
+        elif key == "download":
+            w.start_batch_download([i for i in infos if not i.get("local_path")])
+        elif key == "add":
+            self._add_selection_menu(infos)
+            return
+        elif key == "remove" and self.kind == "playlist":
+            removed = []
+            for info in infos:
+                idx = PlaylistService.track_index(self.list_id, str(info.get("id")))
+                stored = next((dict(t) for t in PlaylistService.get_playlists().get(self.list_id, {}).get("tracks", [])
+                               if str(t.get("id")) == str(info.get("id"))), None)
+                if stored and PlaylistService.remove_track_from_playlist(self.list_id, str(info.get("id"))):
+                    removed.append((idx, stored))
+            w.clear_selection()
+            w.reload_current_list()
+            list_id = self.list_id
+
+            def undo():
+                for idx, stored in sorted(removed, key=lambda x: x[0]):
+                    PlaylistService.insert_track(list_id, stored, idx)
+                w.reload_current_list()
+            w.notify_undo(f"{len(removed)} canciones quitadas de la lista", undo)
+            return
+        elif key == "trash":
+            count = sum(1 for i in infos if i.get("local_path") and recycle.move_to_recycle_bin(i["local_path"]))
+            w.clear_selection()
+            w.rescan_library()
+            w.notify(f"{count} canciones enviadas a la papelera de Windows")
+            return
+        w.clear_selection()
+
+    def _add_selection_menu(self, infos: list):
+        w = self.window_ref
+        menu = QMenu(self)
+        fav = menu.addAction(icon("heart.svg"), "Canciones que te gustan")
+        fav.triggered.connect(lambda: (w.add_tracks_to_list("favorites", None, infos), w.clear_selection()))
+        for pid, data in PlaylistService.get_playlists().items():
+            if self.kind == "playlist" and pid == self.list_id:
+                continue
+            act = menu.addAction(icon("playlist.svg"), data.get("name", "Lista"))
+            act.triggered.connect(lambda _=False, p=pid: (w.add_tracks_to_list("playlist", p, infos), w.clear_selection()))
+        menu.exec(self.selection_bar.buttons["add"].mapToGlobal(self.selection_bar.buttons["add"].rect().bottomLeft()))
+
+    # ----------------------------------------------------------- teclado
+    def _ordered_rows(self) -> list:
+        return sorted(self._cards.values(), key=lambda c: c.y())
+
+    def handle_key(self, event) -> bool:
+        """↑ ↓ mueven la fila marcada, Intro la reproduce y Supr la quita de la lista (si es tuya)."""
+        key = event.key()
+        if key not in (Qt.Key_Up, Qt.Key_Down, Qt.Key_Return, Qt.Key_Enter, Qt.Key_Delete):
+            return False
+        rows = [r for r in self._ordered_rows() if r.isEnabled()]
+        if not rows:
+            return False
+        current = getattr(self.window_ref, "_selected_row", None)
+        idx = rows.index(current) if current in rows else -1
+        if key in (Qt.Key_Up, Qt.Key_Down):
+            idx = (idx + (1 if key == Qt.Key_Down else -1)) if idx >= 0 else 0
+            idx = max(0, min(len(rows) - 1, idx))
+            self.window_ref.select_row(rows[idx])
+            self.scroll.ensureWidgetVisible(rows[idx], 0, 60)
+            return True
+        if idx < 0:
+            return False
+        if key in (Qt.Key_Return, Qt.Key_Enter):
+            rows[idx].play()
+            return True
+        if key == Qt.Key_Delete and self.kind == "playlist":
+            self._remove_track(rows[idx].item_info)
+            return True
+        return False
 
     def _show_more(self):
         menu = QMenu(self)
+        if self.kind == "downloads":
+            menu.addAction(icon("copy.svg"), "Buscar canciones repetidas").triggered.connect(self._find_duplicates)
+            menu.addAction(icon("tag.svg"), "Mejorar los datos (artista, álbum y portada)").triggered.connect(self._fix_tags)
+            menu.addAction(icon("folder.svg"), "Abrir la carpeta de música").triggered.connect(self.window_ref.open_music_folder)
+            menu.exec(self.btn_more.mapToGlobal(self.btn_more.rect().bottomLeft()))
+            return
         menu.addAction(icon("edit.svg"), "Cambiar nombre").triggered.connect(self.rename_list)
         menu.addAction(icon("palette.svg"), "Cambiar imagen").triggered.connect(self._tile_clicked)
         if PlaylistService.get_cover_path(self.list_id):
@@ -780,10 +1004,4 @@ class ListPage(QWidget):
             self.window_ref.open_list("playlist", self.list_id)
 
     def delete_list(self):
-        if ask_confirm(self, "Eliminar lista",
-                       f"¿Seguro que quieres eliminar «{self.list_name}»?\nTus canciones descargadas no se borran.",
-                       ok="Eliminar", danger=True):
-            PlaylistService.delete_playlist(self.list_id)
-            self.window_ref.refresh_playlists_sidebar()
-            self.window_ref.open_library()
-            self.window_ref.notify("Lista eliminada")
+        self.window_ref.delete_playlist(self.list_id)

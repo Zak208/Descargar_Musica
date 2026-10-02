@@ -178,6 +178,16 @@ def build_player_bar(self):
     self.btn_panel.clicked.connect(self.toggle_now_playing)
     tools_layout.addWidget(self.btn_panel)
 
+    # Más opciones: temporizador, velocidad, repetir tramo, fundido y volumen igualado
+    self.btn_options = QPushButton("")
+    self.btn_options.setIcon(icon("timer.svg"))
+    self.btn_options.setIconSize(QSize(18, 18))
+    self.btn_options.setObjectName("ControlBtn")
+    self.btn_options.setToolTip("Temporizador, velocidad y más")
+    self.btn_options.setCursor(Qt.PointingHandCursor)
+    self.btn_options.clicked.connect(self.open_playback_options)
+    tools_layout.addWidget(self.btn_options)
+
     # Ecualizador de audio
     self.btn_eq = QPushButton("")
     self.btn_eq.setIcon(icon("sliders.svg"))

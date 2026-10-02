@@ -35,6 +35,11 @@ CREATE TABLE IF NOT EXISTS plays (
     first_ts REAL DEFAULT 0,
     last_ts REAL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS loudness (
+    path TEXT PRIMARY KEY,
+    mtime REAL NOT NULL,
+    lufs REAL NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_tracks_artist ON tracks(artist);
 CREATE INDEX IF NOT EXISTS idx_tracks_album ON tracks(album);
 """
@@ -120,6 +125,25 @@ def top_played(limit: int = 30) -> list:
                 "SELECT path FROM plays WHERE count>0 ORDER BY count DESC, last_ts DESC LIMIT ?", (limit,))]
     except Exception:
         return []
+
+
+def get_loudness(path: str, mtime: float):
+    """Volumen (LUFS) ya medido de una canción, o None si no se midió o el archivo cambió."""
+    try:
+        with connect() as con:
+            row = con.execute("SELECT mtime, lufs FROM loudness WHERE path=?", (path,)).fetchone()
+        return float(row["lufs"]) if row and abs(row["mtime"] - mtime) < 1 else None
+    except Exception:
+        return None
+
+
+def set_loudness(path: str, mtime: float, lufs: float) -> None:
+    try:
+        with connect() as con:
+            con.execute("INSERT INTO loudness(path, mtime, lufs) VALUES (?,?,?) "
+                        "ON CONFLICT(path) DO UPDATE SET mtime=excluded.mtime, lufs=excluded.lufs", (path, mtime, lufs))
+    except Exception as e:
+        logger.warning(f"No se pudo guardar el volumen medido: {e}")
 
 
 def clear_plays() -> None:

@@ -3,6 +3,28 @@
 Formato: `MAYOR.MENOR.PARCHE`. MAYOR = cambios que rompen datos o uso, MENOR = funciones nuevas, PARCHE = arreglos.
 Cada versión subida a GitHub tiene su etiqueta `vX.Y.Z` (pestaña *Releases/Tags*).
 
+## 1.9.0
+**Más cómoda**
+- Deshacer: al quitar una canción de una lista, quitar de favoritas, dejar de seguir a un artista o eliminar una lista, aparece «Deshacer» (también Ctrl+Z durante 90 s). Ya no hay que confirmar.
+- Borrar una canción la manda a la papelera de Windows (recuperable).
+- Arrastrar y soltar: canciones sobre una lista de la barra lateral, enlaces de YouTube/Spotify sobre la ventana y archivos de audio para añadirlos a tu música. Ctrl+V pega un enlace en cualquier sitio.
+- Teclado en las listas: ↑ ↓ mueven, Intro reproduce, Supr quita de la playlist, Esc quita la selección.
+- Accesibilidad: tamaño de la aplicación (100/115/130 %), alto contraste y nombres para lectores de pantalla.
+- La biblioteca invita a crear tu primera lista.
+
+**Reproductor**
+- Botón del reloj en la barra: temporizador para dormir (con bajada gradual del volumen y «al terminar la canción»), velocidad, repetir un tramo A-B y fundido entre canciones.
+- Igualar el volumen entre canciones (se mide una vez con FFmpeg y se guarda).
+- Control multimedia de Windows (título y portada en el panel del sistema; botones de auriculares y teclados) y controles en la bandeja (opción de seguir sonando al cerrar).
+- Nuevos ajustes del ecualizador: Auriculares y Noche.
+
+**Biblioteca**
+- Selección múltiple (Ctrl/Mayús + clic) con barra de acciones: añadir a una lista, reproducir a continuación, descargar, quitar, papelera. Se pueden arrastrar varias a la vez.
+- Arrastrar canciones dentro de una playlist para reordenarlas.
+- Listas automáticas: añadidas esta semana, canciones largas, lo más escuchado, aún sin escuchar, sin artista/álbum.
+- «Lo más escuchado» y «Redescubre» en Inicio (estadísticas locales; no se envía nada).
+- «Buscar canciones repetidas» y «Mejorar los datos (artista, álbum y portada)» en Mis descargas.
+
 ## 1.8.0
 **Datos seguros y copia de seguridad**
 - Tus datos ahora viven en `%APPDATA%\Descargador de Música` (antes, junto al `.exe`): actualizar o mover el programa nunca los borra. La primera vez se traen solos desde la carpeta antigua.

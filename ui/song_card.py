@@ -323,6 +323,22 @@ class SongResultCard(QFrame):
             if w is not None:
                 w.setVisible(visible)
 
+    def mousePressEvent(self, event):
+        self._press_pos = event.position().toPoint() if event.button() == Qt.LeftButton else None
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        """Arrastrar el resultado hacia una lista de la barra lateral lo añade a ella."""
+        pos = getattr(self, "_press_pos", None)
+        if (event.buttons() & Qt.LeftButton) and pos is not None:
+            from PySide6.QtWidgets import QApplication
+            if (event.position().toPoint() - pos).manhattanLength() > QApplication.startDragDistance() + 6:
+                self._press_pos = None
+                from ui.dragdrop import start_track_drag
+                start_track_drag(self, dict(self.item_info))
+                return
+        super().mouseMoveEvent(event)
+
     def contextMenuEvent(self, event):
         if self.parent_window and hasattr(self.parent_window, "open_track_menu"):
             self.parent_window.open_track_menu(self.item_info, event.globalPos(), getattr(self, "extra_menu", None))

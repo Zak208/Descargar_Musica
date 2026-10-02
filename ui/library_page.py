@@ -23,6 +23,7 @@ class ListCard(QFrame):
         self.kind = kind
         self.list_id = list_id
         self.setObjectName("CoverCard")
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self.setCursor(Qt.PointingHandCursor)
         self.setFixedWidth(CARD_W)
         lay = QVBoxLayout(self)
@@ -56,6 +57,42 @@ class ListCard(QFrame):
 
     def contextMenuEvent(self, ev):
         self.context_requested.emit(self.kind, self.list_id, ev.globalPos())
+
+
+class NewListCard(QFrame):
+    """Tarjeta de bienvenida cuando todavía no hay ninguna lista propia: invita a crear la primera."""
+    clicked = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("NewListCard")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedWidth(CARD_W)
+        self.setMinimumHeight(TILE + 70)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(14, 14, 14, 14)
+        lay.setAlignment(Qt.AlignCenter)
+        plus = QLabel()
+        plus.setPixmap(icon("plus_circle.svg", "#B3B3B3", 64).pixmap(44, 44))
+        plus.setAlignment(Qt.AlignCenter)
+        plus.setStyleSheet("background: transparent;")
+        lay.addWidget(plus)
+        text = QLabel("Crea tu primera lista")
+        text.setAlignment(Qt.AlignCenter)
+        text.setWordWrap(True)
+        text.setStyleSheet("font-weight: 700; background: transparent;")
+        lay.addWidget(text)
+        sub = QLabel("Para guardar tus canciones por ambiente, artista o lo que quieras")
+        sub.setObjectName("CoverSub")
+        sub.setAlignment(Qt.AlignCenter)
+        sub.setWordWrap(True)
+        lay.addWidget(sub)
+
+    def mouseReleaseEvent(self, ev):
+        if ev.button() == Qt.LeftButton and self.rect().contains(ev.pos()):
+            self.clicked.emit()
+        super().mouseReleaseEvent(ev)
 
 
 class LibraryPage(QWidget):
@@ -103,7 +140,7 @@ class LibraryPage(QWidget):
         main.addWidget(scroll, stretch=1)
 
     def load(self, favorites_count: int, downloads_count: int, playlists: dict, artists: list = None,
-             animate: bool = True):
+             animate: bool = True, smart: list = None):
         while self.grid.count():
             item = self.grid.takeAt(0)
             w = item.widget()
@@ -120,6 +157,8 @@ class LibraryPage(QWidget):
 
         for art in artists or []:
             cards.append(("artist", art["id"], art["name"], -1))
+        for key, name, count in smart or []:         # listas automáticas (se arman solas con tu música)
+            cards.append(("smart", key, name, count))
 
         for i, (kind, list_id, name, count) in enumerate(cards):
             card = ListCard(kind, list_id, name, count)
@@ -128,6 +167,11 @@ class LibraryPage(QWidget):
             self.grid.addWidget(card, i // COLUMNS, i % COLUMNS)
             if animate:
                 fade_in(card, 260, min(i, 10) * 45)
+        if not playlists:       # todavía no hay listas propias: se invita a crear la primera
+            i = len(cards)
+            invite = NewListCard()
+            invite.clicked.connect(self.new_list_requested.emit)
+            self.grid.addWidget(invite, i // COLUMNS, i % COLUMNS)
 
     def _context(self, kind: str, list_id: str, pos):
         if kind == "artist":

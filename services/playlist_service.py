@@ -105,6 +105,77 @@ class PlaylistService:
         return False
 
     @classmethod
+    def snapshot_playlist(cls, playlist_id: str):
+        """Copia de una lista (para poder deshacer su borrado)."""
+        import copy
+        data = cls.get_playlists().get(playlist_id)
+        return copy.deepcopy(data) if data else None
+
+    @classmethod
+    def restore_playlist(cls, playlist_id: str, data: dict) -> bool:
+        playlists = cls.get_playlists()
+        if playlist_id in playlists or not data:
+            return False
+        playlists[playlist_id] = data
+        cls._save_json(PLAYLISTS_FILE, playlists)
+        return True
+
+    @classmethod
+    def insert_track(cls, playlist_id: str, item: dict, index: int) -> bool:
+        """Vuelve a poner una canción en su sitio de la lista (para deshacer «quitar de la lista»)."""
+        playlists = cls.get_playlists()
+        if playlist_id not in playlists:
+            return False
+        tracks = playlists[playlist_id].setdefault("tracks", [])
+        if any(str(t.get("id")) == str(item.get("id")) for t in tracks):
+            return False
+        tracks.insert(max(0, min(index, len(tracks))), item)
+        cls._save_json(PLAYLISTS_FILE, playlists)
+        return True
+
+    @classmethod
+    def move_tracks(cls, playlist_id: str, track_ids: list, to_index: int) -> bool:
+        """Mueve canciones dentro de la lista a la posición `to_index` (la posición se cuenta antes de moverlas)."""
+        playlists = cls.get_playlists()
+        if playlist_id not in playlists:
+            return False
+        tracks = playlists[playlist_id].get("tracks", [])
+        wanted = [str(t) for t in track_ids]
+        moving = [t for t in tracks if str(t.get("id")) in wanted]
+        if not moving:
+            return False
+        before = sum(1 for i, t in enumerate(tracks) if i < to_index and str(t.get("id")) in wanted)
+        rest = [t for t in tracks if str(t.get("id")) not in wanted]
+        at = max(0, min(len(rest), to_index - before))
+        playlists[playlist_id]["tracks"] = rest[:at] + moving + rest[at:]
+        cls._save_json(PLAYLISTS_FILE, playlists)
+        return True
+
+    @classmethod
+    def track_index(cls, playlist_id: str, track_id: str) -> int:
+        tracks = cls.get_playlists().get(playlist_id, {}).get("tracks", [])
+        return next((i for i, t in enumerate(tracks) if str(t.get("id")) == str(track_id)), -1)
+
+    @classmethod
+    def restore_favorite(cls, item: dict) -> bool:
+        """Vuelve a poner una canción en favoritas, tal cual estaba (para deshacer)."""
+        favs = cls.get_favorites()
+        if any(str(t.get("id")) == str(item.get("id")) for t in favs):
+            return False
+        favs.insert(0, item)
+        cls._save_json(FAVORITES_FILE, favs)
+        return True
+
+    @classmethod
+    def get_favorite(cls, track_id: str, title: str = ""):
+        for t in cls.get_favorites():
+            if track_id and str(t.get("id")) == str(track_id):
+                return dict(t)
+            if title and t.get("title", "").strip().lower() == title.strip().lower():
+                return dict(t)
+        return None
+
+    @classmethod
     def rename_playlist(cls, playlist_id: str, new_name: str) -> bool:
         playlists = cls.get_playlists()
         if playlist_id in playlists:

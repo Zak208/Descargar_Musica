@@ -26,7 +26,8 @@ from services.catalog_service import (
 from services.ffmpeg_service import FFmpegService
 from services.metadata_service import MetadataService
 from services.playlist_service import PlaylistService
-from ui.styles import MAIN_STYLE, get_theme_stylesheet, THEME_CONFIGS, set_active_theme, accent, retheme_stylesheet
+from ui.styles import (MAIN_STYLE, get_theme_stylesheet, THEME_CONFIGS, set_active_theme, accent, retheme_stylesheet,
+                       contrast_stylesheet, high_contrast_enabled)
 from ui.icons import icon
 from version import __version__
 from ui.home_shelves import TrackTile
@@ -37,6 +38,8 @@ from ui.home_mixin import HomeMixin
 from ui.search_mixin import SearchMixin
 from ui.downloads_mixin import DownloadsMixin
 from ui.offline_mixin import OfflineMixin
+from ui.usability_mixin import UsabilityMixin
+from ui.playback_options import PlaybackOptionsMixin
 from ui.artist_page import ArtistProfilePage
 from ui.album_page import AlbumDetailsPage
 from ui.list_page import ListPage
@@ -80,6 +83,8 @@ class ThemeEventFilter(QObject):
             if qss and "#" in qss and len(qss) < 20000 and not obj.property("noRetheme"):
                 from ui.styles import _active_theme
                 new_qss = retheme_stylesheet(qss, _active_theme)
+                if high_contrast_enabled():
+                    new_qss = contrast_stylesheet(new_qss)
                 if new_qss != qss:
                     obj.setStyleSheet(new_qss)
         return False
@@ -97,12 +102,14 @@ class FFmpegDownloadWorker(QThread):
             self.finished_signal.emit(False)
 
 
-class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin, DownloadsMixin, OfflineMixin):
+class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin, DownloadsMixin, OfflineMixin,
+                 UsabilityMixin, PlaybackOptionsMixin):
     def __init__(self):
         super().__init__()
         web.warm_up()          # prepara en segundo plano la conexión segura compartida (ahorra CPU en cada petición)
         self.setWindowTitle(f"Descargador de Música {__version__}")
         self.setWindowIcon(QIcon(resource_path("assets/logo.jpg")))
+        self.setAcceptDrops(True)       # se pueden soltar enlaces de YouTube/Spotify o archivos de audio
         self.resize(1360, 860)
         self.setStyleSheet(MAIN_STYLE)
 
@@ -130,12 +137,14 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self.tray_icon = QSystemTrayIcon(self)
         self.tray_icon.setIcon(QIcon(resource_path(os.path.join("assets", "icons", "music.svg"))))
         self.tray_icon.setVisible(True)
+        self.init_playback_options()        # temporizador, fundido, volumen igualado, control multimedia y bandeja
 
         self.equalizer_dialog = None
 
         # Historial, contexto de reproducción y biblioteca (ver playback_mixin / lists_mixin)
         self.init_playback_state()
         self.init_offline_state()
+        self.init_usability_state()
         self.init_lists_state()
         self.init_home_state()
         self.init_search_state()
@@ -157,7 +166,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self.current_theme = get_theme()
         set_active_theme(self.current_theme)
         self._theme_filter = ThemeEventFilter(self)
-        self._set_theme_filter(self.current_theme != "spotify")   # con el tema por defecto no hace falta vigilar nada
+        self._set_theme_filter(self.current_theme != "spotify" or high_contrast_enabled())   # con el tema por defecto no hace falta vigilar nada
         self.toast = Toast(self)
         self.downloads = DownloadsTracker(self)
         self._download_info_reset = QTimer(self)
@@ -165,6 +174,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self._download_info_reset.timeout.connect(self.update_header_info)
         self.init_ui()
         self.restore_geometry_early()
+        self.apply_accessibility_names()
         self._reload_pending_keys()
         if self.is_offline():                       # por si se abre ya sin conexión (o con el modo sin conexión activado)
             QTimer.singleShot(0, lambda: self._on_connectivity(False))
@@ -270,6 +280,34 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
 
         build_player_bar(self)
 
+    # ---------- soltar enlaces y archivos sobre la ventana ----------
+    def dragEnterEvent(self, event):
+        from ui.dragdrop import can_accept_window_drop
+        if can_accept_window_drop(event.mimeData()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        from ui.dragdrop import handle_window_drop
+        if handle_window_drop(self, event.mimeData()):
+            event.acceptProposedAction()
+
+    def import_audio_files(self, files: list):
+        """Archivos de audio soltados sobre la ventana: se ofrecen para añadirlos a tu música (se copian)."""
+        from ui.dragdrop import copy_into
+        n = len(files)
+        if not ask_confirm(self, "Añadir a tu música",
+                           f"¿Quieres añadir {n} canción{'es' if n != 1 else ''} a tu música? Se copiarán a tu carpeta de música.",
+                           ok="Añadir"):
+            return
+        copied = copy_into(str(get_download_dir()), files)
+        if copied:
+            self.notify(f"{len(copied)} canción{'es' if len(copied) != 1 else ''} añadida{'s' if len(copied) != 1 else ''} a tu música")
+            self.rescan_library()
+        else:
+            self.notify("Esas canciones ya estaban en tu música.")
+
     def keyPressEvent(self, event):
         """Atajos de teclado globales para control multimedia."""
         focus_w = QApplication.focusWidget()
@@ -278,6 +316,21 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             return
 
         key = event.key()
+        if event.modifiers() == Qt.ControlModifier and key == Qt.Key_V:
+            self.paste_link_from_clipboard()
+            event.accept()
+            return
+        if event.modifiers() == Qt.ControlModifier and key == Qt.Key_Z:
+            self.perform_undo()
+            event.accept()
+            return
+        if event.modifiers() == Qt.NoModifier and self.list_key_navigation(event):
+            event.accept()
+            return
+        if key == Qt.Key_Escape and len(self._alive_rows()) > 0 and self.stacked_widget.currentIndex() == 4:
+            self.clear_selection()
+            event.accept()
+            return
         if key == Qt.Key_Space:
             self.toggle_play_pause()
             event.accept()
@@ -516,7 +569,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
 
         self.is_mini_mode = not self.is_mini_mode
         extras = [
-            self.btn_shuffle, self.btn_loop, self.btn_lyrics, self.btn_queue, self.btn_eq, self.btn_panel,
+            self.btn_shuffle, self.btn_loop, self.btn_lyrics, self.btn_queue, self.btn_eq, self.btn_panel, self.btn_options,
             self.vol_icon, self.volume_slider, self.player_status, self.visualizer,
             self.player_heart_btn, self.btn_close_player,
         ]
@@ -715,6 +768,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         target_widget = self.stacked_widget.widget(target_index)
         if not target_widget:
             return
+        QTimer.singleShot(0, self.apply_accessibility_names)
         self.stacked_widget.setCurrentIndex(target_index)
 
         eff = QGraphicsOpacityEffect(target_widget)
@@ -841,6 +895,23 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             self.equalizer_dialog.eq_changed.connect(self.on_eq_changed)
         self.equalizer_dialog.exec()
 
+    def set_high_contrast(self, enabled: bool):
+        """Alto contraste: textos y bordes más claros. Se aplica al instante."""
+        from config import load_settings, save_settings
+        settings = load_settings()
+        settings["high_contrast"] = bool(enabled)
+        save_settings(settings)
+        self._set_theme_filter(self.current_theme != "spotify" or enabled)
+        self.setStyleSheet(get_theme_stylesheet(self.current_theme))
+        for w in self.findChildren(QWidget):
+            qss = w.styleSheet()
+            if qss and len(qss) < 20000 and not w.property("noRetheme"):
+                new_qss = retheme_stylesheet(qss, self.current_theme)
+                if enabled:
+                    new_qss = contrast_stylesheet(new_qss)
+                if new_qss != qss:
+                    w.setStyleSheet(new_qss)
+
     def _set_theme_filter(self, active: bool):
         app = QApplication.instance()
         if active:
@@ -853,7 +924,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         if theme_key:
             set_theme(theme_key)
             set_active_theme(theme_key)
-            self._set_theme_filter(theme_key != "spotify")
+            self._set_theme_filter(theme_key != "spotify" or high_contrast_enabled())
             self.current_theme = theme_key
             self.setStyleSheet(get_theme_stylesheet(theme_key))
             accent_hex = THEME_CONFIGS.get(theme_key, {}).get("accent", "#1ED760")
@@ -869,7 +940,9 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
                         w.setStyleSheet(new_qss)
 
     def notify_track_changed(self, title: str, artist: str):
-        """Muestra una notificación nativa de Windows en la bandeja del sistema."""
+        """Muestra una notificación nativa de Windows en la bandeja del sistema (se puede desactivar en Ajustes)."""
+        if not load_settings().get("notify_track_change", True):
+            return
         try:
             if hasattr(self, 'tray_icon') and self.tray_icon.isVisible():
                 msg = f"{artist} - {title}" if artist else title
@@ -976,9 +1049,18 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
                 QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.dirname(path)))
 
     def delete_file(self, path: str):
-        """Borra la canción de tu música (pide confirmación)."""
+        """Manda la canción a la papelera de Windows (se puede recuperar desde allí)."""
+        from services import recycle
+        name = os.path.basename(path)
+        if recycle.move_to_recycle_bin(path):
+            self.rescan_library()
+            margin = (self.player_bar.height() + 24) if self.player_bar.isVisible() else 40
+            self.toast.show_message(f"«{name}» está en la papelera de Windows", bottom_margin=margin,
+                                    action=("Ver papelera", recycle.open_recycle_bin))
+            return
+        # sin papelera disponible (otra unidad, otro sistema): se pide confirmación antes de borrar para siempre
         if ask_confirm(self, "Borrar de tu música",
-                       f"¿Seguro que quieres borrar «{os.path.basename(path)}» de tu música?\nEsta acción no se puede deshacer.",
+                       f"¿Seguro que quieres borrar «{name}» de tu música?\nEsta acción no se puede deshacer.",
                        ok="Borrar", danger=True):
             try:
                 os.remove(path)
@@ -1167,16 +1249,65 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         except RuntimeError:
             pass
 
-    def select_row(self, row):
-        """Marca una fila de canción (solo una a la vez)."""
-        prev = getattr(self, "_selected_row", None)
-        if prev is not None and prev is not row:
+    def _alive_rows(self) -> list:
+        alive = []
+        for r in getattr(self, "_selected_rows", []):
             try:
-                prev.set_selected(False)
+                r.isVisible()
+                alive.append(r)
             except RuntimeError:
                 pass
-        self._selected_row = row
-        row.set_selected(True)
+        return alive
+
+    def _rows_in_order(self, row) -> list:
+        if row in self.page_playlist._cards.values():
+            return self.page_playlist._ordered_rows()
+        parent = row.parentWidget()
+        siblings = [c for c in (parent.findChildren(TrackRow) if parent is not None else []) if c.parentWidget() is parent]
+        return sorted(siblings, key=lambda c: c.y())
+
+    def select_row(self, row, mode: str = "single"):
+        """Marca filas de canción. «single»: solo esa; «toggle» (Ctrl): suma o quita; «range» (Mayús): desde la última."""
+        old = self._alive_rows()
+        current = list(old)
+        if mode == "toggle":
+            if row in current:
+                current.remove(row)
+            else:
+                current.append(row)
+        elif mode == "range" and current:
+            ordered = self._rows_in_order(row)
+            if row in ordered and current[-1] in ordered:
+                a, b = sorted((ordered.index(current[-1]), ordered.index(row)))
+                current = ordered[a:b + 1]
+            else:
+                current = [row]
+        else:
+            current = [row]
+        for r in old:
+            if r not in current:
+                try:
+                    r.set_selected(False)
+                except RuntimeError:
+                    pass
+        for r in current:
+            r.set_selected(True)
+        self._selected_rows = current
+        self._selected_row = current[-1] if current else None
+        self.page_playlist.update_selection_bar(current)
+
+    def clear_selection(self):
+        for r in self._alive_rows():
+            try:
+                r.set_selected(False)
+            except RuntimeError:
+                pass
+        self._selected_rows = []
+        self._selected_row = None
+        self.page_playlist.update_selection_bar([])
+
+    def selected_infos(self) -> list:
+        return [dict(r.item_info) for r in self._alive_rows()]
 
     def _on_track_changed(self):
         """La canción que suena cambió: se marca en la lista y se actualiza el panel lateral."""
@@ -1188,6 +1319,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
                     row.set_playing(self.is_current(row.item_info))
                 except RuntimeError:
                     pass
+        self.on_track_started()
         if (not self.now_panel.isVisible() and self.current_item_info and not self.is_mini_mode
                 and not getattr(self, "_panel_user_closed", False)):
             self.set_now_playing_visible(True)     # al reproducir, el panel aparece solo (como en Spotify)
@@ -1291,6 +1423,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self._apply_eq_if_needed()
 
     def update_position(self, position_ms):
+        self.playback_tick(position_ms)
         if getattr(self, "_in_background", False):
             dlg = self.lyrics_dialog
             if not (dlg is not None and dlg.isVisible()):
@@ -1358,13 +1491,17 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         if status == QMediaPlayer.InvalidMedia:
             self.handle_player_error(QMediaPlayer.FormatError, "Formato multimedia no compatible.")
         elif status == QMediaPlayer.EndOfMedia:
-            if self.is_loop_enabled:
+            if self._sleep_end_of_track:
+                self.on_end_of_track()          # el temporizador pide parar al terminar esta canción
+            elif self.is_loop_enabled:
                 self.player.setPosition(0)
                 self.player.play()
             else:
+                self.on_end_of_track()          # marca el avance natural (para el fundido de entrada)
                 self.play_next()
 
     def handle_playback_state(self, state):
+        self.update_system_status(state == QMediaPlayer.PlayingState)
         if state == QMediaPlayer.PlayingState:
             self.info_anim.stop()
             self.info_anim.setEndValue(1.0)
@@ -1399,9 +1536,6 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         else:
             self.player.play()
 
-    def change_volume(self, value):
-        self.audio_output.setVolume(value / 100.0)
-
     def _safe_set_btn_text(self, btn, text, icon_name=None):
         if btn:
             try:
@@ -1433,8 +1567,13 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self._on_track_changed()
 
     def closeEvent(self, event):
+        if self.should_close_to_tray():          # «seguir sonando en la bandeja»
+            event.ignore()
+            self.hide_to_tray()
+            return
         logging.info("Cerrando aplicación...")
         self.save_session()
+        self.shutdown_playback_options()
 
         if hasattr(self, 'catalog_worker') and self.catalog_worker and self.catalog_worker.isRunning():
             self.catalog_worker.is_cancelled = True
