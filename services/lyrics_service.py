@@ -3,6 +3,7 @@ import time
 import logging
 import requests
 from services import http
+from services.artist_names import split_artists
 from services.title_clean import strip_junk
 from PySide6.QtCore import QThread, Signal
 
@@ -142,8 +143,7 @@ def _norm(text: str) -> str:
 
 
 def _artist_parts(text: str) -> set:
-    parts = re.split(r"\s*(?:&|,|;|/|\bfeat\.?|\bft\.?|\by\b|\band\b|\bx\b)\s*", (text or "").lower())
-    return {_norm(p) for p in parts if _norm(p)}
+    return {_norm(p) for p in split_artists(text, words=True) if _norm(p)}
 
 
 def _same_artist(wanted: str, found: str) -> bool:

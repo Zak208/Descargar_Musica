@@ -121,16 +121,18 @@ def atomic_write_json(path: Path, data) -> None:
             raise
 
 
-def read_json(path: Path, default=None):
+def read_json(path: Path, default=None, kind=None):
     """Lee un JSON. Si está estropeado, lo aparta como `.corrupto-<fecha>` (no se pierde ni se pisa) y prueba con la copia
-    `.bak`; si tampoco sirve devuelve `default`. Si no existe devuelve `default`."""
+    `.bak`; si tampoco sirve devuelve `default`. Si no existe devuelve `default`. Con `kind` (dict o list) se
+    exige ese tipo de datos."""
     path = Path(path)
     with _io_lock:
         if not path.exists():
             return default
         try:
             with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
+            return data if kind is None or isinstance(data, kind) else default
         except Exception as e:
             logging.getLogger(__name__).error(f"Archivo estropeado {path.name}: {e}")
         try:

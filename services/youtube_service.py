@@ -1,15 +1,15 @@
 import os
 import re
-import json
 import logging
 import threading
 from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
+from services.artist_names import first_artist
 from services.ffmpeg_service import FFmpegService
 from services.metadata_service import MetadataService
 from services.title_clean import has_junk
-from config import HISTORY_FILE, get_download_dir, get_audio_quality, get_organize_mode
+from config import HISTORY_FILE, read_json, get_download_dir, get_audio_quality, get_organize_mode
 from services import quality as quality_service
 
 logger = logging.getLogger(__name__)
@@ -132,26 +132,13 @@ def clean_youtube_title(raw_title: str, raw_uploader: str = "") -> tuple[str, st
 
 def check_history(url_or_id: str) -> dict | None:
     """Comprueba si un video ya fue descargado previamente."""
-    if not HISTORY_FILE.exists():
-        return None
-    try:
-        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-            history = json.load(f)
-            return history.get(url_or_id)
-    except Exception:
-        return None
+    return read_json(HISTORY_FILE, {}, dict).get(url_or_id)
 
 
 def save_to_history(video_id: str, title: str, file_path: str):
     """Guarda el registro de la descarga en el archivo de historial."""
     with history_lock:
-        history = {}
-        if HISTORY_FILE.exists():
-            try:
-                with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-                    history = json.load(f)
-            except Exception:
-                history = {}
+        history = read_json(HISTORY_FILE, {}, dict)
 
         history[video_id] = {
             "title": title,
@@ -400,7 +387,7 @@ class DownloadWorker(QThread):
     def target_dir(self, artist: str, album: str) -> Path:
         """Por defecto todo va junto en la carpeta principal; si el usuario lo pide, por artista o artista y álbum."""
         base = Path(self.output_dir)
-        first = re.split(r"\s*(?:&|,|;|/|\bfeat\.?|\bft\.?)\s*", artist or "", maxsplit=1)[0].strip()
+        first = first_artist(artist)
         if self.organize == "artist":
             return base / sanitize_filename(first or "Artista desconocido")
         if self.organize == "artist_album":

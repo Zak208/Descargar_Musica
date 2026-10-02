@@ -4,6 +4,7 @@ import os
 import re
 from collections import defaultdict
 
+from services.artist_names import first_artist
 from services.library_search import fold
 from services.title_clean import strip_junk
 
@@ -17,8 +18,7 @@ def normalize_title(title: str) -> str:
 
 
 def primary_artist(artist: str) -> str:
-    first = re.split(r"\s*(?:&|,|;|/|\bfeat\.?|\bft\.?|\by\b|\band\b|\bx\b)\s*", artist or "", maxsplit=1)[0]
-    return re.sub(r"\W+", "", fold(first))
+    return re.sub(r"\W+", "", fold(first_artist(artist, words=True)))
 
 
 def _audio_info(path: str) -> dict:

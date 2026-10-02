@@ -167,11 +167,6 @@ def set_loudness(path: str, mtime: float, lufs: float) -> None:
         logger.warning(f"No se pudo guardar el volumen medido: {e}")
 
 
-def clear_plays() -> None:
-    with connect() as con:
-        con.execute("DELETE FROM plays")
-
-
 def delete_index() -> None:
     """Borra el índice (se reconstruye solo leyendo las etiquetas otra vez). Las reproducciones se conservan."""
     try:

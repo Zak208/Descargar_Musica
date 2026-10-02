@@ -1,9 +1,8 @@
 """Descargas pendientes: lo que no se pudo bajar por falta de internet (o porque pediste «descargar» sin conexión)
 queda guardado y se reanuda solo cuando vuelve la conexión, incluso si cierras la aplicación."""
-import json
 import logging
 
-from config import APP_DATA_DIR, atomic_write_json
+from config import APP_DATA_DIR, atomic_write_json, read_json
 
 PENDING_FILE = APP_DATA_DIR / "descargas_pendientes.json"
 MAX_PENDING = 500
@@ -17,12 +16,7 @@ def _key(info: dict) -> str:
 
 
 def load() -> list:
-    try:
-        with open(PENDING_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, list) else []
-    except (OSError, ValueError):
-        return []
+    return read_json(PENDING_FILE, [], list)
 
 
 def _save(items: list) -> None:

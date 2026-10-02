@@ -1,9 +1,8 @@
 """Artistas que sigue el usuario (como 'seguir' en Spotify). Se guardan en un archivo JSON local."""
-import json
 import logging
 from datetime import datetime
 
-from config import ARTISTS_FILE, atomic_write_json
+from config import ARTISTS_FILE, atomic_write_json, read_json
 
 logger = logging.getLogger(__name__)
 
@@ -11,15 +10,7 @@ logger = logging.getLogger(__name__)
 class ArtistService:
     @staticmethod
     def _load() -> dict:
-        try:
-            if ARTISTS_FILE.exists():
-                with open(ARTISTS_FILE, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                if isinstance(data, dict):
-                    return data
-        except Exception as e:
-            logger.warning(f"No se pudieron leer los artistas seguidos: {e}")
-        return {}
+        return read_json(ARTISTS_FILE, {}, dict)
 
     @staticmethod
     def _save(data: dict) -> None:

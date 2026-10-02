@@ -4,7 +4,6 @@ Usa las APIs públicas de Deezer (artistas relacionados, canciones populares, li
 No hace falta ninguna cuenta ni clave.
 """
 import hashlib
-import json
 import logging
 import re
 import time
@@ -14,10 +13,11 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
 import requests
+from services.artist_names import first_artist
 from services import http
 from PySide6.QtCore import QThread, Signal
 
-from config import RECOMMENDATIONS_FILE, atomic_write_json
+from config import RECOMMENDATIONS_FILE, atomic_write_json, read_json
 
 logger = logging.getLogger(__name__)
 
@@ -36,8 +36,7 @@ def norm(text: str) -> str:
 
 def primary_artist(name: str) -> str:
     """'Milo j & Yahritza Y Su Esencia' -> 'Milo j'; 'A feat. B' -> 'A'."""
-    name = re.split(r"\s+(?:&|y|x|feat\.?|ft\.?|con|with)\s+|,|;|/", name or "", maxsplit=1, flags=re.IGNORECASE)[0]
-    return name.strip()
+    return first_artist(name, words=True)
 
 
 def _get(url: str, **params) -> dict:
@@ -105,27 +104,17 @@ def signature(seeds: list, followed_ids: list) -> str:
 
 def load_cache(sig: str) -> dict | None:
     """Recomendaciones guardadas, si son recientes y corresponden a los mismos gustos."""
-    try:
-        if RECOMMENDATIONS_FILE.exists():
-            with open(RECOMMENDATIONS_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            fresh = time.time() - data.get("generated_at", 0) < CACHE_HOURS * 3600
-            if fresh and data.get("signature") == sig:
-                return data
-    except Exception:
-        pass
+    data = read_json(RECOMMENDATIONS_FILE, None, dict)
+    if data:
+        fresh = time.time() - data.get("generated_at", 0) < CACHE_HOURS * 3600
+        if fresh and data.get("signature") == sig:
+            return data
     return None
 
 
 def load_stale_cache() -> dict | None:
     """Última recomendación guardada aunque sea antigua (para mostrar algo al instante sin conexión)."""
-    try:
-        if RECOMMENDATIONS_FILE.exists():
-            with open(RECOMMENDATIONS_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-    except Exception:
-        pass
-    return None
+    return read_json(RECOMMENDATIONS_FILE, None, dict)
 
 
 # ---------------------------------------------------------------------- trabajo
@@ -425,12 +414,7 @@ class ArtistInfoWorker(QThread):
 
     @classmethod
     def _load_cache(cls) -> dict:
-        try:
-            with open(cls._cache_path(), "r", encoding="utf-8") as f:
-                data = json.load(f)
-            return data if isinstance(data, dict) else {}
-        except (OSError, ValueError):
-            return {}
+        return read_json(cls._cache_path(), {}, dict)
 
     @classmethod
     def _store(cls, key: str, info: dict):

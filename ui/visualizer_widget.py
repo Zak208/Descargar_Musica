@@ -46,14 +46,6 @@ class AudioVisualizerWidget(QWidget):
         self.accent_color = QColor(hex_color)
         self.update()
 
-    def set_enabled(self, enabled: bool):
-        self.enabled = bool(enabled)
-        self.setVisible(self.enabled)
-        if not self.enabled:
-            self._stop()
-        elif self.is_playing:
-            self.set_playing(True)
-
     def set_window_active(self, active: bool):
         """Con la ventana minimizada se detiene la animación (y se retoma al volver)."""
         self.paused_by_window = not active

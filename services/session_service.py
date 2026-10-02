@@ -1,8 +1,7 @@
 """Recuerda cómo dejaste la aplicación (volumen, canción y punto en que iba, cola, ventana...) para seguir donde lo dejaste."""
-import json
 import logging
 
-from config import APP_DATA_DIR, atomic_write_json
+from config import APP_DATA_DIR, atomic_write_json, read_json
 
 SESSION_FILE = APP_DATA_DIR / "sesion.json"
 MAX_CONTEXT = 500
@@ -11,12 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 def load() -> dict:
-    try:
-        with open(SESSION_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else {}
-    except (OSError, ValueError):
-        return {}
+    return read_json(SESSION_FILE, {}, dict)
 
 
 def save(data: dict) -> None:

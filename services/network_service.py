@@ -7,7 +7,7 @@ conexión en Ajustes.
 import logging
 import socket
 
-from PySide6.QtCore import QMetaObject, QObject, QThread, QTimer, Qt, Signal, Slot
+from PySide6.QtCore import QMetaObject, QObject, QThread, QTimer, Qt, Signal
 
 from config import load_settings, save_settings
 
@@ -125,12 +125,6 @@ class NetworkMonitor(QObject):
             self._probe_online = True
             self.check_now()
         self._emit_if_changed()
-
-    @Slot()
-    def report_failure(self):
-        """Una petición falló por la red: se comprueba una vez si de verdad no hay internet."""
-        if self._effective() and (self._probe_thread is None or not self._probe_thread.isRunning()):
-            self.check_now()
 
     def check_now(self):
         if self._forced_offline:

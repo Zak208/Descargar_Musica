@@ -514,9 +514,6 @@ class TabStrip(QWidget):
             self._move_to(obj, animate=False)
         return False
 
-    def _checked(self):
-        return next((b for b in self.buttons.values() if b.isChecked()), None)
-
     def _move_to(self, btn, animate: bool):
         target = btn.geometry()
         if not target.isValid() or target.width() < 4:

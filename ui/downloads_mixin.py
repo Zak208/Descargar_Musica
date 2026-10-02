@@ -20,7 +20,6 @@ class DownloadsMixin:
         self.batch_queue = []
         self.batch_total = 0
         self.batch_completed_count = 0
-        self.batch_active_workers = 0
         self.batch_paused = False
         self._batch_workers = []
         self.max_parallel_workers = get_parallel_downloads()
@@ -147,7 +146,6 @@ class DownloadsMixin:
             item = self.batch_queue.pop(0)
             worker = DownloadWorker(item, str(get_download_dir()), get_audio_quality())
             self._batch_workers.append(worker)
-            self.batch_active_workers = len(self._batch_workers)
             self.downloads.track(worker, item)
             _ACTIVE_THREADS.add(worker)
             worker.finished_signal.connect(lambda res, w=worker: self.on_parallel_worker_finished(res, w))
@@ -160,14 +158,11 @@ class DownloadsMixin:
             self.refresh_sidebar_library()
         self._refresh_queue_controls()
 
-    # nombre antiguo, por compatibilidad
-    download_next_parallel_worker = _fill_batch_workers
 
     def on_parallel_worker_finished(self, result: dict, worker):
         _ACTIVE_THREADS.discard(worker)
         if worker in self._batch_workers:
             self._batch_workers.remove(worker)
-        self.batch_active_workers = len(self._batch_workers)
         self._settle_pending(result, worker.item_info)
         self.batch_completed_count += 1
         if result.get("success") and result.get("warning"):

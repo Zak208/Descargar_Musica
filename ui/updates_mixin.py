@@ -56,7 +56,6 @@ class UpdatesMixin:
         except (AttributeError, RuntimeError):
             pass
         self._pending_engine = engine_new
-        self._pending_app = app_new
         dlg = getattr(self, "help_dialog", None)
         if dlg is not None:
             dlg.btn_engine.setVisible(bool(engine_new))

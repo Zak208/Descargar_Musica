@@ -2,12 +2,11 @@
 import os
 import re
 
-import json
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QMenu, QFileDialog
 
-from config import HISTORY_FILE, get_download_dir
+from config import HISTORY_FILE, read_json, get_download_dir
 from services import library_db, local_mixes
 from services.library_service import LibraryScanWorker, LibraryWatcher
 from services.recommendation_service import AlbumResolver, ArtistResolver
@@ -129,14 +128,7 @@ class ListsMixin:
     def history_map(self) -> dict:
         """Historial de descargas (se lee una sola vez y se guarda en memoria)."""
         if self._history_cache is None:
-            data = {}
-            try:
-                if HISTORY_FILE.exists():
-                    with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-            except Exception:
-                data = {}
-            self._history_cache = data if isinstance(data, dict) else {}
+            self._history_cache = read_json(HISTORY_FILE, {}, dict)
         return self._history_cache
 
     def _library_index(self) -> dict:

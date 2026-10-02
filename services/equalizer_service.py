@@ -1,6 +1,5 @@
 """Ecualizador real: genera una copia temporal del audio con ffmpeg aplicando graves/medios/agudos."""
 import hashlib
-import json
 import logging
 import os
 import subprocess
@@ -8,7 +7,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
 
-from config import APP_DATA_DIR, EQUALIZER_FILE, atomic_write_json
+from config import APP_DATA_DIR, EQUALIZER_FILE, atomic_write_json, read_json
 from services.ffmpeg_service import FFmpegService
 
 logger = logging.getLogger(__name__)
@@ -49,20 +48,17 @@ def bands_from_tone(bass: float, mid: float, treble: float) -> list[float]:
 
 def load_eq_settings() -> dict:
     data = dict(DEFAULT_SETTINGS)
+    saved = read_json(EQUALIZER_FILE, {}, dict)
     try:
-        if EQUALIZER_FILE.exists():
-            with open(EQUALIZER_FILE, "r", encoding="utf-8") as f:
-                saved = json.load(f)
-            if isinstance(saved, dict):
-                if "bass" in saved:
-                    data.update({k: saved[k] for k in DEFAULT_SETTINGS if k in saved})
-                    data["enabled"] = True   # el ecualizador está siempre activo; en 0/0/0 el sonido no se toca
-                # compatibilidad con el formato antiguo de 10 bandas
-                elif isinstance(saved.get("values"), list) and len(saved["values"]) == 10:
-                    v = saved["values"]
-                    data["bass"] = round(sum(v[0:3]) / 3)
-                    data["mid"] = round(sum(v[4:7]) / 3)
-                    data["treble"] = round(sum(v[7:10]) / 3)
+        if "bass" in saved:
+            data.update({k: saved[k] for k in DEFAULT_SETTINGS if k in saved})
+            data["enabled"] = True   # el ecualizador está siempre activo; en 0/0/0 el sonido no se toca
+        # compatibilidad con el formato antiguo de 10 bandas
+        elif isinstance(saved.get("values"), list) and len(saved["values"]) == 10:
+            v = saved["values"]
+            data["bass"] = round(sum(v[0:3]) / 3)
+            data["mid"] = round(sum(v[4:7]) / 3)
+            data["treble"] = round(sum(v[7:10]) / 3)
     except Exception as e:
         logger.warning(f"No se pudo leer el ecualizador: {e}")
     return data

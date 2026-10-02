@@ -11,7 +11,7 @@ import hashlib
 import os
 import re
 
-from config import APP_DATA_DIR, atomic_write_json
+from config import APP_DATA_DIR, atomic_write_json, read_json
 
 LYRICS_DIR = APP_DATA_DIR / "letras"
 _TS = re.compile(r"^\s*\[(\d+):(\d+(?:\.\d+)?)\]\s*(.*)$")
@@ -29,13 +29,8 @@ def _path(key: str):
 
 
 def load(key: str) -> dict | None:
-    try:
-        import json
-        with open(_path(key), encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) and data.get("text") else None
-    except (OSError, ValueError):
-        return None
+    data = read_json(_path(key), None, dict)
+    return data if data and data.get("text") else None
 
 
 def save(key: str, text: str, source: str) -> dict:

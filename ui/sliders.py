@@ -96,11 +96,6 @@ class SmoothSlider(QSlider):
             self._marks = (a, b)
             self.update()
 
-    # -- geometría
-    def _ratio(self) -> float:
-        span = self.maximum() - self.minimum()
-        return 0.0 if span <= 0 else (self.value() - self.minimum()) / span
-
     def _value_at(self, x: float) -> int:
         width = max(1.0, self.width() - 2 * self.PAD)
         ratio = max(0.0, min(1.0, (x - self.PAD) / width))
