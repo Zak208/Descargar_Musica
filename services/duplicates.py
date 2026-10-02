@@ -47,7 +47,7 @@ def find_duplicates(items: list) -> list:
         if len(key) >= 3:
             buckets[key].append(it)
     groups = []
-    for key, members in buckets.items():
+    for members in buckets.values():
         if len(members) < 2:
             continue
         # mismo artista principal (o artista desconocido en alguna de las dos)
@@ -58,7 +58,7 @@ def find_duplicates(items: list) -> list:
                 artist = "?"
             by_artist[artist].append(it)
         unknown = by_artist.pop("?", [])
-        for artist, same in by_artist.items():
+        for same in by_artist.values():
             pool = same + unknown if len(by_artist) == 1 else same
             if len(pool) >= 2:
                 groups.append(pool)

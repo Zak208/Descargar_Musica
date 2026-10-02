@@ -5,7 +5,7 @@ import os
 
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QColor, QPainter
-from PySide6.QtWidgets import QDialog, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QWidget
+from PySide6.QtWidgets import QDialog, QHBoxLayout, QVBoxLayout, QPushButton, QWidget
 
 from ui.ambient import AmbientBackdrop, IdleHider
 from ui.controls import GlowCover, PlayPauseButton

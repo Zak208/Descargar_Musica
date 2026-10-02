@@ -1,7 +1,7 @@
 """Widgets de la pantalla de inicio: tarjetas de portada y carga de canciones recientes."""
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QFrame, QVBoxLayout, QLabel
+from PySide6.QtWidgets import QFrame, QVBoxLayout
 
 from ui.controls import CoverLabel
 from ui.covers import placeholder_cover

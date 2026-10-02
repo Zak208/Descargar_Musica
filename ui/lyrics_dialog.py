@@ -5,7 +5,7 @@ from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QScrollArea, QWidget, QSizePolicy, QProgressBar
+    QPushButton, QScrollArea, QWidget, QProgressBar
 )
 from services.lyrics_service import LyricsWorker
 from ui.ambient import AmbientBackdrop, IdleHider
@@ -353,11 +353,3 @@ class LyricsDialog(QDialog, AmbientBackdrop):
             return
         self.follower.update(current_ms)
         self.active_index = self.follower.active
-
-    def _center_on(self, lbl):
-        try:
-            bar = self.scroll_area.verticalScrollBar()
-            target = lbl.y() + lbl.height() // 2 - self.scroll_area.viewport().height() // 2
-            bar.setValue(max(0, target))
-        except RuntimeError:
-            pass

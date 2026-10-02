@@ -14,7 +14,7 @@ from PySide6.QtCore import Qt, QUrl, QSize, QRectF
 from PySide6.QtGui import QPixmap, QDesktopServices, QPainter, QPainterPath
 from PySide6.QtWidgets import (
     QSizePolicy,
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QProgressBar, QMenu
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QMenu
 )
 
 from config import get_download_dir, get_audio_quality

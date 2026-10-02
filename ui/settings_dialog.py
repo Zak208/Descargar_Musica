@@ -259,6 +259,27 @@ class SettingsDialog(InlineDialog):
         upd_lay.addWidget(self.chk_auto_engine)
         root.addWidget(upd_box)
 
+        # --- Avanzado (YouTube) ---
+        adv_box, adv_lay = _group(
+            "Avanzado: acceso a YouTube",
+            "Si YouTube empieza a rechazar descargas, prueba el modo automático. Las cookies del navegador sirven para vídeos "
+            "con restricción de edad; solo se leen en tu equipo y nunca se guardan ni se envían a ningún otro sitio.")
+        self.yt_client_combo = QComboBox()
+        self.yt_client_combo.addItem("Normal (recomendado)", "android_web")
+        self.yt_client_combo.addItem("Automático (que elija yt-dlp)", "auto")
+        self.yt_client_combo.setCurrentIndex(max(0, self.yt_client_combo.findData(load_settings().get("yt_client", "android_web"))))
+        self.yt_client_combo.currentIndexChanged.connect(lambda _i: self._save_value("yt_client", self.yt_client_combo.currentData()))
+        adv_lay.addWidget(self.yt_client_combo)
+        self.cookies_combo = QComboBox()
+        self.cookies_combo.addItem("No usar cookies del navegador", "")
+        for key, name in (("chrome", "Google Chrome"), ("edge", "Microsoft Edge"), ("firefox", "Firefox"),
+                          ("brave", "Brave"), ("opera", "Opera"), ("vivaldi", "Vivaldi")):
+            self.cookies_combo.addItem(f"Usar las cookies de {name}", key)
+        self.cookies_combo.setCurrentIndex(max(0, self.cookies_combo.findData(load_settings().get("cookies_browser", ""))))
+        self.cookies_combo.currentIndexChanged.connect(lambda _i: self._save_value("cookies_browser", self.cookies_combo.currentData()))
+        adv_lay.addWidget(self.cookies_combo)
+        root.addWidget(adv_box)
+
         # --- Espacio ---
         space_box, space_lay = _group(
             "Espacio que ocupa la aplicación",

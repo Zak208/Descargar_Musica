@@ -1,7 +1,6 @@
 import re
 import json
 import logging
-import requests
 from services import http
 
 logger = logging.getLogger(__name__)

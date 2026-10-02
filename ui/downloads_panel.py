@@ -5,7 +5,6 @@ from PySide6.QtWidgets import (
 )
 
 from services import pending_downloads
-from ui import motion
 from ui.animations import flash
 from ui.downloadfx import SmoothProgress, StepDots, step_for
 from ui.friendly import friendly_error

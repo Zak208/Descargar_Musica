@@ -1,7 +1,6 @@
 """Portadas de las listas: degradado con icono, o la imagen que haya elegido el usuario (playlists)."""
 import os
 
-import requests
 from services import http
 from PySide6.QtCore import Qt, QThread, Signal, QRectF
 from PySide6.QtGui import QPixmap, QPainter, QLinearGradient, QColor, QPainterPath, QImage, QFont

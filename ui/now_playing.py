@@ -21,7 +21,6 @@ from ui.lyric_line import LyricLine
 from ui.lyric_follow import LyricsFollower
 from ui import motion
 from ui.anim_clock import clock
-from ui.styles import accent
 from ui.textfx import CountLabel, DotsLabel, grow_underline
 from ui.widgets import ElidedLabel
 

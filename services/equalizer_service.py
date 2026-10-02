@@ -86,7 +86,7 @@ def rendered_path_for(src: str, bands: list[float]) -> Path:
         mtime = os.path.getmtime(src)
     except OSError:
         mtime = 0
-    key = hashlib.sha1(f"{os.path.abspath(src)}|{mtime}|{bands}".encode("utf-8")).hexdigest()[:20]
+    key = hashlib.sha1(f"{os.path.abspath(src)}|{mtime}|{bands}".encode()).hexdigest()[:20]
     return EQ_CACHE_DIR / f"{key}.wav"
 
 

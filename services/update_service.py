@@ -101,13 +101,6 @@ def latest_app_version() -> str | None:
     return None
 
 
-def app_update_available() -> str | None:
-    latest = latest_app_version()
-    if latest and ytdlp_loader.parse_version(latest) > ytdlp_loader.parse_version(__version__):
-        return latest
-    return None
-
-
 class UpdateCheckWorker(QThread):
     """Mira si hay versión nueva de la aplicación y del motor de descargas. `result(app, ytdlp)`: las versiones nuevas
     (o cadena vacía)."""

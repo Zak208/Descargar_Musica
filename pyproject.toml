@@ -1,0 +1,20 @@
+# Herramientas de calidad del proyecto (no cambia cómo se ejecuta la aplicación).
+[tool.ruff]
+line-length = 140
+target-version = "py312"
+extend-exclude = ["venv", "dist_app", "dist_nuevo", "build_tmp", "app_data"]
+
+[tool.ruff.lint]
+# F = errores de código (nombres sin definir, imports sin usar...), E9 = errores de sintaxis,
+# B = fallos típicos, UP = sintaxis moderna, SIM/C4 = simplificaciones.
+select = ["F", "E9", "B", "UP", "C4", "SIM"]
+ignore = [
+    "B008", "B904", "B905",        # estilo de argumentos / raise from / zip estricto: no aportan aquí
+    "SIM105", "SIM108", "SIM102", "SIM117", "SIM118",
+    "UP015", "UP035", "UP006", "UP007",
+    "C408", "C416", "C419",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"dev_tools/*" = ["F401", "E402", "B", "SIM", "UP", "C4"]
+"main.py" = ["E402"]

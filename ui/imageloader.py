@@ -8,7 +8,6 @@ import hashlib
 import threading
 from collections import OrderedDict
 
-import requests
 from services import http
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Qt, Signal, QTimer, QRectF
 from PySide6.QtGui import QImage, QPixmap, QPainter, QPainterPath

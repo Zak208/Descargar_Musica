@@ -3,12 +3,15 @@
 Dos copias abiertas compartirían (y pisarían) las mismas listas, ajustes y base de datos. Si se abre una segunda, avisa a
 la primera para que se muestre y se cierra. Al reiniciarse la propia aplicación, la nueva espera unos segundos a que la
 vieja termine de cerrar."""
+import hashlib
+
 from PySide6.QtCore import QLockFile, QObject, Signal
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 
 from config import APP_DATA_DIR
 
-SERVER_NAME = "DescargadorMusica-instancia-unica"
+# el nombre depende de la carpeta de datos: dos copias con datos distintos (pruebas, otro usuario) no se molestan entre sí
+SERVER_NAME = "DescargadorMusica-" + hashlib.sha1(str(APP_DATA_DIR).lower().encode("utf-8", "ignore")).hexdigest()[:12]
 
 
 class SingleInstance(QObject):

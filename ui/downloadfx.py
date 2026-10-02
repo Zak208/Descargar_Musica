@@ -44,7 +44,7 @@ class SmoothProgress(QWidget):
         span = max(1, self._max - self._min)
         target = max(0.0, min(1.0, (value - self._min) / span))
         self._target = target * span + self._min
-        self._set_indeterminate(False if self._max != self._min else True)
+        self._set_indeterminate(self._max == self._min)
         if not motion.enabled() or not self.isVisible():
             self._shown = target
             self.update()

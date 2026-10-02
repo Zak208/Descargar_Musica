@@ -1,12 +1,11 @@
 """Más opciones de reproducción: temporizador para dormir, velocidad, repetir un tramo, fundido entre canciones,
 igualar el volumen entre canciones, control multimedia de Windows y controles en la bandeja del sistema."""
-import logging
 import math
 import os
 import time
 
 from PySide6.QtCore import QBuffer, QIODevice, QEasingCurve, QTimer, QUrl, QVariantAnimation, Qt
-from PySide6.QtGui import QAction, QActionGroup, QIcon
+from PySide6.QtGui import QAction, QActionGroup
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 

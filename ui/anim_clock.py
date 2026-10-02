@@ -97,11 +97,6 @@ class AnimClock(QObject):
                 motion.cap_session(motion.SOFT)
                 self.degraded.emit(0)
 
-    def reset_speed(self):
-        self._step = 0
-        self._timer.setInterval(STEPS[0])
-
-
 _clock = None
 
 

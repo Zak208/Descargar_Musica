@@ -36,6 +36,30 @@ def _host_of(text: str) -> str:
         return ""
 
 
+def _without_client(opts: dict) -> dict:
+    """Para el reintento: si el modo alternativo es «dejar que yt-dlp elija», hay que quitar el cliente forzado."""
+    return opts if "extractor_args" in opts else {"extractor_args": {}, **opts}
+
+
+BROWSERS = ("chrome", "edge", "firefox", "brave", "opera", "vivaldi")
+
+
+def yt_access_options(alternate: bool = False) -> dict:
+    """Cómo se presenta la aplicación ante YouTube. Por defecto usa los clientes «android» y «web», que hasta ahora funcionan
+    bien; en Ajustes → Avanzado se puede dejar que yt-dlp elija solo (si YouTube cambia algo) y usar las cookies de tu
+    navegador (para vídeos con restricción de edad). `alternate=True` prueba justo lo contrario: se usa al reintentar."""
+    from config import load_settings
+    settings = load_settings()
+    auto = settings.get("yt_client", "android_web") == "auto"
+    if alternate:
+        auto = not auto
+    opts = {} if auto else {"extractor_args": {"youtube": {"player_client": ["android", "web"]}}}
+    browser = settings.get("cookies_browser", "")
+    if browser in BROWSERS:
+        opts["cookiesfrombrowser"] = (browser,)
+    return opts
+
+
 def is_youtube_url(text: str) -> bool:
     """Verifica si el texto introducido es un enlace de YouTube (el servidor tiene que ser de YouTube, no basta con
     que el texto lo mencione)."""
@@ -164,11 +188,7 @@ class SearchWorker(QThread):
                 'skip_download': True,
                 'socket_timeout': 15,
                 'retries': 3,
-                'extractor_args': {
-                    'youtube': {
-                        'player_client': ['android', 'web']
-                    }
-                }
+                **yt_access_options(),
             }
 
             from services.spotify_service import (
@@ -301,11 +321,7 @@ class PreviewAudioWorker(QThread):
                 'no_warnings': True,
                 'socket_timeout': 15,
                 'retries': 3,
-                'extractor_args': {
-                    'youtube': {
-                        'player_client': ['android', 'web']
-                    }
-                }
+                **yt_access_options(),
             }
             with _yt().YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(self.url, download=False)
@@ -403,7 +419,7 @@ class DownloadWorker(QThread):
             return [url]
         try:
             opts = {"quiet": True, "no_warnings": True, "extract_flat": "in_playlist", "skip_download": True,
-                    "socket_timeout": 15, "extractor_args": {"youtube": {"player_client": ["android", "web"]}}}
+                    "socket_timeout": 15, **yt_access_options()}
             with _yt().YoutubeDL(opts) as ydl:
                 info = ydl.extract_info("ytsearch6:" + url[len("ytsearch1:"):], download=False)
             ranked = rank_candidates((info or {}).get("entries") or [], expected)
@@ -467,7 +483,7 @@ class DownloadWorker(QThread):
             'no_warnings': True,
             'keepvideo': False,
             'noplaylist': True,
-            'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
+            **yt_access_options(),
             'progress_hooks': [self._on_progress],
             'postprocessors': postprocessors,
             'socket_timeout': 20,
@@ -486,7 +502,8 @@ class DownloadWorker(QThread):
                 if self.is_cancelled:
                     raise RuntimeError("Descarga cancelada por el usuario")
                 try:
-                    with _yt().YoutubeDL(ydl_opts) as ydl:
+                    opts = ydl_opts if attempt == 1 else {**ydl_opts, **_without_client(yt_access_options(alternate=attempt % 2 == 0))}
+                    with _yt().YoutubeDL(opts) as ydl:
                         info = ydl.extract_info(candidate, download=True)
                         if info and 'entries' in info and info['entries']:
                             info = info['entries'][0]

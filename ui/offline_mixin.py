@@ -6,7 +6,7 @@
   * La búsqueda pasa a buscar solo dentro de tu música descargada.
   * Las descargas que pidas (o que fallen por falta de red) quedan pendientes y se reanudan solas.
 """
-from PySide6.QtCore import Qt, QSize, QTimer, QObject, QEvent
+from PySide6.QtCore import Qt, QTimer, QObject, QEvent
 from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QLabel, QPushButton, QWidget as QWidget_
 
 from services import library_search, local_mixes, network_service, pending_downloads, library_db

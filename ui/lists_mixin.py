@@ -9,7 +9,7 @@ from PySide6.QtWidgets import QMenu, QFileDialog
 
 from config import HISTORY_FILE, get_download_dir
 from services import library_db, local_mixes
-from services.library_service import LibraryScanWorker, LibraryWatcher, load_items_sync
+from services.library_service import LibraryScanWorker, LibraryWatcher
 from services.recommendation_service import AlbumResolver, ArtistResolver
 from services.playlist_service import PlaylistService
 from services.artist_service import ArtistService
@@ -19,7 +19,7 @@ from ui.sidebar import SideListItem
 from ui.formatting import split_artists
 from ui.save_popup import SavePopup
 from ui.covers import import_cover, artist_avatar_path, AvatarDownloader
-from ui.dialogs import ask_text, ask_confirm
+from ui.dialogs import ask_text
 
 
 def _norm(text: str) -> str:
@@ -432,19 +432,6 @@ class ListsMixin:
             start = random.randrange(len(items))
         self._play_entry(items[start or 0])
 
-    # ------------------------------------------------------------ menú de canción
-    def show_add_to_list_menu(self, info: dict, global_pos):
-        """Menú pequeño con tus listas para añadir una canción."""
-        menu = QMenu(self)
-        menu.addAction(icon("plus.svg"), "Nueva lista...").triggered.connect(lambda: self.create_playlist_with_track(info))
-        playlists = PlaylistService.get_playlists()
-        if playlists:
-            menu.addSeparator()
-            for p_id, data in playlists.items():
-                act = menu.addAction(icon("playlist.svg"), data.get("name", "Lista"))
-                act.triggered.connect(lambda _=False, pid=p_id: self.add_track_to_playlist(pid, info))
-        menu.exec(global_pos)
-
     def open_track_menu(self, info: dict, global_pos, extra=None):
         """Menú de una canción (los tres puntitos o el clic derecho), igual en búsqueda, listas y descargas."""
         menu = QMenu(self)
@@ -543,7 +530,7 @@ class ListsMixin:
         item = self.side_item(kind, list_id)           # la miniatura vuela hasta la lista y esta pulsa al llegar
 
         def arrived():
-            from ui.animations import flash, pop_icon
+            from ui.animations import flash
             target = self.side_item(kind, list_id)
             if target is not None:
                 flash(target, accent(), 0.28, 600, 8)

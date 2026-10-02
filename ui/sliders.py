@@ -5,7 +5,7 @@ from PySide6.QtGui import QPainter, QColor
 from PySide6.QtWidgets import QSlider, QWidget
 
 from ui import motion
-from ui.styles import accent, live_accent
+from ui.styles import live_accent
 
 
 class TimeBubble(QWidget):

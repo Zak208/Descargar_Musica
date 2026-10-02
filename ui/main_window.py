@@ -9,9 +9,9 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import QPixmap, QImage, QIcon, QDesktopServices
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton, QApplication, QFileDialog, QStackedWidget, QGraphicsOpacityEffect, QSystemTrayIcon
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton, QApplication, QFileDialog, QStackedWidget, QSystemTrayIcon
 )
-from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput, QMediaDevices
+from PySide6.QtMultimedia import QMediaPlayer, QMediaDevices
 
 from config import (
     get_download_dir, set_download_dir, set_audio_quality, get_theme, set_theme, load_settings, save_settings
@@ -26,7 +26,7 @@ from services.catalog_service import (
 from services.ffmpeg_service import FFmpegService
 from services.metadata_service import MetadataService
 from services.playlist_service import PlaylistService
-from ui.styles import (MAIN_STYLE, get_theme_stylesheet, THEME_CONFIGS, set_active_theme, accent, retheme_stylesheet,
+from ui.styles import (MAIN_STYLE, get_theme_stylesheet, THEME_CONFIGS, set_active_theme, retheme_stylesheet,
                        contrast_stylesheet, high_contrast_enabled)
 from ui.icons import icon
 from version import __version__
@@ -1383,12 +1383,6 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         target = self.previous_page_before_album if self.previous_page_before_album in [1, 2] else 1
         self.switch_to_page(target)
 
-    # ================= MÉTODOS DE FAVORITOS Y PLAYLISTS =================
-    def refresh_favorites_ui(self):
-        """Actualiza el corazón de la barra inferior y de todas las canciones visibles."""
-        self.sync_favorite_hearts()
-        self.refresh_playlists_sidebar()
-
     def toggle_player_heart(self):
         if self.current_item_info:
             self.save_button_clicked(dict(self.current_item_info), self.player_heart_btn)
@@ -1890,9 +1884,6 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self._selected_rows = []
         self._selected_row = None
         self.page_playlist.update_selection_bar([])
-
-    def selected_infos(self) -> list:
-        return [dict(r.item_info) for r in self._alive_rows()]
 
     def _on_track_changed(self):
         """La canción que suena cambió: se marca en la lista y se actualiza el panel lateral."""

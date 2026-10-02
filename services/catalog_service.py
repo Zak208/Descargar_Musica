@@ -1,5 +1,4 @@
 import logging
-import requests
 from services import http
 from PySide6.QtCore import QThread, Signal
 

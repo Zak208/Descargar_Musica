@@ -107,7 +107,7 @@ def refine(lines: list, rec: list) -> list:
     base = estimate(lines)
     flat, owner = [], []
     for j, (_ms, text) in enumerate(lines):
-        for k, (c0, c1, tok) in enumerate(tokens(text)):
+        for k, (_c0, _c1, tok) in enumerate(tokens(text)):
             n = norm_word(tok)
             if n:
                 flat.append(n)

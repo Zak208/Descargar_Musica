@@ -3,7 +3,6 @@ import os
 import shutil
 import subprocess
 import zipfile
-import requests
 from services import http
 import logging
 from config import FFMPEG_DIR, APP_DIR

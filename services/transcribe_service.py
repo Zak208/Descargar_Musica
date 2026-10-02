@@ -14,7 +14,6 @@ import tempfile
 import time
 import zipfile
 
-import requests
 from services import http
 from PySide6.QtCore import QThread, Signal
 

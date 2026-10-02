@@ -15,7 +15,7 @@ from ui.emptystate import EmptyState
 from ui.scrolling import BackToTop, polish_scroll_area
 from ui.textfx import reveal_up
 from ui.covers import list_cover_pixmap, tile_colors, MIX_COLORS, GENRE_COLORS
-from ui.dialogs import ask_text, ask_confirm
+from ui.dialogs import ask_text
 from ui.formatting import format_total, parse_added
 from ui.icons import icon
 from ui.loading import LoadingBlock

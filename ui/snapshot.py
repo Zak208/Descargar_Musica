@@ -88,22 +88,6 @@ def crossfade(host, old: QPixmap, duration: int = motion.DUR_BASE, dx: float = 0
     return layer
 
 
-def scale_fade_in(host, pix: QPixmap, rect: QRect, duration: int = motion.DUR_BASE, start_zoom: float = 0.96):
-    """Una foto que aparece creciendo un poco (ventanas internas, menús)."""
-    if not motion.enabled() or pix is None or pix.isNull():
-        return None
-    layer = Layer(host, pix, rect)
-    layer.opacity = 0.0
-    layer.zoom = start_zoom
-
-    def step(t):
-        layer.opacity = t
-        layer.zoom = start_zoom + (1.0 - start_zoom) * t
-
-    layer.animate(duration, step, QEasingCurve.OutCubic)
-    return layer
-
-
 class _Flyer(QWidget):
     def __init__(self, host, pixmap: QPixmap, size: int):
         super().__init__(host)

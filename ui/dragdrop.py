@@ -5,7 +5,6 @@ import shutil
 
 from PySide6.QtCore import Qt, QMimeData, QByteArray, QPoint
 from PySide6.QtGui import QDrag, QPixmap
-from PySide6.QtWidgets import QApplication
 
 from services.library_service import AUDIO_EXTS
 from services.spotify_service import is_spotify_url

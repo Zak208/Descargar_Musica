@@ -3,7 +3,7 @@ import unicodedata
 
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QPainter, QColor, QPalette, QFontMetrics
-from PySide6.QtWidgets import QLabel, QSizePolicy, QSlider, QWidget, QGridLayout
+from PySide6.QtWidgets import QLabel, QSizePolicy, QWidget, QGridLayout
 
 from ui import motion
 from ui.anim_clock import clock
@@ -164,17 +164,6 @@ class ElidedLabel(QLabel):
             painter.setPen(QColor(accent()) if hot else color)
             painter.drawText(int(x), 0, int(w) + 2, self.height(), Qt.AlignLeft | Qt.AlignVCenter, t)
             x += w
-
-
-class ClickableSlider(QSlider):
-    """Deslizador en el que se puede hacer clic en cualquier punto de la barra para saltar a esa posición."""
-
-    def mousePressEvent(self, ev):
-        if ev.button() == Qt.LeftButton and self.width() > 0:
-            val = self.minimum() + ((self.maximum() - self.minimum()) * ev.pos().x()) / self.width()
-            self.setValue(int(val))
-            ev.accept()
-        super().mousePressEvent(ev)
 
 
 class ReflowGrid(QWidget):

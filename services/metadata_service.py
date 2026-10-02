@@ -1,5 +1,4 @@
 import os
-import requests
 from services import http
 import logging
 from pathlib import Path

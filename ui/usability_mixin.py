@@ -1,7 +1,6 @@
 """Comodidad de uso: deshacer, pegar enlaces, manejo de las listas con el teclado y nombres para lectores de pantalla."""
 import time
 
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QPushButton
 
 from services.spotify_service import is_spotify_url

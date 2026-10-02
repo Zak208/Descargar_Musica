@@ -2,7 +2,7 @@
 import os
 
 from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QPixmap, QIcon
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame
 )

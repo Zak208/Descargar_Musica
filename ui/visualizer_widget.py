@@ -42,9 +42,6 @@ class AudioVisualizerWidget(QWidget):
     def set_position(self, ms: int):
         self._pos = ms
 
-    def has_envelope(self) -> bool:
-        return self._env is not None
-
     def set_accent_color(self, hex_color: str):
         self.accent_color = QColor(hex_color)
         self.update()

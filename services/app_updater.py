@@ -259,7 +259,7 @@ def install_and_restart() -> bool:
         return False
     try:
         script = build_script(folder, install_dir(), os.getpid(), version=staged_version() or "")
-        cmd = os.path.join(os.environ.get("SystemRoot", "C:\\Windows"), "System32", "cmd.exe")
+        cmd = os.path.join(os.environ.get("SYSTEMROOT", "C:\\Windows"), "System32", "cmd.exe")
         subprocess.Popen([cmd, "/c", str(script)], creationflags=script_flags(), close_fds=True,
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         settings = load_settings()

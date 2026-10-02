@@ -7,7 +7,7 @@ from PySide6.QtWidgets import QWidget
 
 from ui import motion
 from ui.anim_clock import clock
-from ui.styles import accent, live_accent
+from ui.styles import live_accent
 
 
 class HoverFader:
