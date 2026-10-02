@@ -63,18 +63,18 @@ sin cuentas ni claves.
   siempre activo: con todo en 0 el audio no se toca y solo se procesa si mueves algún control.
 - Panel lateral derecho **«En reproducción»**: portada grande, botón «+» para guardar, letra que avanza sola,
   información del artista (seguidores y una breve reseña) y la siguiente canción.
+- **Letras** (panel lateral y ventana propia, que se puede poner a pantalla completa con F11): se oscurecen las frases ya leídas, se subraya la que tienes bajo el ratón y al pulsarla la canción salta a ese
+  momento. Si una canción no tiene letra, en las canciones **descargadas** puedes pulsar **«Generar con el sistema»**: el
+  programa escucha la canción y escribe lo que canta (con tiempos). Queda marcada como «generada por el sistema» porque puede
+  tener errores. Con **«Editar»** (o «Escribir la letra yo») abres un editor dentro de la app: un campo para el momento de la canción (o «Tiempo actual»), otro para la frase y «Añadir» la sube a la lista, donde puedes corregir cualquier línea con doble clic;
+  la letra propia manda sobre cualquier otra y se puede restaurar. La primera vez, y solo si aceptas, se descarga el reconocedor
+  de voz (whisper.cpp, ≈ 68 MB, con comprobación SHA-256); después funciona sin internet.
 - 12 colores de aplicación.
 
 ## Requisitos
 
 - **Windows 10 u 11** (es donde se ha desarrollado y probado; el código no depende de nada exclusivo de Windows salvo detalles menores, como abrir el Explorador).
 - **Python 3.12** (para ejecutar desde el código). Con el `.exe` compilado no hace falta instalar nada.
-- **Letras**: se oscurecen las frases ya leídas, se subraya la que tienes bajo el ratón y al pulsarla la canción salta a ese
-  momento. Si una canción no tiene letra, en las canciones **descargadas** puedes pulsar **«Generar con el sistema»**: el
-  programa escucha la canción y escribe lo que canta (con tiempos). Queda marcada como «generada por el sistema» porque puede
-  tener errores. Con **«Editar»** (o «Escribir la letra yo») abres un editor dentro de la app: un campo para el momento de la canción (o «Tiempo actual»), otro para la frase y «Añadir» la sube a la lista, donde puedes corregir cualquier línea con doble clic;
-  la letra propia manda sobre cualquier otra y se puede restaurar. La primera vez, y solo si aceptas, se descarga el reconocedor
-  de voz (whisper.cpp, ≈ 68 MB, con comprobación SHA-256); después funciona sin internet.
 - Conexión a internet para buscar, escuchar adelantos, descargar, letras y recomendaciones.
 - **FFmpeg** (convierte el audio y aplica el ecualizador). No hace falta instalarlo a mano: si no lo encuentra,
   la aplicación lo descarga sola la primera vez (carpeta `app_data/ffmpeg`).
@@ -128,6 +128,9 @@ Descargar_Musica.exe --selftest        # escribe selftest.log junto al programa
 | Más opciones de una canción | Un clic en la fila y los tres puntitos de la derecha, o clic derecho. |
 | Ver la portada, la letra y el artista | Botón de panel de la barra de reproducción (**En reproducción**). |
 | Ecualizador, cola, letra, reproductor pequeño | Botones de la barra de reproducción. |
+| Saltar a una frase de la letra | Pulsa la frase (se subraya al pasar el ratón). |
+| Letra de una canción sin letra | **Generar con el sistema** (canciones descargadas) o **Escribir la letra yo**; **Editar** para corregir. |
+| Letra a pantalla completa | Botón de la esquina de la ventana de letras o `F11` (`Esc` para salir). |
 
 **Atajos de teclado:** `Espacio` pausa/reanuda · `←` / `→` retroceden/avanzan 5 s · `M` silencia · `Ctrl+F` va al buscador ·
 teclas multimedia del teclado (reproducir, siguiente, anterior).
@@ -147,7 +150,8 @@ teclas multimedia del teclado (reproducir, siguiente, anterior).
  Recomendaciones ──► perfil de gustos (tus descargas, favoritas y artistas seguidos)
                 └──► Deezer (artistas relacionados, populares, géneros, listas de éxitos) + iTunes (novedades)
 
- Letras ──► LRCLIB (sincronizadas) y lyrics.ovh   ·   Ecualizador ──► copia temporal con filtros de FFmpeg
+ Letras ──► LRCLIB (sincronizadas) y lyrics.ovh; si no hay, las propias o las generadas con whisper.cpp (local)
+ Ecualizador ──► copia temporal con filtros de FFmpeg
 ```
 
 - **Interfaz**: PySide6 (Qt). La ventana principal reparte su lógica en módulos «mixin»
@@ -165,6 +169,8 @@ teclas multimedia del teclado (reproducir, siguiente, anterior).
 ```
 main.py                    punto de entrada (y --selftest)
 config.py                  rutas, ajustes y escritura segura de JSON
+version.py                 número de versión (también en CHANGELOG.md)
+CHANGELOG.md               qué trae cada versión
 Descargar_Musica.spec      configuración de PyInstaller
 compilar_exe.bat           atajo para compilar
 requirements*.txt          dependencias (ejecución / compilación)
@@ -189,6 +195,9 @@ ui/                        interfaz
     *_page.py                páginas (inicio, lista, biblioteca, artista, álbum)
     track_row.py             fila de canción estilo Spotify (número, ▶ al pasar el ratón, tres puntitos)
     now_playing.py           panel lateral «En reproducción» (se abre solo al reproducir)
+    lyric_line.py            frase de letra (se apaga al leerla, subrayado y clic para saltar)
+    lyrics_dialog.py         ventana de letras (pantalla completa, texto que crece con la ventana)
+    lyrics_editor.py         editor de letras (tiempo + frase → lista editable)
     save_popup.py            botón «+» y listita de guardado en listas
     overlay.py, dialogs.py   ventanas internas
     styles.py, covers.py ... estilos, portadas, iconos, animaciones
