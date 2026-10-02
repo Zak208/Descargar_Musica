@@ -5,7 +5,7 @@ import logging
 import subprocess
 
 from PySide6.QtCore import (
-    Qt, QUrl, QSize, QRect, QPoint, QThread, QTimer, Signal, QPropertyAnimation, QEasingCurve, QObject, QEvent, QByteArray, QProcess
+    Qt, QUrl, QSize, QRect, QPoint, QThread, QTimer, Signal, QPropertyAnimation, QEasingCurve, QObject, QEvent, QProcess
 )
 from PySide6.QtGui import QPixmap, QImage, QIcon, QDesktopServices
 from PySide6.QtWidgets import (
@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtMultimedia import QMediaPlayer, QMediaDevices
 
 from config import (
-    get_download_dir, set_download_dir, set_audio_quality, get_theme, set_theme, load_settings, save_settings
+    get_download_dir, set_download_dir, set_audio_quality, get_theme, load_settings, save_settings
 )
 from services.youtube_service import (
     PreviewAudioWorker, is_youtube_url
@@ -24,6 +24,7 @@ from services.catalog_service import (
     ArtistDetailsWorker, AlbumDetailsWorker
 )
 from services.ffmpeg_service import FFmpegService
+from services.library_service import local_id
 from services.metadata_service import MetadataService
 from services.playlist_service import PlaylistService
 from ui.styles import (MAIN_STYLE, get_theme_stylesheet, THEME_CONFIGS, set_active_theme, retheme_stylesheet,
@@ -40,18 +41,23 @@ from ui.downloads_mixin import DownloadsMixin
 from ui.offline_mixin import OfflineMixin
 from ui.usability_mixin import UsabilityMixin
 from ui.playback_options import PlaybackOptionsMixin
+from ui.updates_mixin import UpdatesMixin, UPDATE_POLL_MS
+from ui.lyrics_mixin import LyricsMixin
+from ui.session_mixin import SessionMixin
+from ui.theme_mixin import ThemeMixin
+from ui.equalizer_mixin import EqualizerMixin
 from ui.artist_page import ArtistProfilePage
 from ui.album_page import AlbumDetailsPage
 from ui.list_page import ListPage
 from ui.library_page import LibraryPage
 from services.equalizer_service import (
-    EqRenderWorker, load_eq_settings, active_bands, rendered_path_for, clean_cache
+    load_eq_settings, clean_cache
 )
 from ui.toast import Toast
 from ui.topbar import TopBar
 from ui.downloads_panel import DownloadsTracker, DownloadsPanel
 from ui.animations import fade_in, install_ripples, pop_icon, press_pulse, slide_fade_in
-from ui import motion, snapshot, frames, winext, tooltips, focusring
+from ui import motion, snapshot, winext, tooltips, focusring
 from ui.anim_clock import clock
 from ui.dialogs import ask_text, ask_confirm, show_message
 from ui.imageloader import prune_disk_cache, clear_memory_cache
@@ -60,21 +66,18 @@ from ui.friendly import friendly_error
 from ui.common import resource_path, _ACTIVE_THREADS
 from ui.song_card import SongResultCard, square_cover
 from ui.track_row import TrackRow
-from ui.now_playing import NowPlayingPanel, PANEL_WIDTH, cover_color
+from ui.now_playing import NowPlayingPanel, PANEL_WIDTH
 from ui.sidebar import build_sidebar
 from ui.home_page import build_home_page
 from ui.player_bar import build_player_bar
-from ui.lyrics_dialog import LyricsDialog
-from ui.lyrics_editor import LyricsEditorDialog
-from services import lyric_align, lyrics_store, transcribe_service, session_service, backup_service
+from services import backup_service
 from services import http as web
-from services import app_updater, update_service, ytdlp_loader, word_timing
 from ui.metadata_dialog import MetadataDialog
-from ui.equalizer_dialog import EqualizerDialog
 from ui.queue_dialog import QueueDialog
 from ui.help_dialog import HelpDialog
 from ui.tour import TourOverlay
 from ui.welcome import WelcomeDialog
+from ui.pages import Page
 
 class ThemeEventFilter(QObject):
     """Adapta al tema activo los estilos en línea (colores fijos) de cada widget cuando se muestra.
@@ -105,12 +108,8 @@ class FFmpegDownloadWorker(QThread):
             self.finished_signal.emit(False)
 
 
-UPDATE_POLL_MS = 10 * 60 * 1000       # cada cuánto mira si hay versión nueva mientras la aplicación está abierta
-UPDATE_MIN_GAP_S = 5 * 60             # y nunca más a menudo que esto (también al abrirla)
-
-
 class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin, DownloadsMixin, OfflineMixin,
-                 UsabilityMixin, PlaybackOptionsMixin):
+                 UsabilityMixin, PlaybackOptionsMixin, UpdatesMixin, LyricsMixin, SessionMixin, ThemeMixin, EqualizerMixin):
     playing_changed = Signal(bool)          # empieza o se detiene el sonido (los indicadores de «sonando» lo siguen)
 
     def __init__(self):
@@ -292,7 +291,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         # Barra superior (de lado a lado): marca, inicio, buscador, información general y descargas en curso
         self.topbar = TopBar()
         self.topbar.search_submitted.connect(self.perform_search)
-        self.topbar.home_clicked.connect(lambda: self.switch_to_page(0))
+        self.topbar.home_clicked.connect(lambda: self.switch_to_page(Page.HOME))
         self.topbar.downloads_clicked.connect(self.show_downloads_panel)
         self.topbar.update_clicked.connect(self._on_update_clicked)
         self.main_vbox.insertWidget(0, self.topbar)   # ocupa todo el ancho, por encima de los paneles
@@ -310,7 +309,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
 
         # === PAGE 2: ARTIST PROFILE ===
         self.page_artist = ArtistProfilePage(self)
-        self.page_artist.back_clicked.connect(lambda: self.switch_to_page(1))
+        self.page_artist.back_clicked.connect(lambda: self.switch_to_page(Page.RESULTS))
         self.page_artist.album_selected.connect(self.open_album_details)
         self.page_artist.download_all_requested.connect(self.start_batch_download)
         self.stacked_widget.addWidget(self.page_artist)
@@ -390,7 +389,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         if event.modifiers() == Qt.NoModifier and self.list_key_navigation(event):
             event.accept()
             return
-        if key == Qt.Key_Escape and len(self._alive_rows()) > 0 and self.stacked_widget.currentIndex() == 4:
+        if key == Qt.Key_Escape and len(self._alive_rows()) > 0 and self.stacked_widget.currentIndex() == Page.LIST:
             self.clear_selection()
             event.accept()
             return
@@ -468,25 +467,6 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         fp.set_position(self.player.position())
         fp.showFullScreen()
 
-    def _update_live_accent(self):
-        """«Colores que cambian con la canción» (apagado por defecto): lo pintado a mano en la barra de reproducción toma un
-        tono de la portada. La hoja de estilos global no se toca (reaplicarla cada canción costaría decenas de ms)."""
-        from PySide6.QtGui import QColor
-        from ui import styles
-        color = None
-        if load_settings().get("dynamic_accent", False) and self.current_item_info:
-            c = self._cover_color()
-            if c is not None:
-                tone = QColor(c)
-                tone.setHslF(max(tone.hslHueF(), 0.0), max(0.55, min(0.85, tone.hslSaturationF() + 0.2)), 0.60)
-                color = tone.name()
-        styles.set_live_accent(color)
-        live = styles.live_accent()
-        if hasattr(self, "visualizer"):
-            self.visualizer.set_accent_color(live)
-        for w in (self.seek_slider, self.volume_slider, self.btn_play_pause):
-            w.update()
-
     def _full_player_visible(self) -> bool:
         fp = getattr(self, "full_player", None)
         try:
@@ -498,281 +478,6 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         """Confeti (nivel «Completas») o un destello del botón de descargas cuando pasa algo que merece la pena."""
         from ui.celebrate import celebrate
         celebrate(self, fallback=lambda: self.topbar.download_finished_flash())
-
-    def open_lyrics(self):
-        """Abre la ventana de letras. Solo puede haber una: si ya está abierta, se trae al frente."""
-        if not self.current_item_info:
-            self.notify("Reproduce una canción primero para ver su letra.")
-            return
-
-        existing = self.lyrics_dialog
-        if existing is not None:
-            try:
-                if existing.isVisible():
-                    existing.raise_()
-                    existing.activateWindow()
-                    return
-            except RuntimeError:
-                pass
-            self.lyrics_dialog = None
-
-        title = self.current_item_info.get('title', '')
-        artist = self.current_item_info.get('uploader', '')
-        dlg = LyricsDialog(title, artist, player=self.active_player, color=self._cover_color(), parent=self)
-        dlg.setAttribute(Qt.WA_DeleteOnClose, True)
-        dlg.destroyed.connect(lambda *_: setattr(self, 'lyrics_dialog', None))
-        self.lyrics_dialog = dlg
-        dlg.set_backdrop(None, self.player_thumb.pixmap())
-        dlg.show()
-
-    # ---------- letras propias y generadas por el sistema ----------
-    def lyrics_key(self) -> str:
-        """Identificador con el que se guardan las letras de la canción actual."""
-        info = self.current_item_info
-        if not info:
-            return ""
-        return lyrics_store.key_for(info.get("title", ""), info.get("uploader", ""))
-
-    def _lyrics_host(self, origin=None):
-        """Dónde mostrar los avisos y el editor: dentro de la ventana de letras si el usuario pulsó desde ella
-        (si no, quedarían escondidos detrás), o en la ventana principal."""
-        dlg = self.lyrics_dialog
-        try:
-            if isinstance(origin, QWidget) and dlg is not None and dlg.isVisible() and origin is dlg:
-                return dlg
-        except RuntimeError:
-            self.lyrics_dialog = None
-        self.raise_()
-        self.activateWindow()
-        return self
-
-    def reload_lyrics(self):
-        """Vuelve a cargar la letra en el panel y en la ventana de letras (tras editarla o generarla)."""
-        if self.now_panel.isVisible():
-            self.now_panel.lyrics.reload()
-        else:
-            self.now_panel._key = None
-        dlg = self.lyrics_dialog
-        try:
-            if dlg is not None and dlg.isVisible():
-                dlg.reload()
-        except RuntimeError:
-            self.lyrics_dialog = None
-
-    def _lyrics_busy(self, text: str, percent: int = -1):
-        """Aviso de trabajo en las dos vistas de la letra. percent: -1 sin barra, -2 barra que avanza sin porcentaje."""
-        if self.lyrics_key() != getattr(self, "_busy_key", self.lyrics_key()):
-            return      # mientras tanto cambió la canción: el aviso ya no corresponde a la que se ve
-        self.now_panel.lyrics.set_busy(text, percent)
-        dlg = self.lyrics_dialog
-        try:
-            if dlg is not None and dlg.isVisible():
-                dlg.set_busy(text, percent)
-        except RuntimeError:
-            self.lyrics_dialog = None
-
-    def _lyrics_result(self, message: str):
-        """Resultado de generar la letra: toast en la ventana principal y nota visible también en la ventana de letras."""
-        self.notify(message)
-        self._lyrics_note = message
-
-    def generate_lyrics(self, origin=None):
-        """El programa escucha la canción descargada y escribe su letra (la primera vez descarga el reconocedor de voz)."""
-        info = self.current_item_info
-        path = info.get("local_path") if info else None
-        if not path or not os.path.isfile(path):
-            self._lyrics_result("Solo se puede generar la letra de canciones descargadas.")
-            return
-        job = getattr(self, "_lyrics_job", None)
-        if job is not None and job.isRunning():
-            self._lyrics_result("Ya se está generando una letra. Espera a que termine.")
-            return
-        self._busy_key = self.lyrics_key()
-        self._lyrics_note = ""
-        if not transcribe_service.is_ready():
-            host = self._lyrics_host(origin)
-            if not ask_confirm(
-                    host, "Generar letras con el sistema",
-                    f"Para escuchar las canciones el programa necesita un reconocedor de voz (unos {transcribe_service.DOWNLOAD_MB} MB). "
-                    "Se descarga una sola vez, se guarda en tu equipo y después funciona sin internet.\n\n"
-                    "La letra generada puede tener errores; podrás corregirla con «Editar». ¿Descargarlo ahora?",
-                    ok="Descargar"):
-                return
-            setup = transcribe_service.SetupWorker(self)
-            setup.progress.connect(lambda pct: self._lyrics_busy(f"Descargando el reconocedor de voz… {pct}%", pct))
-            setup.done.connect(lambda: self._start_transcription(path))
-            setup.failed.connect(lambda msg: self._on_lyrics_generation_failed(self._busy_key, f"No se pudo descargar: {friendly_error(msg)}"))
-            self._lyrics_job = setup
-            self._lyrics_busy("Descargando el reconocedor de voz… 0%", 0)
-            setup.start()
-            return
-        self._start_transcription(path)
-
-    # ---------- tiempo de cada palabra (para que el karaoke siga la voz) ----------
-    _words_worker = None
-
-    def ensure_word_timing(self, follower):
-        """Aplica al karaoke los tiempos de cada palabra medidos con la voz. Si ya se midieron en esta canción se usan
-        al momento; si no, y el reconocedor de voz ya está instalado, se miden una vez en segundo plano."""
-        try:
-            info = self.current_item_info or {}
-            path = info.get("local_path")
-            lines = [(ms, lbl.text()) for ms, lbl in follower.lines]
-            if not lines or not path or not os.path.isfile(path):
-                return
-            key = self.lyrics_key()
-            cached = word_timing.load_spans(key, lines)
-            if cached is not None:
-                follower.set_spans(cached)
-                return
-            worker = self._words_worker
-            if worker is not None and worker.isRunning():
-                if worker.key == key:
-                    return
-                worker.cancel()                 # otra canción: lo que se estaba midiendo ya no interesa
-            if not transcribe_service.is_ready():
-                return
-            worker = word_timing.WordTimingWorker(path, key, lines, self)
-            worker.done.connect(self._on_word_timing)
-            self._words_worker = worker
-            worker.start()
-        except RuntimeError:
-            pass
-
-    def _on_word_timing(self, key: str, spans: list):
-        if key != self.lyrics_key():
-            return
-        followers = [self.now_panel.lyrics.follower]
-        dlg = self.lyrics_dialog
-        try:
-            if dlg is not None:
-                followers.append(dlg.follower)
-        except RuntimeError:
-            self.lyrics_dialog = None
-        for follower in followers:
-            try:
-                follower.set_spans(spans)
-            except RuntimeError:
-                pass
-
-    # ---------- sincronizar una letra con la canción (tiempos automáticos) ----------
-    _align_worker = None
-
-    def _sync_lyrics(self, editor, phrases: list, audio_path: str):
-        """El sistema escucha la canción y pone el tiempo a cada frase del editor."""
-        if not audio_path or not os.path.isfile(audio_path):
-            editor.set_sync_busy("Solo se puede con canciones descargadas.")
-            return
-
-        def go():
-            worker = lyric_align.AlignWorker(audio_path, phrases, self)
-            worker.progress.connect(lambda pct: editor.set_sync_busy(f"El sistema está escuchando la canción… {pct}%", pct))
-            worker.done.connect(editor.apply_times)
-            worker.failed.connect(lambda msg: editor.set_sync_busy(msg))
-            self._align_worker = worker
-            editor.set_sync_busy("El sistema está escuchando la canción…", -2)
-            worker.start()
-
-        if transcribe_service.is_ready():
-            go()
-            return
-        if not ask_confirm(
-                editor, "Poner los tiempos automáticamente",
-                f"Para escuchar la canción el programa necesita un reconocedor de voz (unos {transcribe_service.DOWNLOAD_MB} MB). "
-                "Se descarga una sola vez y después funciona sin internet. ¿Descargarlo ahora?", ok="Descargar"):
-            editor.set_sync_busy("")
-            return
-        setup = transcribe_service.SetupWorker(self)
-        setup.progress.connect(lambda pct: editor.set_sync_busy(f"Descargando el reconocedor de voz… {pct}%", pct))
-        setup.done.connect(go)
-        setup.failed.connect(lambda msg: editor.set_sync_busy(f"No se pudo descargar: {friendly_error(msg)}"))
-        self._lyrics_job = setup
-        editor.set_sync_busy("Descargando el reconocedor de voz… 0%", 0)
-        setup.start()
-
-    def _start_transcription(self, path: str):
-        key = self.lyrics_key()
-        worker = transcribe_service.TranscribeWorker(path, key, self)
-        worker.progress.connect(self._on_transcription_progress)
-        worker.done.connect(self._on_lyrics_generated)
-        worker.failed.connect(self._on_lyrics_generation_failed)
-        self._lyrics_job = worker
-        self._transcribe_started = time.time()
-        self._transcribe_percent = -2
-        if not hasattr(self, "_transcribe_timer"):
-            self._transcribe_timer = QTimer(self)
-            self._transcribe_timer.setInterval(1000)
-            self._transcribe_timer.timeout.connect(self._tick_transcription)
-        self._transcribe_timer.start()
-        self._tick_transcription()
-        worker.start()
-
-    def _on_transcription_progress(self, pct: int):
-        self._transcribe_percent = pct
-        self._tick_transcription()
-
-    def _tick_transcription(self):
-        """Mientras el sistema escucha, se ve que está trabajando: porcentaje y segundos transcurridos."""
-        elapsed = int(time.time() - getattr(self, "_transcribe_started", time.time()))
-        pct = getattr(self, "_transcribe_percent", -2)
-        head = f"Escuchando la canción… {pct}%" if pct > 0 else "Escuchando la canción…"
-        self._lyrics_busy(f"{head} ({elapsed} s). Puedes seguir usando la aplicación.", pct if pct > 0 else -2)
-
-    def _stop_transcription_timer(self):
-        timer = getattr(self, "_transcribe_timer", None)
-        if timer is not None:
-            timer.stop()
-
-    def _on_lyrics_generated(self, key: str, _data: dict):
-        self._stop_transcription_timer()
-        self._lyrics_result("Letra generada. Revísala: puede tener errores.")
-        if key == self.lyrics_key():
-            self.reload_lyrics()
-
-    def _on_lyrics_generation_failed(self, key: str, reason: str):
-        self._stop_transcription_timer()
-        self._lyrics_result(reason or "No se pudo generar la letra.")
-        if key == self.lyrics_key():
-            self.reload_lyrics()
-
-    def edit_lyrics(self, origin=None):
-        """Editor de letra: sirve para escribirla desde cero o corregir la que hay (la propia queda guardada y manda)."""
-        info = self.current_item_info
-        if not info:
-            self.notify("Reproduce una canción primero.")
-            return
-        key = self.lyrics_key()
-        data = self.now_panel.lyrics.data
-        dlg_open = self.lyrics_dialog
-        try:
-            if data is None and dlg_open is not None and dlg_open.isVisible():
-                data = dlg_open.lyrics_data
-        except RuntimeError:
-            self.lyrics_dialog = None
-        text = ""
-        if data:
-            if data.get("is_synced") and data.get("synced_lines"):
-                text = "\n".join(f"{lyrics_store.format_ms(ms)} {t}" for ms, t in data["synced_lines"])
-            else:
-                text = data.get("plain_text", "")
-        stored = lyrics_store.load(key)
-        host = self._lyrics_host(origin)
-        local = info.get("local_path") or ""
-        editor = LyricsEditorDialog(host, info.get("title", ""), text, player=self.active_player,
-                                    can_restore=bool(stored and stored.get("source") == "user"),
-                                    audio_path=local if os.path.isfile(local) else "")
-        editor.sync_requested.connect(lambda phrases: self._sync_lyrics(editor, phrases, local))
-        if editor.exec() != 1:
-            if self._align_worker is not None and self._align_worker.isRunning():
-                self._align_worker.cancel()
-            return
-        if editor.restore:
-            lyrics_store.delete(key, "user")
-            self.notify("Se ha vuelto a la letra original.")
-        else:
-            lyrics_store.save(key, editor.text, "user")
-            self.notify("Letra guardada.")
-        self.reload_lyrics()
 
     def toggle_mini_player(self):
         """Reproductor pequeño: solo la barra de reproducción, siempre visible encima de otras ventanas."""
@@ -913,9 +618,13 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         if self.width() < hint.width() or self.height() < hint.height():
             self.resize(max(self.width(), hint.width()), max(self.height(), hint.height()))
 
+    def toast_margin(self) -> int:
+        """Distancia al borde inferior para los avisos: por encima de la barra de reproducción si se ve."""
+        return (self.player_bar.height() + 24) if self.player_bar.isVisible() else 40
+
     def notify(self, text: str):
         """Muestra un aviso breve y no intrusivo en la parte inferior."""
-        margin = (self.player_bar.height() + 24) if self.player_bar.isVisible() else 40
+        margin = self.toast_margin()
         self.toast.show_message(text, bottom_margin=margin)
 
     def focus_search(self):
@@ -931,234 +640,6 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             self.help_dialog = HelpDialog(self)
         self.help_dialog.refresh_updates()
         self.help_dialog.exec()
-
-    # ---------- actualizaciones (motor de descargas y aplicación) ----------
-    def check_updates(self, manual: bool = False):
-        """Mira en GitHub si hay versión nueva. Solo con conexión; sola, una vez cada 24 horas."""
-        if self.is_offline():
-            if manual:
-                self.notify("Sin conexión: no se puede buscar actualizaciones.")
-            return
-        if not manual and not update_service.due("last_update_check", UPDATE_MIN_GAP_S):
-            return
-        worker = getattr(self, "_update_check", None)
-        if worker is not None and worker.isRunning():
-            return
-        if manual:
-            self.notify("Buscando actualizaciones...")
-        self._update_check = update_service.UpdateCheckWorker(self)
-        worker = self._update_check
-        self._update_check.result.connect(lambda app_new, engine_new: self._on_update_result(app_new, engine_new, manual, worker.ok))
-        self._update_check.start()
-
-    def _on_update_result(self, app_new: str, engine_new: str, manual: bool, ok: bool = True):
-        update_service.mark_checked("last_update_check")
-        if not ok and not app_new and not engine_new:
-            try:
-                self.settings_dialog.set_update_status("No se pudo consultar GitHub. Inténtalo de nuevo en un rato.")
-            except (AttributeError, RuntimeError):
-                pass
-            if manual:
-                self.notify("No se pudo buscar actualizaciones ahora mismo.")
-            return
-        status = (f"Hay una versión nueva de la aplicación: {app_new}" if app_new else
-                  f"Hay una versión nueva del motor de descargas: {engine_new}" if engine_new else
-                  f"Todo al día · versión {__version__}")
-        try:
-            self.settings_dialog.set_update_status(status)
-        except (AttributeError, RuntimeError):
-            pass
-        self._pending_engine = engine_new
-        self._pending_app = app_new
-        dlg = getattr(self, "help_dialog", None)
-        if dlg is not None:
-            dlg.btn_engine.setVisible(bool(engine_new))
-            dlg.btn_app.setVisible(bool(app_new))
-            dlg.refresh_updates()
-            if app_new:
-                dlg.lbl_app.setText(f"Aplicación: versión {__version__} · hay una versión nueva ({app_new})")
-            if engine_new:
-                dlg.lbl_engine.setText(f"Motor de descargas (yt-dlp): versión {ytdlp_loader.active_version()} · "
-                                       f"hay una nueva ({engine_new})")
-        if engine_new:
-            self._offer_engine_update(engine_new, manual)
-        elif self._engine_state == "available":
-            self._set_engine_state(None)
-        if app_new and app_updater.can_self_update():
-            self._offer_app_update(app_new, manual)
-        elif app_new:
-            margin = (self.player_bar.height() + 24) if self.player_bar.isVisible() else 40
-            self.toast.show_message(f"Hay una versión nueva de Descargador de Música ({app_new})", bottom_margin=margin,
-                                    action=("Ver novedades", self.open_app_releases))
-        elif manual and not engine_new:
-            self.notify("Todo está al día.")
-
-    # ---------- actualizar la propia aplicación (botón azul arriba a la izquierda) ----------
-    def _restore_pending_update(self):
-        """Si quedó una versión ya descargada de otra vez, el botón «Reiniciar y actualizar» aparece enseguida."""
-        if not app_updater.can_self_update():
-            return
-        version = app_updater.staged_version()
-        if version:
-            self._update_version = version
-            self._set_update_state("ready")
-
-    def _offer_app_update(self, version: str, manual: bool = False):
-        self._update_version = version
-        if self._update_state in ("downloading", "ready") and getattr(self, "_update_version_ready", None) == version:
-            return
-        if app_updater.staged_version() == version:
-            self._set_update_state("ready")
-        elif perf.saving_reason(self.network):                 # batería baja o datos medidos: se descarga cuando tú quieras
-            self._set_update_state("available")
-        else:
-            self._start_app_download()
-        if manual:
-            self.notify(f"Hay una versión nueva ({version}): mira el botón azul de arriba a la izquierda.")
-
-    def _set_update_state(self, state):
-        self._update_state = state
-        if state == "ready":
-            self._update_version_ready = getattr(self, "_update_version", "")
-        self._refresh_update_button()
-
-    def _set_engine_state(self, state, pct: int = 0):
-        self._engine_state = state
-        self._engine_pct = pct
-        self._refresh_update_button()
-
-    def _refresh_update_button(self):
-        """Un solo botón azul para las dos clases de novedad: primero la aplicación y, si no hay, el motor de descargas."""
-        state, v = self._update_state, getattr(self, "_update_version", "")
-        if state == "available":
-            self.topbar.set_update_button(f"Actualizar a la {v}", True, "Descarga la versión nueva (se instala al reiniciar)")
-        elif state == "downloading":
-            self.topbar.set_update_button(f"Descargando la {v}…", False, "Se está descargando la versión nueva")
-        elif state == "ready":
-            self.topbar.set_update_button(f"Reiniciar y actualizar a la {v}", True,
-                                          "Se cierra la aplicación, se instala la versión nueva y se vuelve a abrir")
-        elif self._engine_state == "available":
-            self.topbar.set_update_button("Actualizar el descargador de canciones", True,
-                                          f"Hay una versión nueva ({self._engine_version}) del motor que descarga las canciones")
-        elif self._engine_state == "downloading":
-            self.topbar.set_update_button(f"Descargando el descargador de canciones… {self._engine_pct}%", False,
-                                          "Se está descargando la versión nueva del motor de descargas")
-        elif self._engine_state == "ready":
-            self.topbar.set_update_button("Reiniciar para usar el descargador nuevo", True,
-                                          "El motor de descargas ya está actualizado: se usará al volver a abrir la aplicación")
-        else:
-            self.topbar.set_update_button("")
-
-    def _offer_engine_update(self, version: str, manual: bool = False):
-        """Hay un yt-dlp más nuevo: se avisa con el botón azul (y se descarga solo si así lo tienes en Ajustes)."""
-        if self._engine_state in ("downloading", "ready"):
-            return
-        self._engine_version = version
-        if load_settings().get("ytdlp_auto_update", True) and not perf.saving_reason(self.network):
-            self.update_engine(quiet=True)
-        else:
-            self._set_engine_state("available")
-            if manual:
-                self.notify(f"Hay una versión nueva del motor de descargas ({version}): mira el botón azul de arriba a la izquierda.")
-
-    def _announce_finished_update(self):
-        """Tras actualizar y reabrir, confirma a qué versión se ha pasado."""
-        settings = load_settings()
-        previous = settings.get("last_run_version", "")
-        if previous != __version__:
-            settings["last_run_version"] = __version__
-            save_settings(settings)
-            if previous and ytdlp_loader.parse_version(__version__) > ytdlp_loader.parse_version(previous):
-                margin = (self.player_bar.height() + 24) if self.player_bar.isVisible() else 40
-                self.toast.show_message(f"Descargador de Música se ha actualizado a la versión {__version__}", bottom_margin=margin,
-                                        action=("Ver novedades", self.open_app_releases))
-
-    def _start_app_download(self):
-        worker = self._app_update_worker
-        if worker is not None and worker.isRunning():
-            return
-        self._set_update_state("downloading")
-        worker = app_updater.AppUpdateWorker(self)
-        worker.progress.connect(lambda pct: self.topbar.set_update_button(
-            f"Descargando la {self._update_version}… {pct}%", False, "Se está descargando la versión nueva"))
-        worker.done.connect(self._on_app_download_done)
-        worker.failed.connect(self._on_app_download_failed)
-        self._app_update_worker = worker
-        worker.start()
-
-    def _on_app_download_done(self, version: str):
-        self._update_version = version
-        self._set_update_state("ready")
-        self.notify(f"La versión {version} está lista: pulsa el botón azul para reiniciar y actualizar.")
-
-    def _on_app_download_failed(self, message: str):
-        self._set_update_state("available")
-        self.notify(f"No se pudo descargar la actualización: {friendly_error(message)}")
-
-    def _on_update_clicked(self):
-        if self._update_state == "available":
-            self._start_app_download()
-        elif self._update_state == "ready":
-            self.restart_and_update()
-        elif self._update_state is None or self._update_state == "":
-            if self._engine_state == "available":
-                self.update_engine()
-            elif self._engine_state == "ready":
-                self.restart_app()
-
-    def restart_and_update(self):
-        """Cierra la aplicación, instala la versión descargada y la vuelve a abrir."""
-        if not app_updater.install_and_restart():
-            self.notify("No se pudo preparar la actualización. Inténtalo de nuevo más tarde.")
-            self._set_update_state("available")
-            return
-        self.quit_app()
-
-    def update_engine(self, quiet: bool = False):
-        tag = getattr(self, "_pending_engine", "")
-        if not tag:
-            self.check_updates(manual=True)
-            return
-        worker = getattr(self, "_engine_worker", None)
-        if worker is not None and worker.isRunning():
-            return
-        dlg = getattr(self, "help_dialog", None)
-        self._engine_version = tag
-        self._set_engine_state("downloading", 0)
-        self._engine_worker = update_service.YtdlpUpdateWorker(tag, self)
-        if dlg is not None:
-            dlg.update_progress.setVisible(True)
-            dlg.update_progress.setValue(0)
-            self._engine_worker.progress.connect(dlg.update_progress.setValue)
-        self._engine_worker.progress.connect(lambda pct: self._set_engine_state("downloading", pct))
-        self._engine_worker.done.connect(lambda v: self._on_engine_updated(v, quiet))
-        self._engine_worker.failed.connect(lambda msg: self._on_engine_failed(msg, quiet))
-        self._engine_worker.start()
-
-    def _on_engine_updated(self, version: str, quiet: bool):
-        self._pending_engine = ""
-        dlg = getattr(self, "help_dialog", None)
-        if dlg is not None:
-            dlg.update_progress.setVisible(False)
-            dlg.btn_engine.setVisible(False)
-            dlg.refresh_updates()
-        if ytdlp_loader.is_loaded():
-            self._set_engine_state("ready")             # el motor viejo sigue en uso: hasta reiniciar no cambia
-            self.notify(f"El descargador de canciones se ha actualizado a {version}: pulsa el botón azul para reiniciar y usarlo.")
-        else:
-            self._set_engine_state(None)
-            self.notify(f"Motor de descargas actualizado a {version}")
-
-    def _on_engine_failed(self, message: str, quiet: bool):
-        dlg = getattr(self, "help_dialog", None)
-        if dlg is not None:
-            dlg.update_progress.setVisible(False)
-        self._set_engine_state("available" if self._pending_engine else None)
-        if not quiet:
-            self.notify(f"No se pudo actualizar: {friendly_error(message)}")
-
-    def open_app_releases(self):
-        QDesktopServices.openUrl(QUrl(update_service.APP_PAGE))
 
     def restart_app(self):
         """Cierra y vuelve a abrir la aplicación (por ejemplo, tras restaurar una copia de seguridad)."""
@@ -1317,7 +798,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
 
     def open_artist_profile(self, artist_id: int, artist_name: str, avatar: str):
         """Abre la página completa de perfil de un artista."""
-        self.switch_to_page(2)
+        self.switch_to_page(Page.ARTIST)
         self.page_artist.start_loading(artist_name)
 
         self.artist_worker = ArtistDetailsWorker(artist_id, artist_name, avatar)
@@ -1328,7 +809,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
     def open_album_details(self, album_id: int):
         """Abre la página detallada de un álbum."""
         self.previous_page_before_album = self.stacked_widget.currentIndex()
-        self.switch_to_page(3)
+        self.switch_to_page(Page.ALBUM)
         self.page_album.start_loading()
         self._travel_cover(lambda: self.page_album.cover_lbl)
 
@@ -1430,62 +911,6 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         dialog.play_item_requested.connect(lambda item: self._play_entry(item))
         dialog.queue_updated.connect(lambda: self.now_panel.isVisible() and self.now_panel.refresh_next())
         dialog.exec()
-
-    def open_equalizer(self):
-        if not self.equalizer_dialog:
-            self.equalizer_dialog = EqualizerDialog(self)
-            self.equalizer_dialog.eq_changed.connect(self.on_eq_changed)
-        self.equalizer_dialog.exec()
-
-    def set_high_contrast(self, enabled: bool):
-        """Alto contraste: textos y bordes más claros. Se aplica al instante."""
-        from config import load_settings, save_settings
-        settings = load_settings()
-        settings["high_contrast"] = bool(enabled)
-        save_settings(settings)
-        self._set_theme_filter(self.current_theme != "spotify" or enabled)
-        self.setStyleSheet(get_theme_stylesheet(self.current_theme))
-        for w in self.findChildren(QWidget):
-            qss = w.styleSheet()
-            if qss and len(qss) < 20000 and not w.property("noRetheme"):
-                new_qss = retheme_stylesheet(qss, self.current_theme)
-                if enabled:
-                    new_qss = contrast_stylesheet(new_qss)
-                if new_qss != qss:
-                    w.setStyleSheet(new_qss)
-
-    def _set_theme_filter(self, active: bool):
-        app = QApplication.instance()
-        if active:
-            app.installEventFilter(self._theme_filter)
-        else:
-            app.removeEventFilter(self._theme_filter)
-
-    def on_theme_changed(self):
-        theme_key = self.theme_combo.currentData()
-        if theme_key:
-            central = self.centralWidget()
-            before = snapshot.grab(central) if (motion.enabled() and central is not None and central.isVisible()) else None
-            set_theme(theme_key)
-            set_active_theme(theme_key)
-            self._set_theme_filter(theme_key != "spotify" or high_contrast_enabled())
-            self.current_theme = theme_key
-            self.setStyleSheet(get_theme_stylesheet(theme_key))
-            accent_hex = THEME_CONFIGS.get(theme_key, {}).get("accent", "#1ED760")
-            if hasattr(self, 'visualizer'):
-                self.visualizer.set_accent_color(accent_hex)
-            frames.clear()
-            self._apply_title_bar()
-            self.update_player_heart_icon()
-            self.topbar.refresh_accent()
-            for w in self.findChildren(QWidget):
-                qss = w.styleSheet()
-                if qss and len(qss) < 20000 and not w.property("noRetheme"):
-                    new_qss = retheme_stylesheet(qss, theme_key)
-                    if new_qss != qss:
-                        w.setStyleSheet(new_qss)
-            if before is not None:
-                snapshot.crossfade(central, before, 260)           # los colores se mezclan en vez de saltar
 
     def notify_track_changed(self, title: str, artist: str):
         """Muestra una notificación nativa de Windows en la bandeja del sistema (se puede desactivar en Ajustes)."""
@@ -1609,7 +1034,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         if recycle.move_to_recycle_bin(path):
             PlaylistService.relocate(path)
             self.rescan_library()
-            margin = (self.player_bar.height() + 24) if self.player_bar.isVisible() else 40
+            margin = self.toast_margin()
             self.toast.show_message(f"«{name}» está en la papelera de Windows", bottom_margin=margin,
                                     action=("Ver papelera", recycle.open_recycle_bin))
             return
@@ -1697,15 +1122,6 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self.player_bar.setVisible(True)
         QTimer.singleShot(40, lambda: slide_fade_in(self.player_bar, 16, motion.DUR_BASE + 40))
 
-    def _eq_source(self, path: str):
-        """(archivo que debe sonar, versión con ecualizador si ya existe)."""
-        bands = active_bands(self.eq_settings)
-        if bands is not None:
-            out = rendered_path_for(path, bands)
-            if out.exists():
-                return str(out), str(out)
-        return path, None
-
     def _seek_when_loaded(self, ms: int):
         """Coloca la canción en `ms` en cuanto el reproductor la tiene cargada (sin hacerla sonar)."""
         def on_status(status):
@@ -1717,79 +1133,10 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
                 self.player.setPosition(ms)
         self.player.mediaStatusChanged.connect(on_status)
 
-    # ---------- seguir donde lo dejaste ----------
-    def _session_snapshot(self) -> dict:
-        data = {
-            "volume": self.volume_slider.value(),
-            "shuffle": self.is_shuffle_enabled,
-            "loop": self.is_loop_enabled,
-            "panel_open": self.now_panel.isVisible() or (self.is_mini_mode and getattr(self, "_panel_was_open", False)),
-            "page": self.stacked_widget.currentIndex(),
-            "list": list(self._current_list) if self._current_list and self.stacked_widget.currentIndex() == 4 else None,
-        }
-        if not self.is_mini_mode:
-            data["geometry"] = bytes(self.saveGeometry().toBase64()).decode("ascii")
-        info = self.current_item_info
-        if info and info.get("local_path") and self.player_bar.isVisible():
-            data["track"] = info["local_path"]
-            data["position"] = int(self.player.position())
-            data["context"] = session_service.local_paths(self._context, session_service.MAX_CONTEXT)
-            data["queue"] = session_service.local_paths(self.playback_queue, session_service.MAX_QUEUE)
-        return data
-
-    def save_session(self):
-        if not getattr(self, "_session_restored", False):
-            return      # aún no se leyó la sesión anterior: no se debe pisar
-        try:
-            session_service.save(self._session_snapshot())
-        except Exception as e:
-            logging.warning(f"No se pudo guardar la sesión: {e}")
-
-    def restore_geometry_early(self):
-        """Tamaño y posición de la ventana de la última vez (antes de mostrarla)."""
-        geo = session_service.load().get("geometry")
-        if geo:
-            try:
-                self.restoreGeometry(QByteArray.fromBase64(geo.encode("ascii")))
-            except Exception:
-                pass
-
-    def restore_session(self):
-        """Vuelve a poner el volumen y la canción que sonaba (en pausa, en el punto en que iba) y su cola."""
-        if getattr(self, "_session_restored", False):
-            return
-        self._session_restored = True      # a partir de aquí ya se puede guardar la sesión sin pisar la anterior
-        data = session_service.load()
-        if not data:
-            return
-        try:
-            if "volume" in data:
-                self.volume_slider.setValue(max(0, min(100, int(data["volume"]))))
-            if data.get("shuffle") and not self.is_shuffle_enabled:
-                self.toggle_shuffle()
-            if data.get("loop") and not self.is_loop_enabled:
-                self.toggle_loop()
-            self._panel_user_closed = not data.get("panel_open", True)
-            by_path = {it["local_path"]: it for it in self.library_items()}
-            as_items = lambda paths: [by_path[p] for p in paths if p in by_path]
-            track = data.get("track")
-            if track and os.path.isfile(track):
-                self.set_context(as_items(data.get("context", [])))
-                self.playback_queue = as_items(data.get("queue", []))
-                self._resume_pending = True
-                self.play_local_file(track, autoplay=False, start_ms=int(data.get("position", 0) or 0))
-            lst = data.get("list")
-            if lst and self.stacked_widget.currentIndex() == 0:
-                self.open_list(lst[0], lst[1])
-            elif data.get("page") == 5 and self.stacked_widget.currentIndex() == 0:
-                self.open_library()
-        except Exception as e:
-            logging.warning(f"No se pudo restaurar la sesión: {e}")
-
     # ---------- ayudas de reproducción ----------
     @staticmethod
     def _local_id(path: str) -> str:
-        return "local::" + os.path.normcase(os.path.abspath(path))
+        return local_id(path)
 
     def _local_track_info(self, path: str, meta: dict = None) -> dict:
         """Datos de una canción de la biblioteca, con el mismo formato que los resultados de búsqueda."""
@@ -1804,29 +1151,6 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             'duration_str': '',
             'thumbnail': '',
         }
-
-    def _refresh_lyrics_if_open(self):
-        """Si la ventana de letras está abierta, la cambia a la canción que acaba de empezar."""
-        dlg = self.lyrics_dialog
-        try:
-            if dlg is not None and dlg.isVisible() and self.current_item_info:
-                dlg.set_track(self.current_item_info.get('title', ''), self.current_item_info.get('uploader', ''),
-                              self._cover_color())
-                QTimer.singleShot(900, lambda: self._recolor_lyrics(dlg))   # la portada puede tardar en cargar
-        except RuntimeError:
-            self.lyrics_dialog = None
-
-    def _cover_color(self):
-        pix = self.player_thumb.pixmap()
-        return cover_color(pix) if pix is not None and not pix.isNull() else None
-
-    def _recolor_lyrics(self, dlg):
-        try:
-            color = self._cover_color()
-            if color is not None and dlg is self.lyrics_dialog:
-                dlg.set_color(color, self.player_thumb.pixmap())
-        except RuntimeError:
-            pass
 
     def _alive_rows(self) -> list:
         alive = []
@@ -1940,70 +1264,6 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
                     pass
         if self.now_panel.isVisible():
             self.now_panel.refresh_like()
-
-    # ---------- ecualizador ----------
-    def _apply_eq_if_needed(self):
-        path = self._eq_source_path
-        if not path:
-            return
-        bands = active_bands(self.eq_settings)
-        if bands is None:
-            if self._eq_active_render:
-                self._swap_source(path)
-                self._eq_active_render = None
-            return
-        out = rendered_path_for(path, bands)
-        if out.exists():
-            if self._eq_active_render != str(out):
-                self._swap_source(str(out))
-                self._eq_active_render = str(out)
-            return
-        if self._eq_worker is not None and self._eq_worker.isRunning():
-            self._eq_worker.is_cancelled = True
-        self._eq_worker = EqRenderWorker(path, bands)
-        self._eq_worker.done.connect(self._on_eq_rendered)
-        self._eq_worker.failed.connect(lambda msg: logging.warning(f"Ecualizador: {msg}"))
-        self._eq_worker.start()
-
-    def _on_eq_rendered(self, src: str, rendered: str):
-        if src != self._eq_source_path or active_bands(self.eq_settings) is None:
-            return
-        if str(rendered_path_for(src, active_bands(self.eq_settings))) != str(rendered):
-            return  # el ajuste cambió mientras se procesaba
-        self._swap_source(rendered)
-        self._eq_active_render = rendered
-
-    def _swap_source(self, file_path: str):
-        """Cambia el archivo que suena (original <-> con ecualizador) conservando el punto de la canción."""
-        if not os.path.isfile(file_path):
-            return
-        pos = self.player.position()
-        resume = self.player.playbackState() != QMediaPlayer.PausedState
-        self._swap_token = getattr(self, '_swap_token', 0) + 1
-        token = self._swap_token
-        self.player.stop()
-        self.player.setSource(QUrl.fromLocalFile(file_path))
-        # El reproductor necesita un instante tras cambiar de archivo; si se le pide sonar de inmediato se queda parado.
-        QTimer.singleShot(300, lambda: self._swap_resume(token, pos, resume))
-
-    def _swap_resume(self, token: int, pos: int, resume: bool):
-        if token != getattr(self, '_swap_token', 0):
-            return  # mientras tanto empezó otra canción
-        if resume:
-            self.player.play()
-        if pos > 500:
-            QTimer.singleShot(500, lambda: token == self._swap_token and self.player.setPosition(pos))
-
-    def on_eq_changed(self, data: dict):
-        self.eq_settings = data
-        playing_local = bool(self._eq_source_path) and self.player_bar.isVisible()
-        if active_bands(data) is None:
-            self.notify("Sonido normal")
-        elif playing_local:
-            self.notify("Aplicando el ajuste de sonido...")
-        else:
-            self.notify("Listo. Se notará en las canciones de tu biblioteca.")
-        self._apply_eq_if_needed()
 
     def update_position(self, position_ms):
         self.playback_tick(position_ms)

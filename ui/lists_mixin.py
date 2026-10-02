@@ -20,6 +20,7 @@ from ui.formatting import split_artists
 from ui.save_popup import SavePopup
 from ui.covers import import_cover, artist_avatar_path, AvatarDownloader
 from ui.dialogs import ask_text
+from ui.pages import Page
 
 
 def _norm(text: str) -> str:
@@ -95,7 +96,7 @@ class ListsMixin:
             self.watch_library()
             self.refresh_playlists_sidebar()
             self.update_header_info()
-            if self.stacked_widget.currentIndex() == 0:
+            if self.stacked_widget.currentIndex() == Page.HOME:
                 self.refresh_home()
                 self._home_dirty = False
             self.reload_current_list()
@@ -249,14 +250,14 @@ class ListsMixin:
                              lambda: self.toggle_follow_artist(artist_id, name, avatar))
         self.refresh_playlists_sidebar()
         self.refresh_home()
-        if self.stacked_widget.currentIndex() == 5:
+        if self.stacked_widget.currentIndex() == Page.LIBRARY:
             self._load_library_page(animate=False)
         return now_following
 
     def _on_avatar_ready(self):
         self.refresh_playlists_sidebar()
         self.refresh_home()
-        if self.stacked_widget.currentIndex() == 5:
+        if self.stacked_widget.currentIndex() == Page.LIBRARY:
             self._load_library_page(animate=False)
 
     def _artist_menu(self, artist: dict, pos):
@@ -337,7 +338,7 @@ class ListsMixin:
     def open_library(self):
         self._current_list = None
         self._load_library_page(animate=True)
-        self.switch_to_page(5)
+        self.switch_to_page(Page.LIBRARY)
 
     def _list_data(self, kind: str, list_id):
         """(nombre, canciones, id) de una lista, o None si ya no existe."""
@@ -382,7 +383,7 @@ class ListsMixin:
             self._page_before_list = current
         self._current_list = (kind, list_id)
         self.page_playlist.load(kind, list_id, name, tracks)
-        self.switch_to_page(4)
+        self.switch_to_page(Page.LIST)
         self._travel_cover(lambda: self.page_playlist.tile)       # la portada pulsada viaja a la cabecera
 
     def open_playlist_page(self, p_id: str):
@@ -398,14 +399,14 @@ class ListsMixin:
     def reload_current_list(self):
         """Pone al día lo que se está viendo (barra lateral y lista abierta) sin volver a cargarlo todo."""
         self.refresh_playlists_sidebar()
-        if self.stacked_widget.currentIndex() == 4 and self._current_list:
+        if self.stacked_widget.currentIndex() == Page.LIST and self._current_list:
             kind, list_id = self._current_list
             data = self._list_data(kind, list_id)
             if data is None:
                 self.open_library()
                 return
             self.page_playlist.sync(data[0], data[1])
-        elif self.stacked_widget.currentIndex() == 5:
+        elif self.stacked_widget.currentIndex() == Page.LIBRARY:
             self._load_library_page(animate=False)
 
     refresh_current_list = reload_current_list

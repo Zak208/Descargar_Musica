@@ -13,6 +13,7 @@ from ui.scrolling import polish_scroll_area
 from ui.song_card import SongResultCard
 from ui.spotify_views import AlbumCard
 from ui.widgets import ReflowGrid
+from ui.pages import Page
 
 FILTERS = (("all", "Todo"), ("tracks", "Canciones"), ("artists", "Artistas"), ("albums", "Álbumes"))
 CATEGORY_FOR_FILTER = {"all": "tracks", "tracks": "tracks", "artists": "artists", "albums": "albums"}
@@ -134,7 +135,7 @@ class SearchMixin:
                 return
             self.local_search(query)
             return
-        self.switch_to_page(1)
+        self.switch_to_page(Page.RESULTS)
         self.clear_results_container()
         for worker in (self._catalog_worker, self._direct_worker):
             if worker is not None and worker.isRunning():
@@ -264,11 +265,11 @@ class SearchMixin:
 
     # ------------------------------------------------- cargar más al llegar al final
     def _on_results_scroll(self, _value: int):
-        if self.stacked_widget.currentIndex() == 1:
+        if self.stacked_widget.currentIndex() == Page.RESULTS:
             self._maybe_load_more()
 
     def _maybe_load_more(self):
-        if self._direct_mode or self._loading_more or not self._q or self.stacked_widget.currentIndex() != 1:
+        if self._direct_mode or self._loading_more or not self._q or self.stacked_widget.currentIndex() != Page.RESULTS:
             return
         cat = CATEGORY_FOR_FILTER[self._filter]
         if cat in self._exhausted:

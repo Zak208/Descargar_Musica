@@ -3,6 +3,23 @@
 Formato: `MAYOR.MENOR.PARCHE`. MAYOR = cambios que rompen datos o uso, MENOR = funciones nuevas, PARCHE = arreglos.
 Cada versión subida a GitHub tiene su etiqueta `vX.Y.Z` (pestaña *Releases/Tags*).
 
+## 1.15.0
+**Funciones nuevas**
+- **Modo privado** (Ajustes → Conexión): la aplicación deja de buscar por su cuenta letras, recomendaciones y datos de artistas; solo usa internet cuando tú lo pides (buscar, descargar, escuchar un adelanto).
+- **Listas M3U**: exportar todas tus listas como `.m3u8` (casi cualquier reproductor las abre) e importar listas M3U/M3U8 (rutas absolutas o relativas; ignora direcciones de internet y archivos que no existen). Ajustes → Copia de seguridad.
+- **Acceso a YouTube** (Ajustes → Avanzado): modo «Automático» (que yt-dlp elija) por si YouTube rechaza el normal —y se prueba solo el modo contrario al reintentar una descarga que falla—, y **cookies del navegador** (Chrome, Edge, Firefox, Brave, Opera, Vivaldi) para vídeos con restricción de edad. Solo se leen en tu equipo.
+- Si una canción no se puede medir (volumen), se apunta para no reintentarlo en cada reproducción.
+
+**Orden y calidad del código**
+- `ui/main_window.py` pasa de 2.236 a ~1.500 líneas: las actualizaciones, las letras, la sesión, el tema y el ecualizador viven en sus propios mixins (`updates_mixin`, `lyrics_mixin`, `session_mixin`, `theme_mixin`, `equalizer_mixin`).
+- Las páginas de la ventana tienen nombre (`ui.pages.Page`) en vez de números sueltos.
+- El reconocedor de voz (convertir el audio, escuchar, controlar el tiempo y la cancelación) está una sola vez (`transcribe_service.listen`) en vez de copiado tres veces; ahora el límite de tiempo se cumple aunque el reconocedor se quede callado.
+- Una sola limpieza de títulos (`services/title_clean.py`) con palabras enteras: «Eclipse» ya no se confunde con «clip» (antes «Song (Eclipse)» y «Song» contaban como duplicadas).
+- Código muerto eliminado, `ruff` configurado (`pyproject.toml`) y en la publicación y el CI; imports sin usar limpiados.
+- El programa compilado ya no lleva el código fuente duplicado.
+- Buenos hábitos: `LICENSE` (MIT), `THIRD_PARTY_NOTICES.md`, `CONTRIBUTING.md`, `.editorconfig`, `.pre-commit-config.yaml`, Dependabot semanal, `requirements.lock.txt` con las versiones exactas y `tests/test_pruebas.py` para usar `pytest`.
+- Pruebas nuevas: `prueba_calidad.py`.
+
 ## 1.14.1
 **Arreglos**
 - **La aplicación no encontraba versiones nuevas**: consultaba la API de GitHub, que solo deja 60 peticiones por hora y conexión; cuando se gastaban (o la conexión se compartía) no avisaba de nada y encima decía «todo al día». Ahora la versión se lee de la web de GitHub (la redirección de `releases/latest`), que no tiene ese límite, y las direcciones de descarga se calculan; la API queda solo como último recurso.

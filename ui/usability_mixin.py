@@ -5,6 +5,7 @@ from PySide6.QtWidgets import QApplication, QPushButton
 
 from services.spotify_service import is_spotify_url
 from services.youtube_service import is_youtube_url
+from ui.pages import Page
 
 UNDO_SECONDS = 90
 
@@ -19,7 +20,7 @@ class UsabilityMixin:
     def notify_undo(self, text: str, undo_fn, label: str = "Deshacer"):
         """Avisa de lo que se acaba de quitar y ofrece «Deshacer» (también con Ctrl+Z durante 90 segundos)."""
         self._undo = (time.time(), undo_fn)
-        margin = (self.player_bar.height() + 24) if self.player_bar.isVisible() else 40
+        margin = self.toast_margin()
         self.toast.show_message(text, bottom_margin=margin, action=(label, self.perform_undo))
 
     def perform_undo(self):
@@ -46,7 +47,7 @@ class UsabilityMixin:
     # ----------------------------------------------- teclado en las listas
     def list_key_navigation(self, event) -> bool:
         """↑ ↓ mueven la selección, Intro reproduce, Supr quita de la lista. True si se atendió la tecla."""
-        if self.stacked_widget.currentIndex() != 4:
+        if self.stacked_widget.currentIndex() != Page.LIST:
             return False
         return self.page_playlist.handle_key(event)
 

@@ -10,6 +10,7 @@ from ui.covers import list_cover_pixmap
 from ui.icons import icon
 from ui.settings_dialog import SettingsDialog
 from ui.widgets import ElidedLabel
+from ui.pages import Page
 
 SIDEBAR_WIDTH = 300
 THUMB = 48
@@ -116,7 +117,7 @@ def build_sidebar(self):
 
     # --- Panel 1: navegación ---
     nav_panel, nav_lay = _panel()
-    self.btn_nav_home = nav_button("Inicio", "home.svg", lambda: self.switch_to_page(0))
+    self.btn_nav_home = nav_button("Inicio", "home.svg", lambda: self.switch_to_page(Page.HOME))
     self.btn_nav_downloads = nav_button("Abrir carpeta de música", "folder.svg", self.open_music_folder)
     self.btn_nav_settings = nav_button("Ajustes", "settings.svg", self.open_settings)
     self.btn_nav_help = nav_button("Ayuda", "info.svg", self.open_help)

@@ -15,6 +15,7 @@ from ui.animations import expand_widget, shake
 from ui.icons import icon
 from ui.song_card import SongResultCard
 from ui.track_row import TrackRow
+from ui.pages import Page
 
 
 class OfflineBanner(QFrame):
@@ -185,7 +186,7 @@ class OfflineMixin:
     # --------------------------------------------------- búsqueda sin red
     def local_search(self, query: str):
         """Con o sin conexión forzada: busca solo dentro de tu música descargada."""
-        self.switch_to_page(1)
+        self.switch_to_page(Page.RESULTS)
         self.clear_results_container()
         for worker in (self._catalog_worker, self._direct_worker):
             if worker is not None and worker.isRunning():

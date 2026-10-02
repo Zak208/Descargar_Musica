@@ -5,14 +5,13 @@ import re
 from collections import defaultdict
 
 from services.library_search import fold
+from services.title_clean import strip_junk
 
-_JUNK = re.compile(r"[\(\[][^\)\]]*(official|oficial|video|vídeo|audio|lyric|letra|visualizer|remaster|hd|hq|clip|"
-                   r"explicit|version|versión|feat|ft\.?|con )[^\)\]]*[\)\]]", re.IGNORECASE)
 _FEAT = re.compile(r"\s+(feat|ft)\.?\s+.*$", re.IGNORECASE)
 
 
 def normalize_title(title: str) -> str:
-    text = _JUNK.sub("", title or "")
+    text = strip_junk(title, extra=True)
     text = _FEAT.sub("", text)
     return re.sub(r"\W+", "", fold(text))
 

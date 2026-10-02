@@ -165,6 +165,12 @@ def note_failure() -> None:
         QMetaObject.invokeMethod(_monitor, "report_failure", Qt.QueuedConnection)
 
 
+def private_mode() -> bool:
+    """Modo privado: la aplicación no consulta por su cuenta letras, recomendaciones ni datos de artistas (solo lo que tú
+    pides: buscar, descargar, escuchar adelantos)."""
+    return bool(load_settings().get("private_mode", False))
+
+
 def is_online() -> bool:
     """Seguro desde cualquier hilo: si el monitor aún no existe, se supone que hay conexión."""
     return _monitor.is_online() if _monitor is not None else True

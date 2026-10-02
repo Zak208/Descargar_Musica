@@ -5,16 +5,12 @@ palabras con las de la letra del usuario (aunque el reconocedor se equivoque en 
 de sus palabras. Es más fiable que generar la letra desde cero, porque el texto ya es el correcto."""
 import difflib
 import logging
-import os
 import re
 import shutil
-import subprocess
 import tempfile
-import time
 
 from PySide6.QtCore import QThread, Signal
 
-from services.ffmpeg_service import FFmpegService
 from services.library_search import fold
 from services.lyrics_service import parse_lrc
 
@@ -180,42 +176,11 @@ class AlignWorker(QThread):
     def run(self):
         from services import transcribe_service as T
         from services.heavy import heavy_task
-        ffmpeg = FFmpegService.get_ffmpeg_path()
-        cli = T.engine_path()
-        if not ffmpeg or cli is None or not (T.WHISPER_DIR / T.MODEL_NAME).is_file():
-            self.failed.emit("Falta el reconocedor de voz.")
-            return
         work = tempfile.mkdtemp(prefix="sincro_")
         try:
             with heavy_task("slow"):
-                wav = os.path.join(work, "audio.wav")
-                conv = subprocess.run([ffmpeg, "-y", "-v", "error", "-i", self.audio_path, "-vn", "-ac", "1", "-ar", "16000",
-                                       "-c:a", "pcm_s16le", wav], capture_output=True, timeout=300)
-                if conv.returncode != 0 or not os.path.isfile(wav):
-                    self.failed.emit("No se pudo leer el audio.")
-                    return
-                threads = max(1, min(4, (os.cpu_count() or 2) // 2))
-                low_priority = getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0)
-                cmd = [str(cli), "-m", str(T.WHISPER_DIR / T.MODEL_NAME), "-f", wav, "-olrc", "-of", os.path.join(work, "palabras"),
-                       "-l", "auto", "-t", str(threads), "-mc", "0", "-ml", "1", "-sow", "-pp"]
-                self._proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
-                                              errors="ignore", creationflags=low_priority)
-                started = time.time()
-                for raw in self._proc.stderr:
-                    m = re.search(r"progress\s*=\s*(\d+)%", raw)
-                    if m:
-                        self.progress.emit(int(m.group(1)))
-                    if time.time() - started > 1800:
-                        self._proc.kill()
-                        self.failed.emit("Tardó demasiado.")
-                        return
-                self._proc.wait()
-            if self.is_cancelled:
-                return
-            lrc = os.path.join(work, "palabras.lrc")
-            if self._proc.returncode != 0 or not os.path.isfile(lrc):
-                self.failed.emit("El reconocedor no pudo procesar la canción.")
-                return
+                lrc = T.listen(self.audio_path, work, "palabras", self, extra_args=("-ml", "1", "-sow", "-pp"),
+                               on_progress=self.progress.emit, limit_s=1800)
             with open(lrc, encoding="utf-8", errors="ignore") as f:
                 rec = recognized_words(parse_lrc(f.read()))
             times = align_lines(rec, self.lines)
@@ -223,6 +188,9 @@ class AlignWorker(QThread):
                 self.failed.emit("No se pudo encajar la letra con la canción (¿es la misma canción y el mismo idioma?).")
                 return
             self.done.emit(times)
+        except T.SpeechError as e:
+            if str(e):
+                self.failed.emit(str(e))
         except Exception as e:
             logger.warning(f"Error al sincronizar la letra: {e}")
             self.failed.emit(str(e))

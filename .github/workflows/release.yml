@@ -32,7 +32,7 @@ jobs:
       - name: Instalar dependencias
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements-build.txt pyflakes
+          pip install -r requirements-build.txt ruff
 
       - name: Comprobar que la etiqueta coincide con version.py
         if: startsWith(github.ref, 'refs/tags/v')
@@ -42,13 +42,10 @@ jobs:
           $tag = "${{ github.ref_name }}".TrimStart("v")
           if ($ver -ne $tag) { throw "La etiqueta ($tag) no coincide con version.py ($ver): la actualización automática entraría en bucle" }
 
-      - name: Revisar el código (errores graves)
-        shell: pwsh
+      - name: Revisar el código (ruff)
         run: |
           python -m compileall -q ui services config.py main.py version.py
-          $out = python -m pyflakes ui services config.py main.py version.py 2>&1 | Where-Object { $_ -notmatch "imported but unused|assigned to but never used|f-string is missing" }
-          if ($out) { $out; throw "pyflakes encontró problemas" }
-          exit 0   # pyflakes sale con 1 si encuentra avisos (aunque sean los ignorados): lo que cuenta es el filtro de arriba
+          ruff check ui services config.py main.py version.py
 
       - name: Compilar
         run: python -m PyInstaller --noconfirm --distpath dist_app --workpath build_tmp Descargar_Musica.spec

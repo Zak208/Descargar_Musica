@@ -8,6 +8,7 @@ from pathlib import Path
 from PySide6.QtCore import QThread, Signal
 from services.ffmpeg_service import FFmpegService
 from services.metadata_service import MetadataService
+from services.title_clean import has_junk
 from config import HISTORY_FILE, get_download_dir, get_audio_quality, get_organize_mode
 from services import quality as quality_service
 
@@ -106,12 +107,7 @@ def clean_youtube_title(raw_title: str, raw_uploader: str = "") -> tuple[str, st
         if any(w in content for w in keep_keywords):
             return match.group(0)
         # Eliminar coletillas de videoclip / formato
-        junk_keywords = [
-            'official', 'oficial', 'video', 'audio', 'lyric', 'letra',
-            'videoclip', 'clip', 'remaster', '4k', '1080p', 'hd', 'hq',
-            'visualizer', 'video musical', 'video lyric', 'subtitulado'
-        ]
-        if any(w in content for w in junk_keywords):
+        if has_junk(content):
             return ''
         return match.group(0)
 

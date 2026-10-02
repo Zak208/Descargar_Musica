@@ -18,3 +18,6 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "dev_tools/*" = ["F401", "E402", "B", "SIM", "UP", "C4"]
 "main.py" = ["E402"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

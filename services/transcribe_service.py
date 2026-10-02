@@ -11,7 +11,6 @@ import re
 import shutil
 import subprocess
 import tempfile
-import time
 import zipfile
 
 from services import http
@@ -157,6 +156,64 @@ def split_long_lines(lines: list, max_chars: int = MAX_LINE_CHARS) -> list:
     return out
 
 
+class SpeechError(Exception):
+    """El reconocedor de voz no pudo hacer su trabajo (el mensaje es apto para enseñarlo al usuario)."""
+
+
+def listen(audio_path: str, work: str, out_name: str, owner, extra_args=(), on_progress=None, limit_s: int = 1500) -> str:
+    """Pasa la canción a audio mono de 16 kHz y la escucha con el reconocedor. Devuelve la ruta del archivo .lrc con las
+    palabras o frases y sus momentos. Es lo que usan generar letras, sincronizarlas y medir cada palabra.
+
+    `owner` es el trabajo que llama: guarda ahí el proceso en marcha (`owner._proc`) para poder cancelarlo, y se mira
+    `owner.is_cancelled`. El límite de tiempo se cumple aunque el reconocedor se quede callado."""
+    import threading
+    ffmpeg = FFmpegService.get_ffmpeg_path()
+    cli = engine_path()
+    if not ffmpeg or cli is None or not (WHISPER_DIR / MODEL_NAME).is_file():
+        raise SpeechError("Falta el reconocedor de voz.")
+    if not os.path.isfile(audio_path):
+        raise SpeechError("No se encuentra el audio.")
+    wav = os.path.join(work, "audio.wav")
+    convert = [ffmpeg, "-y", "-v", "error", "-i", audio_path, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", wav]
+    owner._proc = subprocess.Popen(convert, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        owner._proc.wait(timeout=300)
+    except subprocess.TimeoutExpired:
+        owner._proc.kill()
+        raise SpeechError("No se pudo leer el audio.") from None
+    if getattr(owner, "is_cancelled", False):
+        raise SpeechError("")
+    if owner._proc.returncode != 0 or not os.path.isfile(wav):
+        raise SpeechError("No se pudo leer el audio.")
+
+    threads = max(1, min(4, (os.cpu_count() or 2) // 2))
+    low_priority = getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0)
+    cmd = [str(cli), "-m", str(WHISPER_DIR / MODEL_NAME), "-f", wav, "-olrc", "-of", os.path.join(work, out_name),
+           "-l", "auto", "-t", str(threads), "-mc", "0", *extra_args]
+    proc = owner._proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+                                          errors="ignore", creationflags=low_priority)
+    timed_out = []
+    watchdog = threading.Timer(limit_s, lambda: (timed_out.append(1), proc.kill()))      # también si no dice nada
+    watchdog.daemon = True
+    watchdog.start()
+    try:
+        for raw in proc.stderr:            # el reconocedor avisa de su avance: «progress = 35%»
+            m = re.search(r"progress\s*=\s*(\d+)%", raw)
+            if m and on_progress is not None:
+                on_progress(int(m.group(1)))
+        proc.wait()
+    finally:
+        watchdog.cancel()
+    if getattr(owner, "is_cancelled", False):
+        raise SpeechError("")
+    if timed_out:
+        raise SpeechError("Tardó demasiado.")
+    lrc = os.path.join(work, out_name + ".lrc")
+    if proc.returncode != 0 or not os.path.isfile(lrc):
+        raise SpeechError("El reconocedor no pudo procesar la canción.")
+    return lrc
+
+
 class TranscribeWorker(QThread):
     """Escucha un archivo de audio y guarda la letra generada (con tiempos) en el almacén de letras."""
     progress = Signal(int)       # 0-100 mientras el reconocedor escucha
@@ -184,41 +241,9 @@ class TranscribeWorker(QThread):
             self._transcribe()
 
     def _transcribe(self):
-        ffmpeg = FFmpegService.get_ffmpeg_path()
-        cli = engine_path()
-        if not ffmpeg or cli is None or not (WHISPER_DIR / MODEL_NAME).is_file():
-            self.failed.emit(self.key, "Falta el reconocedor de voz.")
-            return
         work = tempfile.mkdtemp(prefix="letra_")
         try:
-            wav = os.path.join(work, "audio.wav")
-            conv = subprocess.run([ffmpeg, "-y", "-v", "error", "-i", self.audio_path, "-vn", "-ac", "1", "-ar", "16000",
-                                   "-c:a", "pcm_s16le", wav], capture_output=True, timeout=300)
-            if conv.returncode != 0 or not os.path.isfile(wav):
-                self.failed.emit(self.key, "No se pudo leer el audio.")
-                return
-            threads = max(1, min(4, (os.cpu_count() or 2) // 2))
-            low_priority = getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0)
-            cmd = [str(cli), "-m", str(WHISPER_DIR / MODEL_NAME), "-f", wav, "-olrc", "-of", os.path.join(work, "letra"),
-                   "-l", "auto", "-t", str(threads), "-mc", "0", "-pp"]
-            self._proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
-                                          errors="ignore", creationflags=low_priority)
-            started = time.time()
-            for raw in self._proc.stderr:        # el reconocedor avisa de su avance: «progress = 35%»
-                m = re.search(r"progress\s*=\s*(\d+)%", raw)
-                if m:
-                    self.progress.emit(int(m.group(1)))
-                if time.time() - started > 1500:
-                    self._proc.kill()
-                    self.failed.emit(self.key, "Tardó demasiado.")
-                    return
-            self._proc.wait()
-            if self.is_cancelled:
-                return
-            lrc = os.path.join(work, "letra.lrc")
-            if self._proc.returncode != 0 or not os.path.isfile(lrc):
-                self.failed.emit(self.key, "El reconocedor no pudo procesar la canción.")
-                return
+            lrc = listen(self.audio_path, work, "letra", self, extra_args=("-pp",), on_progress=self.progress.emit)
             with open(lrc, encoding="utf-8", errors="ignore") as f:
                 lines = split_long_lines(clean_generated(parse_lrc(f.read())))
             if not lines:
@@ -227,6 +252,9 @@ class TranscribeWorker(QThread):
             text = "\n".join(f"{lyrics_store.format_ms(ms)} {t}" for ms, t in lines)
             data = lyrics_store.save(self.key, text, "auto")
             self.done.emit(self.key, data)
+        except SpeechError as e:
+            if str(e):
+                self.failed.emit(self.key, str(e))
         except Exception as e:
             logger.warning(f"Error al generar la letra: {e}")
             self.failed.emit(self.key, str(e))

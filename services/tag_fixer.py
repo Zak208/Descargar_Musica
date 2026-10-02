@@ -11,6 +11,7 @@ from PySide6.QtCore import QThread, Signal
 from services import http
 from services.duplicates import normalize_title, primary_artist
 from services.library_search import fold
+from services.title_clean import strip_junk
 from services.metadata_service import MetadataService
 
 logger = logging.getLogger(__name__)
@@ -18,8 +19,6 @@ logger = logging.getLogger(__name__)
 POOR_ARTISTS = ("", "música local", "musica local", "artista desconocido")
 MIN_SCORE = 0.62
 MAX_CANDIDATES = 120
-_JUNK = re.compile(r"[\(\[][^\)\]]*(official|oficial|video|vídeo|audio|lyric|letra|visualizer|remaster|hd|hq|clip)[^\)\]]*[\)\]]",
-                   re.IGNORECASE)
 
 
 def needs_fixing(item: dict) -> bool:
@@ -34,10 +33,10 @@ def candidates(items: list) -> list:
 def guess_query(item: dict) -> tuple:
     """(artista, título) deducidos de las etiquetas o del nombre del archivo («Artista - Título»)."""
     stem = os.path.splitext(os.path.basename(item.get("local_path", "")))[0]
-    title = _JUNK.sub("", item.get("title") or stem).strip()
+    title = strip_junk(item.get("title") or stem).strip()
     artist = "" if (item.get("uploader") or "").strip().lower() in POOR_ARTISTS else item["uploader"]
     if not artist and " - " in stem:
-        left, right = [x.strip() for x in _JUNK.sub("", stem).split(" - ", 1)]
+        left, right = [x.strip() for x in strip_junk(stem).split(" - ", 1)]
         artist, title = left, right
     return artist, title
 

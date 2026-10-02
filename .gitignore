@@ -29,3 +29,8 @@ _archivo*/
 .claude/
 Thumbs.db
 .DS_Store
+
+# --- Restos de datos y de escrituras seguras ---
+app.lock
+*.corrupto-*
+*.restaurando

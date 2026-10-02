@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
 from config import (
     get_download_dir, get_audio_quality, get_organize_mode, load_settings, save_settings
 )
-from services import backup_service, quality, storage_service
+from services import backup_service, m3u_service, quality, storage_service
 from ui.dialogs import ask_confirm, show_message
 from ui.styles import THEME_CONFIGS
 from ui.icons import icon
@@ -236,6 +236,11 @@ class SettingsDialog(InlineDialog):
             "Con el modo sin conexión puedes forzarlo para no gastar datos.")
         self.chk_offline = QCheckBox("Modo sin conexión (no usar internet)")
         net_lay.addWidget(self.chk_offline)
+        self.chk_private = QCheckBox("Modo privado: no buscar letras, recomendaciones ni datos de artistas por mi cuenta")
+        self.chk_private.setToolTip("Solo se usa internet cuando tú lo pides (buscar, descargar, escuchar un adelanto).")
+        self.chk_private.setChecked(bool(load_settings().get("private_mode", False)))
+        self.chk_private.toggled.connect(lambda on: self._save_flag("private_mode", on))
+        net_lay.addWidget(self.chk_private)
         root.addWidget(net_box)
 
         # --- Actualizaciones ---
@@ -304,6 +309,16 @@ class SettingsDialog(InlineDialog):
         bk_row.addWidget(self.btn_restore)
         bk_row.addStretch()
         bk_lay.addLayout(bk_row)
+        m3u_row = QHBoxLayout()
+        self.btn_export_m3u = _button("Exportar mis listas (M3U)...", "download.svg")
+        self.btn_export_m3u.setToolTip("Guarda cada lista como un archivo .m3u8 que puedes abrir en casi cualquier reproductor.")
+        self.btn_export_m3u.clicked.connect(self.export_m3u)
+        self.btn_import_m3u = _button("Importar listas (M3U)...", "refresh.svg")
+        self.btn_import_m3u.clicked.connect(self.import_m3u)
+        m3u_row.addWidget(self.btn_export_m3u)
+        m3u_row.addWidget(self.btn_import_m3u)
+        m3u_row.addStretch()
+        bk_lay.addLayout(m3u_row)
         root.addWidget(bk_box)
 
         # --- Apariencia ---
@@ -502,6 +517,29 @@ class SettingsDialog(InlineDialog):
         self.refresh_space()
 
     # ------------------------------------------------------ copia de seguridad
+    def export_m3u(self):
+        folder = QFileDialog.getExistingDirectory(self, "¿Dónde guardo las listas?", str(get_download_dir()))
+        if not folder:
+            return
+        try:
+            result = m3u_service.export_all(folder)
+        except Exception as e:
+            show_message(self, "No se pudieron exportar las listas", str(e))
+            return
+        extra = f" ({result['omitidas']} sin descargar no se incluyen)" if result["omitidas"] else ""
+        self.window_ref.notify(f"{result['listas']} listas exportadas con {result['canciones']} canciones{extra}")
+
+    def import_m3u(self):
+        paths, _ = QFileDialog.getOpenFileNames(self, "Elige listas M3U", str(get_download_dir()), "Listas (*.m3u *.m3u8)")
+        if not paths:
+            return
+        result = m3u_service.import_files(paths)
+        if not result["listas"]:
+            show_message(self, "No se importó nada", "No se encontró ninguna canción de tu equipo en esos archivos.")
+            return
+        self.window_ref.refresh_playlists_sidebar()
+        self.window_ref.notify(f"{result['listas']} listas importadas con {result['canciones']} canciones")
+
     def save_backup(self):
         path, _ = QFileDialog.getSaveFileName(self, "Guardar copia de seguridad", backup_service.default_backup_name(),
                                               "Copia de seguridad (*.zip)")

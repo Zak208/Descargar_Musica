@@ -2,7 +2,7 @@
 import logging
 
 from ui import perf
-from services import library_db, local_mixes
+from services import library_db, local_mixes, network_service
 
 
 from services.artist_service import ArtistService
@@ -16,6 +16,7 @@ from ui.home_shelves import (
 from ui.formatting import format_total
 from ui.home_widgets import RecentTrackCard
 from ui.spotify_views import AlbumCard
+from ui.pages import Page
 
 
 class HomeMixin:
@@ -127,7 +128,7 @@ class HomeMixin:
     def play_home_intro(self):
         """Primera vez que se ve Inicio tras abrir: el saludo entra por palabras y las secciones suben en cascada."""
         from ui.animations import slide_fade_in
-        if self.stacked_widget.currentIndex() != 0 or getattr(self, "_home_intro_done", False):
+        if self.stacked_widget.currentIndex() != Page.HOME or getattr(self, "_home_intro_done", False):
             return
         self._home_intro_done = True
         self.home_title.play()
@@ -153,8 +154,8 @@ class HomeMixin:
     # ------------------------------------------------------ recomendaciones
     def refresh_recommendations(self, force: bool = False):
         """Analiza tu música y prepara las recomendaciones (con caché para que Inicio abra al instante)."""
-        if self.is_offline():
-            return          # sin conexión no se piden recomendaciones: Inicio muestra tu música
+        if self.is_offline() or network_service.private_mode():
+            return          # sin conexión (o en modo privado) no se piden recomendaciones: Inicio muestra tu música
         try:
             profile = build_taste_profile(self.library_items(), PlaylistService.get_favorites(),
                                           ArtistService.get_followed())

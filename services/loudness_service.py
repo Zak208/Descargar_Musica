@@ -18,6 +18,9 @@ MAX_CUT_DB = 12.0         # nunca se baja más de 12 dB
 _INTEGRATED = re.compile(r"I:\s*(-?\d+(?:\.\d+)?)\s*LUFS")
 
 
+NOT_MEASURABLE = -99.0       # «no se pudo medir»: gain_for() lo trata como sin ajuste
+
+
 def gain_for(lufs: float | None) -> float:
     """Factor de volumen (0-1) que iguala la canción al nivel de referencia. Solo se baja: las suaves no se suben."""
     if lufs is None:
@@ -72,9 +75,9 @@ class LoudnessWorker(QThread):
                 self.done.emit(self.path, known)
                 return
             lufs = measure(self.path)
+        try:    # si no se pudo medir se apunta igualmente (valor imposible): así no se reintenta en cada reproducción
+            library_db.set_loudness(self.path, os.path.getmtime(self.path), lufs if lufs is not None else NOT_MEASURABLE)
+        except OSError:
+            pass
         if lufs is not None:
-            try:
-                library_db.set_loudness(self.path, os.path.getmtime(self.path), lufs)
-            except OSError:
-                pass
             self.done.emit(self.path, lufs)

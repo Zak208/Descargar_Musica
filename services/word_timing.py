@@ -11,16 +11,12 @@ hay dos caminos:
 Cada palabra se describe como (inicio_ms, fin_ms, car_inicio, car_fin): su momento y su posición dentro del texto de la frase."""
 import hashlib
 import logging
-import os
 import re
-import subprocess
 import tempfile
-import time
 
 from PySide6.QtCore import QThread, Signal
 
 from config import APP_DATA_DIR, atomic_write_json
-from services.ffmpeg_service import FFmpegService
 from services.lyric_align import match_words, norm_word, recognized_words
 from services.lyrics_service import parse_lrc
 
@@ -228,43 +224,20 @@ class WordTimingWorker(QThread):
         from services import transcribe_service as T
         from services.heavy import heavy_task
         self.setPriority(QThread.LowPriority)
-        ffmpeg = FFmpegService.get_ffmpeg_path()
-        cli = T.engine_path()
-        if not ffmpeg or cli is None or not (T.WHISPER_DIR / T.MODEL_NAME).is_file() or not os.path.isfile(self.audio_path):
-            self.failed.emit("Falta el reconocedor de voz.")
-            return
         work = tempfile.mkdtemp(prefix="palabras_")
         try:
             with heavy_task("slow"):
                 if self.is_cancelled:
                     return
-                wav = os.path.join(work, "audio.wav")
-                conv = subprocess.run([ffmpeg, "-y", "-v", "error", "-i", self.audio_path, "-vn", "-ac", "1", "-ar", "16000",
-                                       "-c:a", "pcm_s16le", wav], capture_output=True, timeout=300)
-                if conv.returncode != 0 or not os.path.isfile(wav) or self.is_cancelled:
-                    self.failed.emit("No se pudo leer el audio.")
-                    return
-                threads = max(1, min(4, (os.cpu_count() or 2) // 2))
-                low_priority = getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0)
-                cmd = [str(cli), "-m", str(T.WHISPER_DIR / T.MODEL_NAME), "-f", wav, "-olrc", "-of", os.path.join(work, "palabras"),
-                       "-l", "auto", "-t", str(threads), "-mc", "0", "-ml", "1", "-sow"]
-                self._proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                              creationflags=low_priority)
-                started = time.time()
-                while self._proc.poll() is None:
-                    time.sleep(0.5)
-                    if self.is_cancelled or time.time() - started > 1500:
-                        self._proc.kill()
-                        return
-            lrc = os.path.join(work, "palabras.lrc")
-            if self._proc.returncode != 0 or not os.path.isfile(lrc):
-                self.failed.emit("El reconocedor no pudo procesar la canción.")
-                return
+                lrc = T.listen(self.audio_path, work, "palabras", self, extra_args=("-ml", "1", "-sow"))
             with open(lrc, encoding="utf-8", errors="ignore") as f:
                 rec = recognized_words(parse_lrc(f.read()))
             spans = refine(self.lines, rec)
             save_spans(self.key, self.lines, spans)
             self.done.emit(self.key, spans)
+        except T.SpeechError as e:
+            if str(e):
+                self.failed.emit(str(e))
         except Exception as e:
             logger.warning(f"No se pudieron medir las palabras de la letra: {e}")
             self.failed.emit(str(e))

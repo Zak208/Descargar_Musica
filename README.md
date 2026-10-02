@@ -1,6 +1,6 @@
 # Descargador de Música
 
-**Versión actual: 1.14.1** · [Historial de versiones](CHANGELOG.md) · cada versión subida tiene su etiqueta `vX.Y.Z` en GitHub
+**Versión actual: 1.15.0** · [Historial de versiones](CHANGELOG.md) · cada versión subida tiene su etiqueta `vX.Y.Z` en GitHub
 
 Aplicación de escritorio para **Windows** que combina un reproductor con aspecto de Spotify y un descargador de música:
 buscas una canción, un artista o un álbum, escuchas un adelanto y la descargas a tu equipo en MP3, M4A, FLAC o WAV,
@@ -110,6 +110,7 @@ informática. **Tu música descargada y tus listas funcionan también sin intern
   **«Liberar espacio»** y un **informe de problemas sin datos personales** (Ayuda).
 - **Actualizaciones**: el motor de descargas (yt-dlp) se actualiza por separado (desde Ayuda o con el mismo botón azul de
   abajo) para que las descargas sigan funcionando cuando YouTube cambia algo.
+- **Modo privado, listas M3U y acceso a YouTube**: en Ajustes puedes impedir que la aplicación busque nada por su cuenta, exportar e importar tus listas en M3U y elegir cómo se presenta ante YouTube (con cookies del navegador opcionales).
 - **Karaoke por palabras**: la letra sincronizada rellena cada palabra a su ritmo (sílabas y ritmo de la canción); en
   canciones descargadas, con el reconocedor de voz instalado, se miden una vez los tiempos reales de cada palabra.
 - **La aplicación se actualiza sola desde GitHub**: cuando subes una versión nueva (etiqueta `vX.Y.Z`) y en otro ordenador
@@ -118,6 +119,10 @@ informática. **Tu música descargada y tus listas funcionan también sin intern
   reiniciar; al volver a abrirla avisa de a qué versión se actualizó. Hace falta la 1.12 o posterior en
   cada ordenador (la primera vez se instala a mano desde Releases).
 - **Asistente de bienvenida** de 3 pasos y **recorrido guiado** (Ayuda).
+
+## Licencia
+
+Código bajo licencia [MIT](LICENSE). Los componentes de terceros que usa están en [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Para colaborar: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Requisitos
 
@@ -365,6 +370,7 @@ python dev_tools/prueba_fundido.py       # aleatorio coherente y fundido cruzado
 python dev_tools/prueba_animaciones.py   # niveles de movimiento, reposo, efectos, controles, avisos, visualizador, Windows
 python dev_tools/prueba_actualizar.py    # actualización desde GitHub: huella, instalación (se ejecuta de verdad) y botón azul
 python dev_tools/ejecutar_pruebas.py     # todas las pruebas seguidas (código de salida 1 si alguna falla)
+python dev_tools/prueba_calidad.py      # M3U, limpieza de títulos, modo privado, acceso a YouTube, ajustes nuevos
 python dev_tools/prueba_robustez.py     # JSON a la vez/estropeados, favoritos, copias, enlaces, biblioteca, descargas, una sola copia
 python dev_tools/prueba_palabras.py      # karaoke por palabras: tiempos, reparto, guardado y barrido por píxeles
 python dev_tools/prueba_letra_cambio.py  # la letra del panel se ve al cambiar de canción (abre una ventana real un momento)

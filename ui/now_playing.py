@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QScrollArea, QWidget, QProgressBar
 )
 
+from services import network_service
 from services.artist_service import ArtistService
 from services.lyrics_service import LyricsWorker
 from services.playlist_service import PlaylistService
@@ -666,6 +667,9 @@ class NowPlayingPanel(QFrame):
         self._refresh_follow()
         if not name:
             self.artist_card.setVisible(False)
+            return
+        if network_service.private_mode():
+            self.artist_bio.setText("Modo privado: no se busca información del artista en internet.")
             return
         self._artist_worker = ArtistInfoWorker(name)
         self._artist_worker.ready.connect(lambda data, n=name: self._on_artist_info(data, n))

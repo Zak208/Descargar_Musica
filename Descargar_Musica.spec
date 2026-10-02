@@ -3,7 +3,8 @@
 
 import os
 
-datas = [('config.py', '.'), ('services', 'services'), ('ui', 'ui'), ('assets', 'assets')]
+# el código (config.py, services, ui) ya va compilado dentro del programa: copiarlo también solo duplicaría el peso
+datas = [('assets', 'assets')]
 # ffmpeg.exe (opcional: si no está, la app lo descarga la primera vez). ffprobe.exe NO se incluye: no hace falta
 # (las conversiones funcionan solo con ffmpeg) y ocupa unos 145 MB.
 if os.path.isfile('bin/ffmpeg.exe'):

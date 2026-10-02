@@ -3,6 +3,7 @@ import time
 import logging
 import requests
 from services import http
+from services.title_clean import strip_junk
 from PySide6.QtCore import QThread, Signal
 
 logger = logging.getLogger(__name__)
@@ -25,14 +26,10 @@ def parse_lrc(lrc_text: str) -> list[tuple[int, str]]:
 
 
 HEADERS = {"User-Agent": "DescargadorMusicaApp/2.0"}
-_JUNK_RE = re.compile(
-    r"[\(\[][^\)\]]*(official|oficial|video|audio|lyric|letra|visualizer|remaster|4k|hd|hq|clip)[^\)\]]*[\)\]]",
-    re.IGNORECASE,
-)
 
 
 def _clean(text: str) -> str:
-    text = _JUNK_RE.sub("", text or "")
+    text = strip_junk(text or "")
     text = re.sub(r"\s+", " ", text).strip(" -|_")
     return text
 
@@ -211,7 +208,7 @@ class LyricsWorker(QThread):
             embedded["title"], embedded["artist"] = self.title, self.artist
             self.lyrics_ready.emit(embedded)
             return
-        result = fetch_lyrics(self.title, self.artist) if network_service.is_online() else None
+        result = fetch_lyrics(self.title, self.artist) if (network_service.is_online() and not network_service.private_mode()) else None
         if self.is_cancelled:
             return
         if result:
@@ -228,5 +225,8 @@ class LyricsWorker(QThread):
             self.lyrics_ready.emit(lyrics_store.to_result(stored, self.title, self.artist))
         else:
             offline = not network_service.is_online()
+            if network_service.private_mode():
+                self.lyrics_error.emit("Modo privado: no se busca la letra en internet. Puedes escribirla tú o generarla con el sistema.")
+                return
             self.lyrics_error.emit("Sin conexión: esta canción no tiene letra guardada todavía." if offline
                                    else "No hemos encontrado la letra de esta canción.")
