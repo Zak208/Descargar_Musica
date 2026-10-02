@@ -91,11 +91,46 @@ def _clear_effect(widget):
         pass
 
 
-def pop_icon(button: QPushButton, grow: float = 1.4, duration: int = 260):
+def heart_ring(button: QPushButton, size: int = 46):
+    """Un aro del color del tema se expande desde el botón y se desvanece (el «latido» de guardar una canción)."""
+    parent = button.parentWidget()
+    if parent is None or not motion.enabled() or not button.isVisible():
+        return
+    from PySide6.QtWidgets import QLabel
+    from ui import frames
+    from ui.styles import accent
+    strip = frames.ring_frames(size, accent())
+    label = QLabel(parent)
+    label.setAttribute(Qt.WA_TransparentForMouseEvents)
+    label.setStyleSheet("background: transparent;")
+    label.setFixedSize(size, size)
+    center = button.geometry().center()
+    label.move(center.x() - size // 2, center.y() - size // 2)
+    label.setPixmap(strip[0])
+    label.show()
+    label.raise_()
+    anim = QVariantAnimation(label)
+    anim.setStartValue(0)
+    anim.setEndValue(len(strip) - 1)
+    anim.setDuration(260)
+    anim.valueChanged.connect(lambda v: label.setPixmap(strip[max(0, min(len(strip) - 1, int(v)))]))
+
+    def done():
+        label.hide()
+        label.deleteLater()
+
+    anim.finished.connect(done)
+    label._anim = anim
+    anim.start()
+
+
+def pop_icon(button: QPushButton, grow: float = 1.4, duration: int = 260, ring: bool = False):
     """El icono del botón 'late': crece y vuelve a su tamaño (por ejemplo al dar me gusta)."""
     base = button.iconSize()
     if base.width() <= 0 or not motion.enabled():
         return
+    if ring:
+        heart_ring(button)
     big = QSize(int(base.width() * grow), int(base.height() * grow))
     anim = QPropertyAnimation(button, b"iconSize", button)
     anim.setDuration(duration)
@@ -403,3 +438,69 @@ def expand_widget(widget: QWidget, show: bool, duration: int = 160):
     anim.finished.connect(done)
     widget._expand_anim = anim
     anim.start()
+
+
+RIPPLE_NAMES = {"GiantActionBtn", "BigPlayBtn", "DownloadBtn", "BatchDownloadBtn", "RoundPlayBtn", "TilePlayBtn"}
+
+
+def install_ripples(root: QWidget):
+    """Onda al pulsar en los botones principales que hay dentro de `root` (se llama al crear pantallas y ventanas)."""
+    for btn in root.findChildren(QPushButton):
+        if btn.objectName() in RIPPLE_NAMES and not btn.property("_ripple"):
+            btn.setProperty("_ripple", True)
+            ripple_feedback(btn)
+
+
+def fade_out_hide(widget: QWidget, duration: int = 200, delay: int = 0):
+    """El widget se desvanece y se oculta (con un retraso opcional, para hacer cascadas)."""
+    if not motion.enabled() or not widget.isVisible():
+        widget.hide()
+        return
+
+    def start():
+        try:
+            effect = QGraphicsOpacityEffect(widget)
+            effect.setOpacity(1.0)
+            widget.setGraphicsEffect(effect)
+            anim = QPropertyAnimation(effect, b"opacity", widget)
+            anim.setDuration(duration)
+            anim.setStartValue(1.0)
+            anim.setEndValue(0.0)
+            anim.setEasingCurve(QEasingCurve.OutCubic)
+
+            def done():
+                try:
+                    widget.hide()
+                    widget.setGraphicsEffect(None)
+                except RuntimeError:
+                    pass
+
+            anim.finished.connect(done)
+            widget._fade_anim = anim
+            anim.start()
+        except RuntimeError:
+            pass
+
+    if delay > 0:
+        QTimer.singleShot(delay, start)
+    else:
+        start()
+
+
+def show_fading(widget: QWidget, duration: int = 220, delay: int = 0):
+    """Muestra el widget con un fundido, empezando tras `delay` (para cascadas)."""
+    widget.hide()
+
+    def start():
+        try:
+            widget.show()
+            fade_in(widget, duration)
+        except RuntimeError:
+            pass
+
+    if not motion.enabled():
+        widget.show()
+    elif delay > 0:
+        QTimer.singleShot(delay, start)
+    else:
+        start()

@@ -152,10 +152,20 @@ class Toast(QFrame):
         self._clones.insert(0, clone)
         while len(self._clones) > MAX_STACK - 1:
             old = self._clones.pop()
-            old.dismiss_now()
+            try:
+                old.dismiss_now()
+            except RuntimeError:
+                pass
 
     def _reposition_clones(self):
-        self._clones = [c for c in self._clones if c.isVisible()]
+        alive = []
+        for clone in self._clones:
+            try:
+                if clone.isVisible():
+                    alive.append(clone)
+            except RuntimeError:            # ya se borró solo
+                pass
+        self._clones = alive
         y = self._home.y()
         for clone in self._clones:
             y -= clone.height() + 8

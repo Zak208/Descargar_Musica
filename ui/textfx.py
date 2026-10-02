@@ -7,15 +7,17 @@ from PySide6.QtWidgets import QLabel, QWidget
 
 from ui import motion
 from ui.anim_clock import clock
+from ui.widgets import ElidedLabel
 
 
 def _text_color(label: QLabel) -> QColor:
     return label.palette().color(QPalette.WindowText)
 
 
-class SwapLabel(QLabel):
+class SwapLabel(ElidedLabel):
     """Etiqueta de una línea que, al cambiar el texto, hace subir el anterior mientras se desvanece y entra el nuevo
-    desde abajo (como el título de la canción que suena)."""
+    desde abajo (como el título de la canción que suena). Si el texto no cabe se recorta con «…» y, con la marquesina
+    activada, se desplaza al pasar el ratón."""
 
     def __init__(self, text: str = "", parent=None):
         super().__init__(text, parent)
@@ -28,7 +30,7 @@ class SwapLabel(QLabel):
         self._anim.finished.connect(self._done)
 
     def setText(self, text: str):
-        previous = self.text()
+        previous = self.fullText()
         super().setText(text)
         if text == previous or not previous or not motion.enabled() or not motion.visible_ok(self):
             self._t = 1.0
@@ -69,7 +71,7 @@ class SwapLabel(QLabel):
         new_c.setAlphaF(min(1.0, self._t * 1.4))
         p.setPen(new_c)
         p.drawText(rect.translated(0, shift * (1.0 - self._t)), int(self.alignment()) | Qt.AlignVCenter,
-                   fm.elidedText(self.text(), Qt.ElideRight, int(rect.width())))
+                   fm.elidedText(self.fullText(), Qt.ElideRight, int(rect.width())))
 
 
 class CountLabel(QLabel):

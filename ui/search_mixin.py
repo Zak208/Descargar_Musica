@@ -322,6 +322,7 @@ class SearchMixin:
         self.search_loading.setVisible(False)
         if not results:
             self.status_label.setText("No hemos encontrado nada. Prueba con otras palabras o pega un enlace.")
+            self.topbar.error_flash()
             return
         for chip in self.search_chips.values():
             chip.setVisible(False)
@@ -344,3 +345,4 @@ class SearchMixin:
         self.more_loading.setVisible(False)
         self._loading_more = False
         self.status_label.setText(friendly_error(err_msg))
+        self.topbar.error_flash()

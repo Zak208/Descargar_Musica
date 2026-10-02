@@ -633,6 +633,10 @@ class ListPage(QWidget):
     def _on_search(self, *_):
         self._materialized = ROW_BATCH
         self._reconcile()
+        text = self.search.text().strip()
+        for card in self._cards.values():
+            card.title_label.set_highlight(text)
+            card.artist_label.set_highlight(text)
 
     def set_sort(self, key: str, descending: bool | None = None):
         """Ordena por `key`; si se repite la misma clave se invierte el sentido."""

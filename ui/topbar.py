@@ -110,6 +110,21 @@ class TopBar(QWidget):
                                        else "¿Qué quieres escuchar? Busca o pega un enlace")
         self._timer.setInterval(350 if offline else 900)
 
+    def error_flash(self):
+        """La búsqueda falló o no encontró nada: el campo tiembla y se ve un instante con borde rojo."""
+        from ui.animations import shake
+        shake(self.search)
+        self.search.setProperty("error", True)
+        self.search.style().unpolish(self.search)
+        self.search.style().polish(self.search)
+
+        def clear():
+            self.search.setProperty("error", False)
+            self.search.style().unpolish(self.search)
+            self.search.style().polish(self.search)
+
+        QTimer.singleShot(700, clear)
+
     def set_text(self, text: str, silent: bool = True):
         self.search.blockSignals(silent)
         self.search.setText(text)

@@ -54,7 +54,9 @@ def build_player_bar(self):
     self.player_title = SwapLabel("Cargando...")
     self.player_title.setObjectName("PlayerTitle")
     self.player_title.setWordWrap(False)
+    self.player_title.set_marquee(True)
     self.player_artist = SwapLabel("")
+    self.player_artist.set_marquee(True)
     self.player_artist.setObjectName("PlayerArtist")
     info_text_layout.addWidget(self.player_title)
     info_text_layout.addWidget(self.player_artist)
@@ -115,6 +117,7 @@ def build_player_bar(self):
 
     # Play / Pause
     self.btn_play_pause = PlayPauseButton()
+    self.btn_play_pause.setToolTip("Reproducir / pausa")
     self.btn_play_pause.setIconSize(QSize(20, 20))
     self.btn_play_pause.setObjectName("PlayPauseBtn")
     self.btn_play_pause.setCursor(Qt.PointingHandCursor)

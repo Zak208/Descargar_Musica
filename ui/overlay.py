@@ -5,7 +5,7 @@ from PySide6.QtGui import QPainter, QColor
 from PySide6.QtWidgets import QWidget, QFrame, QApplication, QPushButton
 
 from ui import motion
-from ui.animations import slide_fade_in
+from ui.animations import install_ripples, slide_fade_in
 
 DIM_ALPHA = 175.0
 
@@ -117,6 +117,7 @@ class OverlayHost(QWidget):
         for other in self._stack:
             other.hide()
         self._stack.append(dlg)
+        install_ripples(dlg)
         first = not self.isVisible()
         self.show()
         self.raise_()

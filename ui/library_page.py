@@ -57,6 +57,9 @@ class ListCard(TileHover, QFrame):
 
     def mouseReleaseEvent(self, ev):
         if ev.button() == Qt.LeftButton and self.rect().contains(ev.pos()):
+            win = self.window()
+            if hasattr(win, "remember_cover_source") and self.tile_cover is not None:
+                win.remember_cover_source(self.tile_cover)
             self.clicked.emit(self.kind, self.list_id)
         super().mouseReleaseEvent(ev)
 

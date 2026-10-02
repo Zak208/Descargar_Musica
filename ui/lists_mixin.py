@@ -359,6 +359,7 @@ class ListsMixin:
         self._current_list = (kind, list_id)
         self.page_playlist.load(kind, list_id, name, tracks)
         self.switch_to_page(4)
+        self._travel_cover(lambda: self.page_playlist.tile)       # la portada pulsada viaja a la cabecera
 
     def open_playlist_page(self, p_id: str):
         self.open_list("playlist", p_id)

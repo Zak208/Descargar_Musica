@@ -146,6 +146,9 @@ QLineEdit#TopSearch {
 QLineEdit#TopSearch:hover {
     background-color: #2C2C2C;
 }
+QLineEdit#TopSearch[error="true"] {
+    border: 2px solid #FF6B6B;
+}
 QLineEdit#TopSearch:focus {
     border: 2px solid #FFFFFF;
     background-color: #2C2C2C;
@@ -234,6 +237,10 @@ QFrame#OfflineBanner {
     background-color: rgba(255, 209, 102, 0.14);
     border: 1px solid rgba(255, 209, 102, 0.45);
     border-radius: 10px;
+}
+QFrame#OfflineBanner[online="true"] {
+    background-color: rgba(30, 215, 96, 0.14);
+    border: 1px solid rgba(30, 215, 96, 0.45);
 }
 QFrame#OfflineBox {
     background-color: #181818;

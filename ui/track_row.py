@@ -11,7 +11,7 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QSizePolicy, QWidget
 
 from services.playlist_service import PlaylistService
-from ui.animations import flash
+from ui.animations import fade_out_hide, flash, show_fading
 from ui.controls import CoverLabel
 from ui.downloadfx import DownloadStateButton
 from ui.formatting import format_added
@@ -109,6 +109,7 @@ class TrackRow(QFrame, HoverFader):
         self.title_label.setObjectName("SongTitle")
         self.title_label.setStyleSheet("font-size: 14px; background: transparent;")
         self.title_label.setToolTip(self.item_info.get("title", ""))
+        self.title_label.set_marquee(True)           # si el título no cabe, se desplaza al pasar el ratón
         self.artist_label = ElidedLabel(self.item_info.get("uploader", ""))
         self.artist_label.setObjectName("ArtistName")
         self.artist_label.setStyleSheet("font-size: 12px; background: transparent;")
@@ -226,8 +227,9 @@ class TrackRow(QFrame, HoverFader):
         self.refresh_state()
 
     # ------------------------------------------------------------ sin conexión
-    def apply_offline(self):
-        """Sin internet, las canciones no descargadas se oscurecen y no se pueden seleccionar ni reproducir."""
+    def apply_offline(self, delay: int = 0):
+        """Sin internet, las canciones no descargadas se oscurecen y no se pueden seleccionar ni reproducir.
+        `delay`: retraso del velo (las filas se oscurecen o se iluminan en cascada)."""
         checker = getattr(self.parent_window, "offline_blocks", None)
         blocked = bool(checker(self.item_info)) if checker else False
         if blocked == self._blocked:
@@ -241,14 +243,14 @@ class TrackRow(QFrame, HoverFader):
                 self._veil.setAttribute(Qt.WA_StyledBackground, True)
                 self._veil.setAttribute(Qt.WA_TransparentForMouseEvents)
             self._veil.setGeometry(self.rect())
-            self._veil.show()
             self._veil.raise_()
+            show_fading(self._veil, 240, delay)
             self.setToolTip("Sin conexión: esta canción no está descargada")
             if getattr(self.parent_window, "_selected_row", None) is self:
                 self.set_selected(False)
         else:
             if self._veil is not None:
-                self._veil.hide()
+                fade_out_hide(self._veil, 240, delay)
             self.setToolTip("")
 
     def resizeEvent(self, event):

@@ -5,7 +5,7 @@ import logging
 import subprocess
 
 from PySide6.QtCore import (
-    Qt, QUrl, QSize, QRect, QThread, QTimer, Signal, QPropertyAnimation, QEasingCurve, QObject, QEvent, QByteArray, QProcess
+    Qt, QUrl, QSize, QRect, QPoint, QThread, QTimer, Signal, QPropertyAnimation, QEasingCurve, QObject, QEvent, QByteArray, QProcess
 )
 from PySide6.QtGui import QPixmap, QImage, QIcon, QDesktopServices
 from PySide6.QtWidgets import (
@@ -50,8 +50,8 @@ from services.equalizer_service import (
 from ui.toast import Toast
 from ui.topbar import TopBar
 from ui.downloads_panel import DownloadsTracker, DownloadsPanel
-from ui.animations import fade_in, pop_icon, press_pulse
-from ui import motion, snapshot, frames, winext
+from ui.animations import fade_in, install_ripples, pop_icon, press_pulse, slide_fade_in
+from ui import motion, snapshot, frames, winext, tooltips, focusring
 from ui.anim_clock import clock
 from ui.dialogs import ask_text, ask_confirm, show_message
 from ui.imageloader import prune_disk_cache, clear_memory_cache
@@ -321,6 +321,9 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self.stacked_widget.addWidget(self.page_library)
 
         build_player_bar(self)
+        install_ripples(self)           # onda al pulsar en los botones principales
+        tooltips.install()              # ayudas propias (con el atajo de teclado)
+        self._focus_ring = focusring.install(self)
 
     # ---------- soltar enlaces y archivos sobre la ventana ----------
     def dragEnterEvent(self, event):
@@ -1057,11 +1060,35 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self.previous_page_before_album = self.stacked_widget.currentIndex()
         self.switch_to_page(3)
         self.page_album.start_loading()
+        self._travel_cover(lambda: self.page_album.cover_lbl)
 
         self.album_worker = AlbumDetailsWorker(album_id)
         self.album_worker.details_ready.connect(lambda data: self.page_album.load_album_data(data, self))
         self.album_worker.error_occurred.connect(lambda err: self.notify(friendly_error(err)))
         self.album_worker.start()
+
+    # ---------- la portada viaja de la tarjeta a la cabecera de la página ----------
+    def remember_cover_source(self, widget):
+        pix = widget.pixmap() if hasattr(widget, "pixmap") else None
+        if pix is None or pix.isNull():
+            self._cover_src = None
+            return
+        self._cover_src = (pix, QRect(widget.mapTo(self, QPoint(0, 0)), widget.size()), 8)
+
+    def _travel_cover(self, target_widget_fn):
+        """Si la página se abrió desde una portada, esa portada viaja hasta su hueco en la cabecera (280 ms)."""
+        src, self._cover_src = getattr(self, "_cover_src", None), None
+        if not src or not motion.enabled():
+            return
+        pix, from_rect, radius = src
+
+        def to_rect():
+            w = target_widget_fn()
+            if w is None or not w.isVisible():
+                return None
+            return QRect(w.mapTo(self, QPoint(0, 0)), w.size())
+
+        QTimer.singleShot(40, lambda: snapshot.travel(self, pix, from_rect, to_rect, 280, radius))
 
     def go_back_from_album(self):
         """Regresa a la página que abrió el álbum."""
@@ -1077,7 +1104,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
     def toggle_player_heart(self):
         if self.current_item_info:
             self.save_button_clicked(dict(self.current_item_info), self.player_heart_btn)
-            pop_icon(self.player_heart_btn)
+            pop_icon(self.player_heart_btn, ring=True)
 
     def update_player_heart_icon(self):
         saved = bool(self.current_item_info and PlaylistService.lists_containing(self.current_item_info))
@@ -1154,6 +1181,8 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
     def on_theme_changed(self):
         theme_key = self.theme_combo.currentData()
         if theme_key:
+            central = self.centralWidget()
+            before = snapshot.grab(central) if (motion.enabled() and central is not None and central.isVisible()) else None
             set_theme(theme_key)
             set_active_theme(theme_key)
             self._set_theme_filter(theme_key != "spotify" or high_contrast_enabled())
@@ -1172,6 +1201,8 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
                     new_qss = retheme_stylesheet(qss, theme_key)
                     if new_qss != qss:
                         w.setStyleSheet(new_qss)
+            if before is not None:
+                snapshot.crossfade(central, before, 260)           # los colores se mezclan en vez de saltar
 
     def notify_track_changed(self, title: str, artist: str):
         """Muestra una notificación nativa de Windows en la bandeja del sistema (se puede desactivar en Ajustes)."""
@@ -1221,7 +1252,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self._eq_active_render = None
         self.current_preview_btn = btn
         self.current_item_info = item_info
-        self.player_bar.setVisible(True)
+        self._show_player_bar()
         self.player_title.setText(title)
         self.player_artist.setText(artist)
         self.update_player_heart_icon()
@@ -1332,7 +1363,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         title = self.current_item_info['title']
         artist = self.current_item_info['uploader']
 
-        self.player_bar.setVisible(True)
+        self._show_player_bar()
         self.player_title.setText(title)
         self.player_artist.setText(artist)
         self.update_player_heart_icon()
@@ -1368,6 +1399,13 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self._eq_source_path = path
         self._eq_active_render = render
         self._apply_eq_if_needed()
+
+    def _show_player_bar(self):
+        """La barra de reproducción aparece subiendo un poco la primera vez que suena algo."""
+        if self.player_bar.isVisible():
+            return
+        self.player_bar.setVisible(True)
+        QTimer.singleShot(40, lambda: slide_fade_in(self.player_bar, 16, motion.DUR_BASE + 40))
 
     def _eq_source(self, path: str):
         """(archivo que debe sonar, versión con ecualizador si ya existe)."""
@@ -1862,6 +1900,9 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             self._eq_worker.is_cancelled = True
             self._eq_worker.wait(1500)
 
+        tooltips.uninstall()
+        focusring.uninstall(self._focus_ring)
+        self._set_blocked_click_filter(False)
         if getattr(self, "taskbar", None) is not None:
             self.taskbar.set_progress(None)
             self.taskbar.shutdown()

@@ -86,10 +86,10 @@ class AlbumCard(QFrame):
         layout.setSpacing(6)
 
         # Carátula Cuadrada
-        self.cover_label = QLabel()
+        from ui.controls import CoverLabel
+        self.cover_label = CoverLabel(radius=8, placeholder="#202020")
         self.cover_label.setFixedSize(120, 120)
         self.cover_label.setStyleSheet("background-color: #202020; border-radius: 8px;")
-        self.cover_label.setScaledContents(True)
         layout.addWidget(self.cover_label)
 
         # Nombre Álbum
@@ -112,8 +112,19 @@ class AlbumCard(QFrame):
             self.loader.image_loaded.connect(self.cover_label.setPixmap)
             self.loader.start()
 
+    def enterEvent(self, event):
+        self.cover_label.zoom_hover(True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.cover_label.zoom_hover(False)
+        super().leaveEvent(event)
+
     def mousePressEvent(self, ev):
         if ev.button() == Qt.LeftButton:
+            win = self.window()
+            if hasattr(win, "remember_cover_source"):
+                win.remember_cover_source(self.cover_label)       # la portada «viaja» a la página del álbum
             self.clicked.emit(self.album_info.get("id", 0))
         super().mousePressEvent(ev)
 

@@ -6,11 +6,12 @@
   * La búsqueda pasa a buscar solo dentro de tu música descargada.
   * Las descargas que pidas (o que fallen por falta de red) quedan pendientes y se reanudan solas.
 """
-from PySide6.QtCore import Qt, QSize, QTimer
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton
+from PySide6.QtCore import Qt, QSize, QTimer, QObject, QEvent
+from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QLabel, QPushButton, QWidget as QWidget_
 
 from services import library_search, local_mixes, network_service, pending_downloads, library_db
 from services.library_search import fold
+from ui.animations import expand_widget, shake
 from ui.icons import icon
 from ui.song_card import SongResultCard
 from ui.track_row import TrackRow
@@ -42,13 +43,39 @@ class OfflineBanner(QFrame):
         self.setVisible(False)
 
     def set_state(self, offline: bool, forced: bool):
-        self.setVisible(offline)
+        if not offline and self.isVisible() and not forced:
+            self._show_back_online()
+            return
+        self._online_timer = getattr(self, "_online_timer", None)
+        if self._online_timer is not None:
+            self._online_timer.stop()
+        self.btn.setVisible(True)
+        self.icon_lbl.setPixmap(icon("offline.svg", "#FFD166").pixmap(20, 20))
+        self.setProperty("online", False)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        expand_widget(self, offline)
         if forced:
             self.text.setText("Modo sin conexión activado. Tu música descargada y tus listas funcionan igual.")
             self.btn.setText("Volver a conectar")
         else:
             self.text.setText("Sin conexión a internet. Puedes seguir escuchando tu música descargada y usando tus listas.")
             self.btn.setText("Reintentar")
+
+    def _show_back_online(self):
+        """Al volver la conexión, la franja se pone en verde unos segundos («Volvió la conexión») y se pliega."""
+        from ui.styles import accent
+        self.text.setText("Volvió la conexión")
+        self.btn.setVisible(False)
+        self.icon_lbl.setPixmap(icon("wifi.svg", accent()).pixmap(20, 20))
+        self.setProperty("online", True)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        if getattr(self, "_online_timer", None) is None:
+            self._online_timer = QTimer(self)
+            self._online_timer.setSingleShot(True)
+            self._online_timer.timeout.connect(lambda: expand_widget(self, False))
+        self._online_timer.start(2600)
 
     def _retry(self):
         net = self.window_ref.network
@@ -59,6 +86,29 @@ class OfflineBanner(QFrame):
         net.check_now()
         self.window_ref.notify("Comprobando la conexión...")
         QTimer.singleShot(3200, lambda: self.window_ref.is_offline() and self.window_ref.notify("Sigue sin haber conexión."))
+
+
+class _BlockedClickFilter(QObject):
+    """Sin conexión, pulsar una canción apagada la sacude y explica por qué (solo está instalado mientras no hay red)."""
+
+    def __init__(self, window):
+        super().__init__(window)
+        self.window = window
+        self._last = 0.0
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.MouseButtonPress and event.button() == Qt.LeftButton and isinstance(obj, QWidget_):
+            w = obj
+            while w is not None:
+                if isinstance(w, TrackRow) and w._blocked:
+                    import time
+                    shake(w)
+                    if time.time() - self._last > 2.5:
+                        self._last = time.time()
+                        self.window.notify("Sin conexión: esta canción no está descargada.")
+                    break
+                w = w.parentWidget()
+        return False
 
 
 class OfflineMixin:
@@ -91,6 +141,7 @@ class OfflineMixin:
         chk.setChecked(self.network.forced_offline)
         chk.blockSignals(False)
         self.page_playlist.on_connectivity(not online)
+        self._set_blocked_click_filter(not online)
         self.apply_offline_to_cards()
         self.refresh_home()
         if online:
@@ -101,10 +152,21 @@ class OfflineMixin:
             self.notify("Sin conexión: tu música descargada y tus listas siguen funcionando")
         self.reload_current_list()
 
+    def _set_blocked_click_filter(self, offline: bool):
+        if not hasattr(self, "_blocked_filter"):
+            self._blocked_filter = _BlockedClickFilter(self)
+        app = QApplication.instance()
+        if offline:
+            app.installEventFilter(self._blocked_filter)
+        else:
+            app.removeEventFilter(self._blocked_filter)
+
     def apply_offline_to_cards(self):
-        for row in self.findChildren(TrackRow):
+        rows = sorted(self.findChildren(TrackRow), key=lambda r: (r.mapTo(self, r.rect().topLeft()).y()
+                                                                     if r.isVisible() else 10 ** 6))
+        for i, row in enumerate(rows):
             try:
-                row.apply_offline()
+                row.apply_offline(delay=min(i, 10) * 25)      # se oscurecen o se iluminan en cascada
             except RuntimeError:
                 pass
 

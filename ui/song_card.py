@@ -127,11 +127,16 @@ class SongResultCard(QFrame, HoverFader):
         self.title_label.setObjectName("SongTitle")
         self.title_label.setWordWrap(False)
         self.title_label.setToolTip(self.item_info.get('title', ''))
+        self.title_label.set_marquee(True)
         info_layout.addWidget(self.title_label)
 
         self.artist_label = ElidedLabel(self.item_info.get('uploader', 'Artista'))
         self.artist_label.setObjectName("ArtistName")
         info_layout.addWidget(self.artist_label)
+        query = getattr(self.parent_window, "_q", "") if not self.item_info.get("local_path") else ""
+        if query and len(query) < 60:
+            self.title_label.set_highlight(query)          # lo buscado se ve en negrita y con el color del tema
+            self.artist_label.set_highlight(query)
 
         self.progress_bar = SmoothProgress()
         self.progress_bar.setValue(0)
@@ -267,7 +272,7 @@ class SongResultCard(QFrame, HoverFader):
         if self.parent_window and hasattr(self.parent_window, "save_button_clicked"):
             self.parent_window.save_button_clicked(dict(self.item_info), self.heart_btn)
         self.update_heart_state()
-        pop_icon(self.heart_btn)
+        pop_icon(self.heart_btn, ring=True)
 
     def show_track_menu(self):
         if not self.parent_window:
