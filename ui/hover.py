@@ -113,3 +113,90 @@ class NowPlayingBars(QWidget):
             level = 0.55 if not (self._playing and motion.enabled()) else 0.3 + 0.7 * abs(math.sin(self._phase + i * 1.3))
             bar_h = max(3.0, (h - 2) * level)
             p.drawRoundedRect(QRectF(i * (w + gap), h - bar_h - 1, w, bar_h), 1.2, 1.2)
+
+
+class GlowHover:
+    """Mezcla para tarjetas: una luz suave sigue al cursor dentro de la tarjeta (solo la que está bajo el ratón).
+    Los repintados por movimiento se limitan a unos 30 por segundo.
+
+        self.init_glow(radius=10)                      # en __init__ (activa el seguimiento del ratón)
+        enterEvent → self.glow_to(True)   leaveEvent → self.glow_to(False)
+        mouseMoveEvent → self.glow_move(ev)   paintEvent → super().paintEvent(e); self.paint_glow()
+    """
+
+    def init_glow(self, radius: int = 10):
+        import time
+        self._gl_radius = radius
+        self._gl_t = 0.0
+        self._gl_pos = None
+        self._gl_last = 0.0
+        self._gl_time = time.perf_counter
+        self._gl_anim = QVariantAnimation(self)
+        self._gl_anim.setDuration(motion.DUR_BASE)
+        self._gl_anim.valueChanged.connect(self._gl_on_value)
+        self.setMouseTracking(True)
+
+    def _gl_on_value(self, v):
+        self._gl_t = float(v)
+        self.update()
+
+    def glow_to(self, on: bool):
+        if not motion.full():
+            self._gl_t = 0.0
+            return
+        self._gl_anim.stop()
+        self._gl_anim.setStartValue(self._gl_t)
+        self._gl_anim.setEndValue(1.0 if on else 0.0)
+        self._gl_anim.start()
+
+    def glow_move(self, event):
+        if not motion.full():
+            return
+        now = self._gl_time()
+        if now - self._gl_last < 0.033:
+            return
+        self._gl_last = now
+        self._gl_pos = event.position()
+        self.update()
+
+    def paint_glow(self):
+        if self._gl_t <= 0.01 or self._gl_pos is None:
+            return
+        from PySide6.QtGui import QRadialGradient, QPainterPath
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        clip = QPainterPath()
+        clip.addRoundedRect(QRectF(self.rect()), self._gl_radius, self._gl_radius)
+        p.setClipPath(clip)
+        grad = QRadialGradient(self._gl_pos, 140)
+        grad.setColorAt(0.0, QColor(255, 255, 255, int(26 * self._gl_t)))
+        grad.setColorAt(1.0, QColor(255, 255, 255, 0))
+        p.setPen(Qt.NoPen)
+        p.setBrush(grad)
+        p.drawRect(self.rect())
+
+
+class TileHover(GlowHover):
+    """Mezcla para tarjetas de cuadrícula (se pone ANTES de QFrame): luz que sigue al cursor y, si hay una portada
+    (`self.tile_cover`, un CoverLabel), que crece un poco al pasar el ratón."""
+    tile_cover = None
+
+    def enterEvent(self, event):
+        if self.tile_cover is not None:
+            self.tile_cover.zoom_hover(True)
+        self.glow_to(True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        if self.tile_cover is not None:
+            self.tile_cover.zoom_hover(False)
+        self.glow_to(False)
+        super().leaveEvent(event)
+
+    def mouseMoveEvent(self, event):
+        self.glow_move(event)
+        super().mouseMoveEvent(event)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        self.paint_glow()

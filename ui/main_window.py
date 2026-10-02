@@ -50,7 +50,7 @@ from services.equalizer_service import (
 from ui.toast import Toast
 from ui.topbar import TopBar
 from ui.downloads_panel import DownloadsTracker, DownloadsPanel
-from ui.animations import pop_icon, press_pulse
+from ui.animations import fade_in, pop_icon, press_pulse
 from ui import motion, snapshot, frames
 from ui.anim_clock import clock
 from ui.dialogs import ask_text, ask_confirm, show_message
@@ -197,6 +197,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         QTimer.singleShot(150, self.rescan_library)          # lee la biblioteca en segundo plano
         QTimer.singleShot(0, self.watch_library)
         QTimer.singleShot(4000, prune_disk_cache)
+        QTimer.singleShot(500, self.play_home_intro)          # entrada suave de Inicio (solo la primera vez)
 
     def _on_clock_degraded(self, interval: int):
         """El equipo va justo: las animaciones continuas bajan de velocidad (o se limitan a las puntuales)."""
@@ -416,6 +417,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         dlg.setAttribute(Qt.WA_DeleteOnClose, True)
         dlg.destroyed.connect(lambda *_: setattr(self, 'lyrics_dialog', None))
         self.lyrics_dialog = dlg
+        dlg.set_backdrop(None, self.player_thumb.pixmap())
         dlg.show()
 
     # ---------- letras propias y generadas por el sistema ----------
@@ -1434,7 +1436,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         try:
             color = self._cover_color()
             if color is not None and dlg is self.lyrics_dialog:
-                dlg.set_color(color)
+                dlg.set_color(color, self.player_thumb.pixmap())
         except RuntimeError:
             pass
 
@@ -1526,6 +1528,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self.now_panel.setVisible(show)
         if show:
             self.now_panel.set_track(self.current_item_info)
+            fade_in(self.now_panel, 240)
         # la ventana necesita sitio para el panel: el mínimo crece (o vuelve a su valor) con él
         extra = PANEL_WIDTH + 8
         if show:

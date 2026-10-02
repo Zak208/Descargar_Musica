@@ -15,6 +15,7 @@ from services import lyrics_store
 from services.lyrics_service import _same_artist
 from services.transcribe_service import clean_generated
 from ui.lyric_line import LyricLine
+from PySide6.QtCore import Qt
 
 
 def check(label, cond):
@@ -58,9 +59,48 @@ check("las frases cortas no se tocan", split_long_lines([(0, "Una frase corta")]
 
 seen = []
 line = LyricLine(1000, "frase", seen.append)
-check("al pasar el ratón se subraya", (line.enterEvent(None) or True) and line.font().underline())
+line.enterEvent(None)
+check("al pasar el ratón se aclara", line._hover)
 line.leaveEvent(None)
-check("al salir se quita el subrayado", not line.font().underline())
+check("al salir se quita el resalte", not line._hover)
 line.set_state("past")
-check("la frase leída se apaga", "0.34" in line.styleSheet())
+check("la frase leída se apaga", abs(line._alpha - 0.34) < 0.01 or line._anim.state() == line._anim.State.Running)
+line.mousePressEvent(type("E", (), {"button": lambda self: Qt.LeftButton, "accept": lambda self: None})())
+check("pulsar una frase salta a su momento", seen == [1000])
+
+# seguimiento de la letra: frase activa, barrido, atenuación y puntos de pausa
+from PySide6.QtWidgets import QScrollArea, QWidget, QVBoxLayout
+from ui.lyric_follow import LyricsFollower
+from ui import motion
+motion.force_level("none")
+area = QScrollArea()
+box = QWidget()
+lay = QVBoxLayout(box)
+area.setWidget(box)
+area.setWidgetResizable(True)
+area.resize(400, 300)
+area.show()
+times = [2000, 6000, 20000, 24000]
+labels = [LyricLine(t, f"frase número {i} de la prueba", None, size=18) for i, t in enumerate(times)]
+for l in labels:
+    lay.addWidget(l)
+fol = LyricsFollower(area)
+fol.set_lines(list(zip(times, labels)))
+fol.update(1000)
+check("antes de la primera frase ninguna está activa", fol.active == -1 and labels[0].state == "idle")
+check("antes de la primera frase se enseñan los puntos (intro de 2 s: no)", not fol.dots.isVisible())
+fol.update(2500)
+check("suena la primera frase", fol.active == 0 and labels[0].state == "active" and labels[1].state == "idle")
+check("la que viene va menos apagada que la siguiente", labels[1]._falloff > labels[2]._falloff)
+fol.update(4000)
+check("el barrido avanza con el tiempo", 0.0 < labels[0]._fill <= 1.0)
+fol.update(6500)
+check("pasa a la segunda: la primera queda leída", fol.active == 1 and labels[0].state == "past" and labels[1].state == "active")
+fol.update(14000)
+check("en una pausa larga entre frases salen los puntos", fol.dots.isVisible() and 0 < fol.dots._progress < 1)
+fol.update(20500)
+check("al volver la voz, los puntos desaparecen", fol.active == 2 and not fol.dots.isVisible())
+fol.update(5000)
+check("al retroceder, se recoloca", fol.active == 0 and labels[2].state == "idle" and labels[0].state == "active")
+motion.force_level(None)
 print("FIN")

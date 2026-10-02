@@ -1,7 +1,27 @@
 """Ventanas internas: en lugar de abrir ventanas aparte, los cuadros de diálogo se muestran encima de la propia
 aplicación (como una capa), con el resto de la ventana atenuado."""
-from PySide6.QtCore import Qt, QEvent, QEventLoop, Signal
+from PySide6.QtCore import Qt, QEvent, QEventLoop, Signal, QVariantAnimation, QEasingCurve
+from PySide6.QtGui import QPainter, QColor
 from PySide6.QtWidgets import QWidget, QFrame, QApplication, QPushButton
+
+from ui import motion
+from ui.animations import slide_fade_in
+
+DIM_ALPHA = 175.0
+
+
+class _Veil(QWidget):
+    """Velo oscuro que se desvanece cuando se cierra una ventana interna (no recibe clics)."""
+
+    def __init__(self, parent, alpha: float):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WA_NoSystemBackground)
+        self.alpha = alpha
+
+    def paintEvent(self, _event):
+        if self.alpha > 0.5:
+            QPainter(self).fillRect(self.rect(), QColor(0, 0, 0, int(self.alpha)))
 
 
 def _main_window(parent) -> QWidget:
@@ -30,9 +50,13 @@ class OverlayHost(QWidget):
         super().__init__(window)
         self.window_ref = window
         self.setObjectName("OverlayHost")
-        self.setAttribute(Qt.WA_StyledBackground, True)
         self.setFocusPolicy(Qt.StrongFocus)
         self._stack: list = []
+        self._dim = 0.0                  # oscurecimiento actual (0 a DIM_ALPHA); se pinta a mano y se anima
+        self._dim_target = 0.0
+        self._dim_anim = QVariantAnimation(self)
+        self._dim_anim.valueChanged.connect(self._on_dim)
+        self._dim_anim.finished.connect(self._dim_done)
         self.hide()
         window.installEventFilter(self)   # solo se vigila el redimensionado de la ventana principal
 
@@ -58,6 +82,34 @@ class OverlayHost(QWidget):
             y = max(12, (self.height() - dlg.height()) // 2)
         dlg.move(x, y)
 
+    # -- oscurecimiento del fondo (pintado a mano: sin reinterpretar hojas de estilo y con transición)
+    def paintEvent(self, _event):
+        if self._dim > 0.5:
+            p = QPainter(self)
+            p.fillRect(self.rect(), QColor(0, 0, 0, int(self._dim)))
+
+    def _on_dim(self, v):
+        self._dim = float(v)
+        self.update()
+
+    def _dim_done(self):
+        if self._dim_target <= 0.5 and not self._stack:
+            self.hide()
+
+    def _set_dim(self, target: float, duration: int):
+        self._dim_target = target
+        if not motion.enabled() or not self.isVisible():
+            self._dim_anim.stop()
+            self._dim = target
+            self.update()
+            return
+        self._dim_anim.stop()
+        self._dim_anim.setDuration(duration)
+        self._dim_anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._dim_anim.setStartValue(self._dim)
+        self._dim_anim.setEndValue(target)
+        self._dim_anim.start()
+
     # -- pila de ventanas
     def push(self, dlg: "InlineDialog"):
         self.setGeometry(self.window_ref.rect())
@@ -65,14 +117,17 @@ class OverlayHost(QWidget):
         for other in self._stack:
             other.hide()
         self._stack.append(dlg)
-        dim = "rgba(0, 0, 0, 175)" if dlg._modal else "transparent"
-        self.setStyleSheet(f"#OverlayHost {{ background-color: {dim}; }}")
+        first = not self.isVisible()
         self.show()
         self.raise_()
+        self._set_dim(DIM_ALPHA if dlg._modal else 0.0, motion.DUR_FAST + 20)
         dlg.show()
         self._place(dlg)
         dlg.raise_()
         dlg.setFocus()
+        if first or dlg._anchor is not None:
+            # la ventana entra con un fundido y un desplazamiento corto (desde su botón si es un menú anclado)
+            slide_fade_in(dlg, -8 if dlg._anchor is not None else 10, motion.DUR_FAST + 50)
 
     def pop(self, dlg: "InlineDialog"):
         if dlg in self._stack:
@@ -83,10 +138,39 @@ class OverlayHost(QWidget):
             top.show()
             self._place(top)
             top.setFocus()
-            dim = "rgba(0, 0, 0, 175)" if top._modal else "transparent"
-            self.setStyleSheet(f"#OverlayHost {{ background-color: {dim}; }}")
+            self._set_dim(DIM_ALPHA if top._modal else 0.0, motion.DUR_FAST)
         else:
-            self.hide()
+            self._dim_anim.stop()
+            was_dim = self._dim
+            self._dim = 0.0
+            self._dim_target = 0.0
+            self.hide()                                     # la capa deja de tapar la ventana al instante...
+            if motion.enabled() and was_dim > 1 and self.window_ref.isVisible():
+                self._fade_veil(was_dim)                    # ...y un velo transparente al ratón se desvanece (salir es rápido)
+
+    def _fade_veil(self, start_alpha: float):
+        veil = _Veil(self.window_ref, start_alpha)
+        veil.setGeometry(self.window_ref.rect())
+        veil.show()
+        veil.raise_()
+        anim = QVariantAnimation(veil)
+        anim.setStartValue(float(start_alpha))
+        anim.setEndValue(0.0)
+        anim.setDuration(motion.DUR_EXIT - 20)
+        anim.setEasingCurve(QEasingCurve.OutCubic)
+
+        def on_value(v):
+            veil.alpha = float(v)
+            veil.update()
+
+        def done():
+            veil.hide()
+            veil.deleteLater()
+
+        anim.valueChanged.connect(on_value)
+        anim.finished.connect(done)
+        veil._anim = anim
+        anim.start()
 
     # -- interacción
     def mousePressEvent(self, event):

@@ -295,6 +295,13 @@ class CoverLabel(QLabel):
                 self._zoom_to(1.0)
         return False
 
+    def zoom_hover(self, on: bool):
+        """La portada crece un poco (o vuelve) cuando el ratón está sobre su tarjeta."""
+        if not motion.enabled():
+            self._zoom = 1.0
+            return
+        self._zoom_to(1.05 if on else 1.0)
+
     def _zoom_to(self, value: float):
         self._zoom_anim.stop()
         self._zoom_anim.setStartValue(self._zoom)
@@ -434,3 +441,31 @@ class DotButton(QPushButton):
             p.setPen(Qt.NoPen)
             p.setBrush(QColor(accent()))
             p.drawEllipse(QPointF(self.width() / 2, self.height() - 4), 2.2, 2.2)
+
+
+class GlowCover(QWidget):
+    """Portada con una luz de su mismo color detrás (la portada reducida, muy borrosa y desplazada un poco hacia
+    abajo). Se genera una vez por canción y no se anima: cuesta cero y da profundidad."""
+    PAD = 16
+
+    def __init__(self, size: int, radius: int = 12, parent=None):
+        super().__init__(parent)
+        self.cover = CoverLabel(radius=radius, parent=self)
+        self.cover.setFixedSize(size, size)
+        self.cover.move(self.PAD, self.PAD - 4)
+        self.setFixedSize(size + 2 * self.PAD, size + self.PAD * 2 - 2)
+        self._glow = None
+
+    def set_glow(self, pix):
+        from ui.ambient import blurred
+        self._glow = blurred(pix, 10) if pix is not None and not pix.isNull() else None
+        self.update()
+
+    def paintEvent(self, _event):
+        if self._glow is None:
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
+        p.setOpacity(0.42)
+        r = QRectF(self.cover.geometry()).adjusted(-10, 2, 10, 20)
+        p.drawPixmap(r, self._glow, QRectF(self._glow.rect()))

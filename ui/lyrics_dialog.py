@@ -2,20 +2,22 @@
 import os
 
 from PySide6.QtCore import Qt, QTimer, QSize
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QScrollArea, QWidget, QSizePolicy, QProgressBar
 )
 from services.lyrics_service import LyricsWorker
+from ui.ambient import AmbientBackdrop, IdleHider
 from ui.icons import icon
 from ui.lyric_line import LyricLine
+from ui.lyric_follow import LyricsFollower
 
 MIN_FONT, MAX_FONT = 20, 92
 DEFAULT_COLOR = QColor("#3D5A4A")
 
 
-class LyricsDialog(QDialog):
+class LyricsDialog(QDialog, AmbientBackdrop):
     def __init__(self, title: str, artist: str = "", player=None, color: QColor = None, parent=None):
         super().__init__(parent)
         self.title = title
@@ -31,6 +33,7 @@ class LyricsDialog(QDialog):
         self.font_px = 0
 
         self.setObjectName("LyricsDialog")
+        self.init_backdrop(self.color)
         self.setMinimumSize(680, 560)
         # el botón del sistema para maximizar también está disponible (además del de pantalla completa)
         self.setWindowFlag(Qt.WindowMaximizeButtonHint, True)
@@ -46,7 +49,10 @@ class LyricsDialog(QDialog):
         layout.setContentsMargins(28, 22, 28, 12)
         layout.setSpacing(10)
 
-        header_layout = QHBoxLayout()
+        self.header_box = QWidget()
+        self.header_box.setStyleSheet("background: transparent;")
+        header_layout = QHBoxLayout(self.header_box)
+        header_layout.setContentsMargins(0, 0, 0, 0)
         info_col = QVBoxLayout()
         info_col.setSpacing(2)
         self.lbl_title = QLabel("")
@@ -82,7 +88,7 @@ class LyricsDialog(QDialog):
         self.btn_close.setCursor(Qt.PointingHandCursor)
         self.btn_close.clicked.connect(self.close)
         header_layout.addWidget(self.btn_close)
-        layout.addLayout(header_layout)
+        layout.addWidget(self.header_box)
 
         self.status_label = QLabel("")
         self.status_label.setStyleSheet("color: rgba(255,255,255,0.75); font-size: 14px; margin: 10px 0px; background: transparent;")
@@ -134,19 +140,29 @@ class LyricsDialog(QDialog):
         self.lyrics_layout.setSpacing(10)
         self.scroll_area.setWidget(self.lyrics_container)
         layout.addWidget(self.scroll_area, stretch=1)
+        self.follower = LyricsFollower(self.scroll_area)
 
-    def set_color(self, color: QColor):
+    def set_color(self, color: QColor, cover=None):
         if color != self.color:
             self.color = color
-            self._apply_color()
+        self.set_backdrop(color, cover)
 
     def _apply_color(self):
-        top = QColor(self.color)
-        bottom = QColor(self.color)
-        bottom.setHslF(bottom.hslHueF(), bottom.hslSaturationF(), 0.16)
-        self.setStyleSheet(
-            "QDialog#LyricsDialog { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
-            f"stop:0 {top.name()}, stop:1 {bottom.name()}); }}")
+        self.set_backdrop(self.color)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        self.paint_backdrop(p, self.rect())
+
+    def showEvent(self, event):
+        self.start_backdrop()
+        super().showEvent(event)
+
+    def hideEvent(self, event):
+        self.stop_backdrop()
+        if getattr(self, "_idle", None) is not None:
+            self._idle.stop()
+        super().hideEvent(event)
 
     # ------------------------------------------------------------- tamaño
     def _target_font(self) -> int:
@@ -167,7 +183,7 @@ class LyricsDialog(QDialog):
         for lbl in self.plain_widgets:
             lbl.set_size(size)
         if 0 <= self.active_index < len(self.line_widgets):
-            QTimer.singleShot(0, lambda: self._center_on(self.line_widgets[self.active_index][1]))
+            QTimer.singleShot(0, self.follower.recenter)
 
     def toggle_fullscreen(self):
         """Pantalla completa como en Spotify: la letra se agranda con la ventana."""
@@ -176,6 +192,12 @@ class LyricsDialog(QDialog):
         else:
             self.showFullScreen()
         full = self.isFullScreen()
+        if getattr(self, "_idle", None) is None:
+            self._idle = IdleHider(self, [self.header_box])
+        if full:
+            self._idle.start()           # en pantalla completa, los controles y el cursor se ocultan solos
+        else:
+            self._idle.stop()
         self.btn_full.setIcon(icon("fullscreen_exit.svg" if full else "fullscreen.svg", "#FFFFFF"))
         self.btn_full.setToolTip("Salir de pantalla completa (Esc)" if full else "Pantalla completa (F11)")
 
@@ -204,7 +226,7 @@ class LyricsDialog(QDialog):
         self.lbl_artist.setText(artist or "Artista")
         if color is not None and color != self.color:
             self.color = color
-            self._apply_color()
+            self.set_backdrop(color)
         self.reload()
 
     def reload(self):
@@ -246,6 +268,7 @@ class LyricsDialog(QDialog):
         self.line_widgets = []
         self.plain_widgets = []
         self.active_index = -1
+        self.follower.clear()
         while self.lyrics_layout.count():
             widget = self.lyrics_layout.takeAt(0).widget()
             if widget is not None:
@@ -272,6 +295,7 @@ class LyricsDialog(QDialog):
                 lbl = LyricLine(ms, line_text, self.seek_to_position, size=size, pad="6px 2px")
                 self.lyrics_layout.addWidget(lbl)
                 self.line_widgets.append((ms, lbl))
+            self.follower.set_lines(self.line_widgets)
             if self.player is not None:      # se coloca en la línea que toca ahora mismo
                 self.update_position(self.player.position())
         else:
@@ -282,6 +306,7 @@ class LyricsDialog(QDialog):
                 if line_text.strip():
                     lbl = LyricLine(0, line_text.strip(), None, size=size, pad="6px 2px")
                     lbl.set_state("active")
+                    lbl.set_fill(1.0)
                     self.lyrics_layout.addWidget(lbl)
                     self.plain_widgets.append(lbl)
             self.lyrics_layout.addStretch()
@@ -310,18 +335,8 @@ class LyricsDialog(QDialog):
         """Actualiza la línea activa (las anteriores se apagan) y mantiene la vista centrada en ella."""
         if not self.line_widgets:
             return
-        new_index = -1
-        for i, (ms, _) in enumerate(self.line_widgets):
-            if current_ms >= ms:
-                new_index = i
-            else:
-                break
-        if new_index != self.active_index and new_index >= 0:
-            lo, hi = sorted((self.active_index if self.active_index >= 0 else 0, new_index))
-            self.active_index = new_index
-            for i in range(lo, hi + 1):
-                self.line_widgets[i][1].set_state("past" if i < new_index else "active" if i == new_index else "idle")
-            QTimer.singleShot(0, lambda lbl=self.line_widgets[new_index][1]: self._center_on(lbl))
+        self.follower.update(current_ms)
+        self.active_index = self.follower.active
 
     def _center_on(self, lbl):
         try:

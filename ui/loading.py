@@ -93,12 +93,13 @@ class LoadingBlock(QWidget):
         lay.setContentsMargins(0, 8 if skeleton else 36, 0, 8 if skeleton else 36)
         lay.setSpacing(12)
         lay.setAlignment(Qt.AlignCenter if not skeleton else Qt.AlignTop)
-        self.skeleton = SkeletonRows(6) if skeleton else None
+        self.skeleton = SkeletonRows(6, self) if skeleton else None
         if skeleton:
             lay.addWidget(self.skeleton)
-        self.spinner = Spinner(40)
-        self.spinner.setVisible(not skeleton)
+        self.spinner = Spinner(40, self)           # con padre desde el principio: si no, Windows abre una ventanita suelta
         lay.addWidget(self.spinner, alignment=Qt.AlignCenter)
+        if skeleton:
+            self.spinner.hide()
         self.label = QLabel(text)
         self.label.setObjectName("SectionSubtitle")
         self.label.setAlignment(Qt.AlignCenter)

@@ -3,13 +3,15 @@
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QFrame, QVBoxLayout, QLabel
 
+from ui.controls import CoverLabel
+from ui.hover import TileHover
 from ui.imageloader import LocalCoverLoader
 from ui.widgets import ElidedLabel
 
 CARD_COVER = 140
 
 
-class RecentTrackCard(QFrame):
+class RecentTrackCard(TileHover, QFrame):
     """Tarjeta cuadrada con portada, título y artista de una canción de tu biblioteca. Emite la ruta al pulsarla."""
     clicked = Signal(str)
 
@@ -20,12 +22,14 @@ class RecentTrackCard(QFrame):
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setCursor(Qt.PointingHandCursor)
         self.setFixedWidth(CARD_COVER + 24)
+        self.init_glow(10)
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(12, 12, 12, 12)
         lay.setSpacing(4)
 
-        self.cover = QLabel()
+        self.cover = CoverLabel(radius=8)
+        self.tile_cover = self.cover
         self.cover.setFixedSize(CARD_COVER, CARD_COVER)
         self.cover.setStyleSheet("background-color: #2A2A2A; border-radius: 8px;")
         lay.addWidget(self.cover)

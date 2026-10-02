@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 
 from ui.home_shelves import make_shelf
 from ui.icons import icon
+from ui.textfx import CountLabel, DotsLabel, WordsInLabel
 
 
 def _section(self, title: str, height: int, subtitle: str = ""):
@@ -36,12 +37,13 @@ def build_home_page(self):
     greeting = "Buenos días" if hour < 13 else ("Buenas tardes" if hour < 21 else "Buenas noches")
     head = QHBoxLayout()
     head.setContentsMargins(0, 0, 0, 0)
-    title = QLabel(greeting)
+    title = WordsInLabel(greeting)
+    self.home_title = title
     title.setObjectName("TitleLabel")
     title.setStyleSheet("font-size: 32px; font-weight: bold; color: #FFFFFF;")
     head.addWidget(title)
     head.addStretch()
-    self.home_status_lbl = QLabel("")
+    self.home_status_lbl = DotsLabel("")
     self.home_status_lbl.setObjectName("SectionSubtitle")
     head.addWidget(self.home_status_lbl)
     self.btn_refresh_recs = QPushButton("")
@@ -85,7 +87,7 @@ def build_home_page(self):
     self.home_layout.addWidget(self.home_offline_box)
 
     # Resumen de tu música
-    self.home_stats_lbl = QLabel("")
+    self.home_stats_lbl = CountLabel("")
     self.home_stats_lbl.setObjectName("SectionSubtitle")
     self.home_layout.addWidget(self.home_stats_lbl)
 

@@ -302,3 +302,61 @@ def flash(widget: QWidget, color: str = "#1ED760", alpha: float = 0.25, duration
     anim.finished.connect(done)
     layer._anim = anim
     anim.start()
+
+
+def reveal_widget(widget: QWidget, show: bool, dy: int = 8, duration: int = 140):
+    """Muestra u oculta un widget pequeño con un fundido y un desplazamiento corto (el botón ▶ de una tarjeta, por
+    ejemplo). Sin animación (nivel «Ninguna») cambia al instante. El efecto de opacidad se retira al terminar."""
+    base = widget.property("_revealBase")
+    if base is None:
+        base = widget.pos()
+        widget.setProperty("_revealBase", base)
+    if not motion.enabled() or not widget.parentWidget() or not widget.parentWidget().isVisible():
+        widget.move(base)
+        widget.setVisible(show)
+        return
+    old = getattr(widget, "_reveal_anim", None)
+    if old is not None:
+        old.stop()
+    if show:
+        widget.move(base + QPoint(0, dy))
+        widget.show()
+    effect = widget.graphicsEffect()
+    if not isinstance(effect, QGraphicsOpacityEffect):
+        effect = QGraphicsOpacityEffect(widget)
+        effect.setOpacity(0.0 if show else 1.0)
+        widget.setGraphicsEffect(effect)
+    anim = QVariantAnimation(widget)
+    anim.setStartValue(0.0)
+    anim.setEndValue(1.0)
+    anim.setDuration(duration if show else 90)
+    anim.setEasingCurve(QEasingCurve.OutCubic)
+    start_op = effect.opacity()
+    start_pos = widget.pos()
+    end_op = 1.0 if show else 0.0
+    end_pos = base if show else base + QPoint(0, dy)
+
+    def on_value(v):
+        t = float(v)
+        try:
+            effect.setOpacity(start_op + (end_op - start_op) * t)
+            widget.move(start_pos + (end_pos - start_pos) * t)
+        except RuntimeError:
+            pass
+
+    def done():
+        try:
+            widget.move(end_pos)
+            if show:
+                widget.setGraphicsEffect(None)
+            else:
+                widget.hide()
+                widget.setGraphicsEffect(None)
+                widget.move(base)
+        except RuntimeError:
+            pass
+
+    anim.valueChanged.connect(on_value)
+    anim.finished.connect(done)
+    widget._reveal_anim = anim
+    anim.start()

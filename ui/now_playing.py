@@ -11,13 +11,16 @@ from services.artist_service import ArtistService
 from services.lyrics_service import LyricsWorker
 from services.playlist_service import PlaylistService
 from services.recommendation_service import ArtistInfoWorker
+from ui.controls import CoverLabel, GlowCover
 from ui.formatting import split_artists
 from ui.icons import icon
 from ui.save_popup import save_icon
 from ui.imageloader import ImageLoaderThread, LocalCoverLoader
 from ui.lyric_line import LyricLine
+from ui.lyric_follow import LyricsFollower
 from ui import motion
 from ui.styles import accent
+from ui.textfx import CountLabel, DotsLabel, grow_underline
 from ui.widgets import ElidedLabel
 
 PANEL_WIDTH = 330
@@ -76,7 +79,6 @@ class LyricsBox(QFrame):
         self._key = None
         self._info_key = None
         self._lines = []      # [(ms, LyricLine)]
-        self._active = -1
         self.data = None      # última letra mostrada (para poder editarla)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(16, 14, 16, 14)
@@ -109,7 +111,7 @@ class LyricsBox(QFrame):
         self.badge.setVisible(False)
         lay.addWidget(self.badge)
 
-        self.status = QLabel("")
+        self.status = DotsLabel("")
         self.status.setStyleSheet("color: #E6E6E6; background: transparent; font-size: 14px;")
         self.status.setWordWrap(True)
         lay.addWidget(self.status)
@@ -161,6 +163,7 @@ class LyricsBox(QFrame):
         self.body.setAlignment(Qt.AlignTop)
         self.scroll.setWidget(inner)
         lay.addWidget(self.scroll)
+        self.follower = LyricsFollower(self.scroll)
         self._show_idle_buttons(False)
 
     def set_color(self, color):
@@ -177,7 +180,7 @@ class LyricsBox(QFrame):
         self._show_idle_buttons(False)
         self.badge.setVisible(False)
         self.progress.setVisible(False)
-        self.status.setText("Buscando la letra...")
+        self.status.animate("Buscando la letra")
         self.status.setVisible(True)
         self.scroll.setVisible(False)
         if self._worker is not None:
@@ -224,7 +227,7 @@ class LyricsBox(QFrame):
 
     def _clear(self):
         self._lines = []
-        self._active = -1
+        self.follower.clear()
         while self.body.count():
             widget = self.body.takeAt(0).widget()
             if widget is not None:
@@ -266,6 +269,7 @@ class LyricsBox(QFrame):
             if synced:
                 self._lines.append((ms, lbl))
         self._plain = bool(lines) and not synced
+        self.follower.set_lines(self._lines)
         self.scroll.verticalScrollBar().setValue(0)
         self.status.setVisible(not lines)
         if not lines:
@@ -287,26 +291,7 @@ class LyricsBox(QFrame):
             return
         if not self._lines:
             return
-        new = -1
-        for i, (t, _lbl) in enumerate(self._lines):
-            if ms >= t:
-                new = i
-            else:
-                break
-        if new == self._active or new < 0:
-            return
-        lo, hi = sorted((self._active if self._active >= 0 else 0, new))
-        self._active = new
-        for i in range(lo, hi + 1):      # solo se repintan las frases que cambiaron de estado
-            self._lines[i][1].set_state("past" if i < new else "active" if i == new else "idle")
-        lbl = self._lines[new][1]
-        QTimer.singleShot(0, lambda l=lbl: self._center(l))
-
-    def _center(self, lbl):
-        try:
-            self._scroll_to(max(0, lbl.y() + lbl.height() // 2 - self.scroll.viewport().height() // 2))
-        except RuntimeError:
-            pass
+        self.follower.update(ms)
 
     def _scroll_to(self, value: int):
         bar = self.scroll.verticalScrollBar()
@@ -383,10 +368,10 @@ class NowPlayingPanel(QFrame):
         main_lay.setContentsMargins(0, 0, 0, 0)
         main_lay.setSpacing(10)
 
-        self.cover = QLabel()
-        self.cover.setFixedSize(COVER, COVER)
+        self.cover_box = GlowCover(COVER, 12)         # portada con una luz de su color detrás
+        self.cover = self.cover_box.cover
         self.cover.setStyleSheet("background-color: #2A2A2A; border-radius: 12px;")
-        main_lay.addWidget(self.cover, alignment=Qt.AlignHCenter)
+        main_lay.addWidget(self.cover_box, alignment=Qt.AlignHCenter)
 
         self.title = QLabel("")
         self.title.setWordWrap(True)
@@ -397,6 +382,7 @@ class NowPlayingPanel(QFrame):
         self.artist.setObjectName("PanelArtistLink")
         self.artist.setWordWrap(True)
         self.artist.clicked.connect(self._open_artist)
+        grow_underline(self.artist)
         main_lay.addWidget(self.artist)
 
         actions = QHBoxLayout()
@@ -436,7 +422,7 @@ class NowPlayingPanel(QFrame):
         self.artist_name = QLabel("")
         self.artist_name.setStyleSheet("font-size: 16px; font-weight: 700; background: transparent;")
         inner_a.addWidget(self.artist_name)
-        self.artist_fans = QLabel("")
+        self.artist_fans = CountLabel("")
         self.artist_fans.setObjectName("SectionSubtitle")
         inner_a.addWidget(self.artist_fans)
         self.artist_bio = QLabel("")
@@ -478,7 +464,7 @@ class NowPlayingPanel(QFrame):
         nl.addLayout(nh)
         nrow = QHBoxLayout()
         nrow.setSpacing(10)
-        self.next_cover = QLabel()
+        self.next_cover = CoverLabel(radius=6)
         self.next_cover.setFixedSize(48, 48)
         self.next_cover.setStyleSheet("background-color: #2A2A2A; border-radius: 6px;")
         nrow.addWidget(self.next_cover)
@@ -552,6 +538,7 @@ class NowPlayingPanel(QFrame):
 
     def _cover_ready(self, pix):
         self._safe_set(self.cover, pix)
+        self.cover_box.set_glow(pix)
         color = cover_color(pix)
         if color is not None:
             self.lyrics.set_color(color)
@@ -584,8 +571,11 @@ class NowPlayingPanel(QFrame):
     def _on_artist_info(self, data: dict, name: str):
         if name != self._artist_name:
             return
-        fans = data.get("fans", 0)
-        self.artist_fans.setText(f"{fans:,} seguidores".replace(",", ".") if fans else "")
+        fans = int(data.get("fans", 0) or 0)
+        if fans:
+            self.artist_fans.count_to(fans, lambda v: f"{v:,} seguidores".replace(",", "."), key=name)
+        else:
+            self.artist_fans.setText("")
         self.artist_bio.setText(data.get("bio") or "No hay información disponible de este artista.")
         if data.get("picture"):
             loader = ImageLoaderThread(data["picture"], False, (PANEL_WIDTH - 36, 170), 0)

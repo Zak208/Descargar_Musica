@@ -105,14 +105,35 @@ class HomeMixin:
         items = self.library_items()
         artists = {(i.get("uploader") or "").lower() for i in items if i.get("uploader")}
         total = format_total(sum(int(i.get("duration_secs", 0) or 0) for i in items))
-        parts = [f"{len(items)} canciones"]
-        if total:
-            parts.append(total)
-        if artists:
-            parts.append(f"{len(artists)} artistas")
-        parts.append(f"{len(PlaylistService.get_favorites())} favoritas")
-        parts.append(f"{len(PlaylistService.get_playlists())} listas")
-        self.home_stats_lbl.setText("Tu música: " + "  ·  ".join(parts) if items else "")
+        favorites = len(PlaylistService.get_favorites())
+        lists = len(PlaylistService.get_playlists())
+
+        def stats_text(n_songs: int) -> str:
+            parts = [f"{n_songs} canciones"]
+            if total:
+                parts.append(total)
+            if artists:
+                parts.append(f"{len(artists)} artistas")
+            parts.append(f"{favorites} favoritas")
+            parts.append(f"{lists} listas")
+            return "Tu música: " + "  ·  ".join(parts)
+
+        if items:
+            self.home_stats_lbl.count_to(len(items), stats_text, key="home")     # la cifra cuenta la primera vez
+        else:
+            self.home_stats_lbl.setText("")
+
+    def play_home_intro(self):
+        """Primera vez que se ve Inicio tras abrir: el saludo entra por palabras y las secciones suben en cascada."""
+        from ui.animations import slide_fade_in
+        if self.stacked_widget.currentIndex() != 0 or getattr(self, "_home_intro_done", False):
+            return
+        self._home_intro_done = True
+        self.home_title.play()
+        boxes = [b for b in (self.home_quick_box, self.home_local_mixes_box, self.home_mixes_box, self.home_recents_box,
+                             self.home_top_box, self.home_rediscover_box) if b.isVisible()]
+        for i, box in enumerate(boxes[:5]):
+            slide_fade_in(box, 12, 260, delay=80 + i * 60)
 
     def _fill_local_shelf(self, box, layout, lists: list, key: str):
         tracks = next((t for k, _n, t in lists if k == key), [])
@@ -157,7 +178,7 @@ class HomeMixin:
 
         if self._rec_worker is not None and self._rec_worker.isRunning():
             return
-        self.home_status_lbl.setText("Preparando recomendaciones...")
+        self.home_status_lbl.animate("Preparando recomendaciones")
         self._rec_worker = RecommendationWorker(profile, followed)
         self._rec_worker.ready.connect(self._on_recommendations_ready)
         self._rec_worker.finished.connect(lambda: self.home_status_lbl.setText("")

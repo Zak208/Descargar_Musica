@@ -377,3 +377,56 @@ def reveal_up(label: QWidget, delay: int = 0, duration: int = 280):
     else:
         start()
 
+
+
+class WordsInLabel(QLabel):
+    """Texto grande (el saludo de Inicio) cuyas palabras entran una a una, subiendo un poco. Solo ocurre la primera vez
+    que se muestra en cada arranque; después es un texto normal."""
+    played = False
+
+    def __init__(self, text: str = "", parent=None):
+        super().__init__(text, parent)
+        self._t = 1.0
+        self._anim = QVariantAnimation(self)
+        self._anim.setDuration(750)
+        self._anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._anim.valueChanged.connect(self._on_value)
+        self._anim.finished.connect(self._done)
+
+    def play(self):
+        if WordsInLabel.played or not motion.enabled() or not motion.visible_ok(self):
+            return
+        WordsInLabel.played = True
+        self._t = 0.0
+        self._anim.setStartValue(0.0)
+        self._anim.setEndValue(1.0)
+        self._anim.start()
+
+    def _on_value(self, v):
+        self._t = float(v)
+        self.update()
+
+    def _done(self):
+        self._t = 1.0
+        self.update()
+
+    def paintEvent(self, event):
+        if self._t >= 1.0:
+            super().paintEvent(event)
+            return
+        p = QPainter(self)
+        p.setFont(self.font())
+        color = _text_color(self)
+        fm = self.fontMetrics()
+        words = self.text().split(" ")
+        n = max(1, len(words))
+        x = 0.0
+        space = fm.horizontalAdvance(" ")
+        for i, word in enumerate(words):
+            k = max(0.0, min(1.0, self._t * (n + 0.6) - i * 0.9))
+            c = QColor(color)
+            c.setAlphaF(k)
+            p.setPen(c)
+            p.drawText(QRectF(x, (1.0 - k) * 8, fm.horizontalAdvance(word) + 4, self.height()),
+                       Qt.AlignLeft | Qt.AlignVCenter, word)
+            x += fm.horizontalAdvance(word) + space

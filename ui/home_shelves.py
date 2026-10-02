@@ -4,6 +4,9 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QWidget
 
 from services.playlist_service import PlaylistService
+from ui.animations import reveal_widget
+from ui.controls import CoverLabel
+from ui.hover import GlowHover
 from ui.covers import list_cover_pixmap, artist_avatar_pixmap, mix_cover, GENRE_COLORS
 from ui.formatting import format_total
 from ui.icons import icon
@@ -86,7 +89,7 @@ def clear_layout(layout):
             w.deleteLater()
 
 
-class TrackTile(QFrame):
+class TrackTile(QFrame, GlowHover):
     """Canción sugerida: portada con botón de reproducir al pasar el ratón, título, artista, me gusta y descargar."""
 
     def __init__(self, info: dict, window, shelf_tracks: list, parent=None):
@@ -98,12 +101,13 @@ class TrackTile(QFrame):
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setCursor(Qt.PointingHandCursor)
         self.setFixedWidth(TILE_W)
+        self.init_glow(10)
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(12, 12, 12, 10)
         lay.setSpacing(2)
 
-        self.cover = QLabel()
+        self.cover = CoverLabel(radius=8)
         self.cover.setFixedSize(COVER, COVER)
         self.cover.setStyleSheet("background-color: #2A2A2A; border-radius: 8px;")
         lay.addWidget(self.cover)
@@ -192,12 +196,24 @@ class TrackTile(QFrame):
         self.window_ref.quick_download(dict(self.info))
 
     def enterEvent(self, event):
-        self.play_btn.show()
+        reveal_widget(self.play_btn, True)          # el ▶ sube y aparece
+        self.cover.zoom_hover(True)
+        self.glow_to(True)
         super().enterEvent(event)
 
     def leaveEvent(self, event):
-        self.play_btn.hide()
+        reveal_widget(self.play_btn, False)
+        self.cover.zoom_hover(False)
+        self.glow_to(False)
         super().leaveEvent(event)
+
+    def mouseMoveEvent(self, event):
+        self.glow_move(event)
+        super().mouseMoveEvent(event)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        self.paint_glow()
 
     def mouseReleaseEvent(self, ev):
         if ev.button() == Qt.LeftButton and self.cover.geometry().translated(self.layout().contentsMargins().left(),
@@ -209,7 +225,7 @@ class TrackTile(QFrame):
         self.window_ref.open_track_menu(self.info, ev.globalPos())
 
 
-class ArtistTile(QFrame):
+class ArtistTile(QFrame, GlowHover):
     """Artista con foto redonda. Emite sus datos al hacer clic."""
     clicked = Signal(dict)
 
@@ -220,11 +236,12 @@ class ArtistTile(QFrame):
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setCursor(Qt.PointingHandCursor)
         self.setFixedWidth(TILE_W)
+        self.init_glow(10)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(12, 12, 12, 12)
         lay.setSpacing(2)
 
-        self.avatar = QLabel()
+        self.avatar = CoverLabel(radius=COVER // 2, placeholder="#00000000")
         self.avatar.setFixedSize(COVER, COVER)
         self.avatar.setPixmap(artist_avatar_pixmap(artist.get("id", "x"), COVER))
         lay.addWidget(self.avatar)
@@ -252,13 +269,31 @@ class ArtistTile(QFrame):
         except RuntimeError:
             pass
 
+    def enterEvent(self, event):
+        self.avatar.zoom_hover(True)
+        self.glow_to(True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.avatar.zoom_hover(False)
+        self.glow_to(False)
+        super().leaveEvent(event)
+
+    def mouseMoveEvent(self, event):
+        self.glow_move(event)
+        super().mouseMoveEvent(event)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        self.paint_glow()
+
     def mouseReleaseEvent(self, ev):
         if ev.button() == Qt.LeftButton and self.rect().contains(ev.pos()):
             self.clicked.emit(self.artist)
         super().mouseReleaseEvent(ev)
 
 
-class MixTile(QFrame):
+class MixTile(QFrame, GlowHover):
     """Mix hecho a partir de tus gustos: portada de color, nombre, artistas que lo forman y duración."""
     clicked = Signal(dict)
 
@@ -269,13 +304,14 @@ class MixTile(QFrame):
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setCursor(Qt.PointingHandCursor)
         self.setFixedWidth(TILE_W)
+        self.init_glow(10)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(12, 12, 12, 12)
         lay.setSpacing(2)
-        cover = QLabel()
-        cover.setFixedSize(COVER, COVER)
-        cover.setPixmap(mix_cover(index, COVER, 10))
-        lay.addWidget(cover)
+        self.cover = CoverLabel(radius=10)
+        self.cover.setFixedSize(COVER, COVER)
+        self.cover.setPixmap(mix_cover(index, COVER, 10))
+        lay.addWidget(self.cover)
         lay.addSpacing(6)
         title = ElidedLabel(mix.get("name", "Mix"))
         title.setObjectName("CoverTitle")
@@ -297,6 +333,24 @@ class MixTile(QFrame):
         if ev.button() == Qt.LeftButton and self.rect().contains(ev.pos()):
             self.clicked.emit(self.mix)
         super().mouseReleaseEvent(ev)
+
+    def enterEvent(self, event):
+        self.cover.zoom_hover(True)
+        self.glow_to(True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.cover.zoom_hover(False)
+        self.glow_to(False)
+        super().leaveEvent(event)
+
+    def mouseMoveEvent(self, event):
+        self.glow_move(event)
+        super().mouseMoveEvent(event)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        self.paint_glow()
 
 
 class GenreTile(QFrame):

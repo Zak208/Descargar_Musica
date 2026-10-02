@@ -7,6 +7,8 @@ from PySide6.QtWidgets import (
 from ui.icons import icon
 from ui.covers import list_cover_pixmap
 from ui.animations import fade_in
+from ui.controls import CoverLabel
+from ui.hover import TileHover
 from ui.widgets import ElidedLabel
 
 COLUMNS = 4
@@ -14,7 +16,7 @@ CARD_W = 158
 TILE = 126
 
 
-class ListCard(QFrame):
+class ListCard(TileHover, QFrame):
     clicked = Signal(str, str)           # (tipo, id)
     context_requested = Signal(str, str, object)
 
@@ -26,11 +28,13 @@ class ListCard(QFrame):
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setCursor(Qt.PointingHandCursor)
         self.setFixedWidth(CARD_W)
+        self.init_glow(10)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(12, 12, 12, 12)
         lay.setSpacing(4)
 
-        tile = QLabel()
+        tile = CoverLabel(radius=10 if kind != "artist" else TILE // 2)
+        self.tile_cover = tile
         tile.setFixedSize(TILE, TILE)
         tile.setPixmap(list_cover_pixmap(kind, list_id, TILE, 10))
         lay.addWidget(tile)
