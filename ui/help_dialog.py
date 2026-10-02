@@ -21,7 +21,8 @@ SHORTCUTS = (
     ("Ctrl + V", "Pegar un enlace de YouTube o Spotify para descargarlo"),
     ("Ctrl + Z", "Deshacer lo último que quitaste de una lista"),
     ("Teclas multimedia", "Reproducir, siguiente y anterior desde el teclado"),
-    ("F11", "Letra a pantalla completa (Esc para salir)"),
+    ("Ctrl + ↑  ↓", "Subir o bajar el volumen"),
+    ("F11", "Pantalla completa «Ahora suena» con la portada y la letra (Esc para salir)"),
     ("Doble clic", "Reproducir una canción de una lista"),
 )
 

@@ -211,6 +211,14 @@ class ArtistProfilePage(QWidget):
     def _set_avatar(self, pix):
         try:
             self.avatar_lbl.setPixmap(pix)
+            from ui.now_playing import cover_color
+            color = cover_color(pix)
+            if color is not None:
+                self.header_frame.setStyleSheet(
+                    "#ArtistHeader { background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
+                    f" stop:0 rgba({color.red()}, {color.green()}, {color.blue()}, 150),"
+                    f" stop:1 rgba({color.red()}, {color.green()}, {color.blue()}, 0)); border-radius: 16px; }}")
+                fade_in(self.header_frame, 400)
         except RuntimeError:
             pass
 

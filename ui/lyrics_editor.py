@@ -344,12 +344,29 @@ class LyricsEditorDialog(InlineDialog):
         self._loading = True
         self.table.setItem(row, 0, QTableWidgetItem(fmt_time(ms)))
         self._loading = False
+        self._flash_row(row)             # la fila marcada destella: se ve que ha contado
         if row + 1 < self.table.rowCount():
             self.table.selectRow(row + 1)
             self.table.scrollToItem(self.table.item(row + 1, 1))
         else:
             self._set_tap(False)
             self.set_sync_busy("Listo: has marcado todas las frases. Revisa los tiempos y guarda.")
+
+    def _flash_row(self, row: int):
+        from PySide6.QtCore import QTimer
+        from PySide6.QtWidgets import QWidget
+        from ui.animations import flash
+        from ui.styles import accent
+        model = self.table.model()
+        rect = self.table.visualRect(model.index(row, 0)).united(self.table.visualRect(model.index(row, 1)))
+        if rect.isEmpty():
+            return
+        holder = QWidget(self.table.viewport())
+        holder.setAttribute(Qt.WA_TransparentForMouseEvents)
+        holder.setGeometry(rect)
+        holder.show()
+        flash(holder, accent(), 0.45, 380, 4)
+        QTimer.singleShot(500, holder.deleteLater)
 
     def eventFilter(self, obj, event):
         if self._tap and obj is self.table and event.type() == QEvent.KeyPress:

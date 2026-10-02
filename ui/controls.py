@@ -113,10 +113,10 @@ class SegmentedControl(QWidget):
         new = self._cell(key)
         if animate and motion.enabled() and self.isVisible():
             self._anim.stop()
-            self._anim.setStartValue(0.0)
-            self._anim.setEndValue(1.0)
             self._from = (old.left(), old.width())
             self._to = (new.left(), new.width())
+            self._anim.setStartValue(0.0)
+            self._anim.setEndValue(1.0)
             self._anim.start()
         else:
             self._x, self._w = new.left(), new.width()

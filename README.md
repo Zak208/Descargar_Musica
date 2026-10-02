@@ -1,6 +1,6 @@
 # Descargador de Música
 
-**Versión actual: 1.10.0** · [Historial de versiones](CHANGELOG.md) · cada versión subida tiene su etiqueta `vX.Y.Z` en GitHub
+**Versión actual: 1.11.0** · [Historial de versiones](CHANGELOG.md) · cada versión subida tiene su etiqueta `vX.Y.Z` en GitHub
 
 Aplicación de escritorio para **Windows** que combina un reproductor con aspecto de Spotify y un descargador de música:
 buscas una canción, un artista o un álbum, escuchas un adelanto y la descargas a tu equipo en MP3, M4A, FLAC o WAV,
@@ -96,6 +96,13 @@ informática. **Tu música descargada y tus listas funcionan también sin intern
   La letra propia manda sobre cualquier otra y se puede restaurar. La primera vez, y solo si aceptas, se descarga el
   reconocedor de voz (whisper.cpp, ≈ 68 MB, con comprobación SHA-256); después funciona sin internet.
 - 12 colores de aplicación, **tamaño de la aplicación** (100/115/130 %) y **alto contraste** (Ajustes → Accesibilidad).
+- **Fundido cruzado entre canciones** (2 a 12 s): la siguiente empieza mientras la actual baja el volumen. Con el
+  **aleatorio**, «A continuación» enseña exactamente la canción que va a sonar.
+- **Animaciones con cuidado del consumo**: tres niveles (Ninguna / Suaves / Completas) en Ajustes → Rendimiento, que
+  siguen la preferencia de Windows, bajan solas con batería baja, y un medidor de consumo con «Probar animaciones».
+  Transiciones entre páginas, portadas que viajan, letras que se rellenan al cantarse, visualizador que sigue la música,
+  pantalla completa «Ahora suena» (F11), avisos con icono, esqueletos de carga, botones en la miniatura de la barra de
+  tareas y progreso de descargas en su icono, y más (ver el historial de versiones).
 
 **Cuidado de tus datos**
 - Tus datos viven en `%APPDATA%\Descargador de Música`, **fuera de la carpeta del programa**: actualizar o mover el
@@ -174,7 +181,7 @@ Descargar_Musica.exe --selftest        # escribe selftest.log junto al programa
 
 **Atajos de teclado:** `Espacio` pausa/reanuda · `←` / `→` retroceden/avanzan 5 s · `M` silencia · `Ctrl+F` va al
 buscador · `Ctrl+V` pega un enlace · `Ctrl+Z` deshace · `↑` `↓` `Intro` `Supr` `Esc` en las listas · `F11` letra a pantalla
-completa · teclas multimedia del teclado.
+completa «Ahora suena» · `Ctrl+↑` `Ctrl+↓` volumen · teclas multimedia del teclado.
 
 ## Sin conexión
 
@@ -256,6 +263,7 @@ services/                  lógica sin interfaz
     session_service.py       seguir donde lo dejaste
     backup_service.py        copia de seguridad · storage_service.py espacio · diagnostics_service.py informe y reparación
     recycle.py               papelera de Windows · quality.py calidades · heavy.py tareas pesadas
+    envelope.py              envolvente de graves/medios/agudos de cada canción para el visualizador
     ffmpeg_service.py        localiza o descarga FFmpeg
 ui/                        interfaz
     main_window.py           ventana principal
@@ -269,7 +277,12 @@ ui/                        interfaz
     dragdrop.py              arrastrar y soltar
     overlay.py, dialogs.py   ventanas internas
     perf.py                  ahorro de recursos, equipo modesto, batería y memoria
-    styles.py, covers.py ... estilos, portadas, iconos, animaciones
+    motion.py, anim_clock.py   nivel de movimiento y reloj de animación compartido (en reposo no hay temporizadores)
+    snapshot.py, animations.py, controls.py, textfx.py, hover.py   transiciones con «fotos», microanimaciones, controles y texto animado
+    ambient.py, lyric_follow.py, nowplaying_full.py   fondos ambientales, seguimiento de la letra y pantalla completa
+    scrolling.py, toast.py, tooltips.py, focusring.py, osd.py, sliders.py   desplazamiento, avisos, ayudas, foco, avisos del teclado
+    winext.py                barra de título, barra de tareas y «siempre encima» de Windows (ctypes, opcional)
+    styles.py, covers.py ... estilos, portadas, iconos
 dev_tools/                 pruebas automáticas y medición de arranque
 ```
 
@@ -312,7 +325,8 @@ Está pensada para equipos modestos. Medido con el programa compilado (sin panta
 
 Medidas que aplica: modo ahorro (activado por defecto), índice SQLite, caché de imágenes con tope de memoria, tareas pesadas
 de una en una y con prioridad baja, procesos hijos (ffmpeg…) con prioridad baja, animaciones detenidas con la ventana
-minimizada, listas que solo crean las filas visibles, recomendaciones que no se piden solas con batería baja o datos medidos,
+minimizada, un único reloj de animación que se para solo (0 temporizadores en reposo; medido ≈ 0,8 % de CPU en reposo y
+≈ 1,6 % reproduciendo con animaciones «Suaves»), efectos gráficos que se retiran al terminar, listas que solo crean las filas visibles, recomendaciones que no se piden solas con batería baja o datos medidos,
 y detección de equipo modesto (4 GB o menos / 2 núcleos o menos: descargas de una en una y visualizador apagado).
 `python dev_tools/medir_arranque.py` mide CPU y memoria del arranque.
 
@@ -335,6 +349,8 @@ python dev_tools/prueba_filas.py         # filas estilo Spotify, menú, panel «
 python dev_tools/prueba_interfaz.py      # ventanas internas, búsqueda, álbumes, orden, vigilancia de la carpeta...
 python dev_tools/prueba_listas.py        # listas, artistas, sin recargas
 python dev_tools/prueba_detalles.py      # fechas «añadida», rueda lateral, géneros, ventanas sueltas
+python dev_tools/prueba_fundido.py       # aleatorio coherente y fundido cruzado con dos reproductores (audio real)
+python dev_tools/prueba_animaciones.py   # niveles de movimiento, reposo, efectos, controles, avisos, visualizador, Windows
 ```
 
 ## Solución de problemas

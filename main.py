@@ -111,6 +111,14 @@ def selftest() -> int:
         controls.shutdown()
     except Exception as e:
         check(f"control multimedia de Windows: {e}", False)
+    try:
+        import importlib
+        for name in ("ui.nowplaying_full", "ui.calibrate", "ui.keep_change", "ui.celebrate", "ui.winext", "ui.emptystate",
+                     "ui.continue_card", "ui.focusring", "ui.tooltips", "services.envelope"):
+            importlib.import_module(name)
+        check("módulos de las animaciones y de la pantalla completa", True)
+    except Exception as e:
+        check(f"módulos de las animaciones: {e}", False)
     from services.ffmpeg_service import FFmpegService
     if os.environ.get("SELFTEST_SIN_FFMPEG"):      # la compilación automática no incluye FFmpeg (se descarga al usarlo)
         check("ffmpeg: se descarga al primer uso", True)

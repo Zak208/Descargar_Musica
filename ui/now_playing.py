@@ -97,12 +97,14 @@ class LyricsBox(QFrame):
         self.btn_edit.setCursor(Qt.PointingHandCursor)
         self.btn_edit.setToolTip("Corrige la letra o escribe la tuya")
         self.btn_edit.clicked.connect(lambda: self.window_ref.edit_lyrics())
+        grow_underline(self.btn_edit, "#FFFFFF")
         head.addWidget(self.btn_edit)
         self.btn_full = QPushButton("Ver completa")
         self.btn_full.setObjectName("LinkBtn")
         self.btn_full.setStyleSheet(link_css)
         self.btn_full.setCursor(Qt.PointingHandCursor)
         self.btn_full.clicked.connect(self.window_ref.open_lyrics)
+        grow_underline(self.btn_full, "#FFFFFF")
         head.addWidget(self.btn_full)
         lay.addLayout(head)
 
@@ -482,6 +484,7 @@ class NowPlayingPanel(QFrame):
         btn_queue.setObjectName("LinkBtn")
         btn_queue.setCursor(Qt.PointingHandCursor)
         btn_queue.clicked.connect(self.window_ref.open_queue_dialog)
+        grow_underline(btn_queue, "#FFFFFF")
         nh.addWidget(btn_queue)
         nl.addLayout(nh)
         nrow = QHBoxLayout()
@@ -591,7 +594,7 @@ class NowPlayingPanel(QFrame):
     def _breath_sync(self, *_):
         want = motion.full() and self.isVisible() and self._bg_color is not None and self.window_ref.is_playing_now()
         if want and self._breath_token is None:
-            self._breath_token = clock().subscribe(self._breath_tick, 8)
+            self._breath_token = clock().subscribe(self._breath_tick, 6)
         elif not want and self._breath_token is not None:
             clock().unsubscribe(self._breath_token)
             self._breath_token = None
