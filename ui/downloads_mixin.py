@@ -1,11 +1,14 @@
 """Descargas: listas y álbumes en paralelo, descargas sueltas, información de la barra superior y 'álbum como lista'."""
+import logging
+
 from config import get_download_dir, get_audio_quality, get_parallel_downloads
-from services import pending_downloads
+from services import pending_downloads, quality as quality_service, storage_service
 from services.network_service import is_network_error
 from services.playlist_service import PlaylistService
 from services.youtube_service import DownloadWorker
 from ui.common import _ACTIVE_THREADS
 from ui.covers import PlaylistCoverFromUrl
+from ui.dialogs import ask_confirm
 from ui.friendly import friendly_error
 
 
@@ -17,6 +20,8 @@ class DownloadsMixin:
         self.batch_total = 0
         self.batch_completed_count = 0
         self.batch_active_workers = 0
+        self.batch_paused = False
+        self._batch_workers = []
         self.max_parallel_workers = get_parallel_downloads()
         self._cover_jobs = []
 
@@ -48,55 +53,121 @@ class DownloadsMixin:
         self.topbar.set_info(f"{n} canciones en tu música" if n != 1 else "1 canción en tu música")
 
     # ------------------------------------------------------------- lotes
+    def _batch_keys(self) -> set:
+        keys = {str(i.get("id") or i.get("url") or i.get("title")) for i in self.batch_queue}
+        keys |= {str(w.item_info.get("id") or w.item_info.get("url") or w.item_info.get("title"))
+                 for w in self._batch_workers}
+        return keys
+
+    def estimate_download(self, items: list) -> tuple:
+        """(megabytes que ocuparán, bytes libres en el disco)"""
+        quality = get_audio_quality()
+        need = sum(quality_service.estimate_mb(quality, float(i.get("duration_secs") or 210)) for i in items)
+        return need, storage_service.free_disk_bytes(get_download_dir())
+
+    def confirm_download_size(self, items: list) -> bool:
+        """Avisa antes de descargar mucho o con poco espacio libre (en el resto de casos no pregunta nada)."""
+        need_mb, free = self.estimate_download(items)
+        free_mb = free / (1024 * 1024)
+        low = free_mb < need_mb * 2 + 300
+        if need_mb < 150 and not low:
+            return True
+        n = len(items)
+        msg = (f"Vas a descargar {n} canción{'es' if n != 1 else ''}: ocuparán unos {need_mb:.0f} MB "
+               f"y en tu disco quedan {storage_service.format_bytes(free)} libres.")
+        if low:
+            msg += "\n\nVa justo de espacio. Con «Ahorrar espacio» (en Ajustes) las canciones ocupan menos de la mitad."
+        return ask_confirm(self, "Descargar canciones", msg + "\n\n¿Quieres continuar?", ok="Descargar")
+
     def start_batch_download(self, items: list, from_pending: bool = False):
-        """Descarga varias canciones a la vez (hasta 3 en paralelo). Sin conexión quedan pendientes."""
-        self.batch_queue = [item for item in items if not item.get('already_downloaded')
-                            and not self.resolve_local(item)]
-        if not self.batch_queue:
+        """Descarga varias canciones (por defecto 3 a la vez; 1 en equipos modestos). Si ya hay descargas en marcha,
+        las nuevas se suman a la cola. Sin conexión quedan pendientes."""
+        new = [item for item in items if not item.get('already_downloaded') and not self.resolve_local(item)]
+        if not new:
             if not from_pending:
                 self.notify("Ya tienes todas estas canciones descargadas.")
             return
         if self.is_offline():
-            n = self.queue_download(self.batch_queue)
-            self.batch_queue = []
-            self.notify(f"Sin conexión: {len(items)} canciones quedan pendientes y se descargarán cuando vuelva internet.")
+            self.queue_download(new)
+            self.notify(f"Sin conexión: {len(new)} canciones quedan pendientes y se descargarán cuando vuelva internet.")
+            return
+        known = self._batch_keys()
+        new = [i for i in new if str(i.get("id") or i.get("url") or i.get("title")) not in known]
+        if not new:
+            self.notify("Esas canciones ya están en la cola de descargas.")
+            return
+        if not from_pending and not self.confirm_download_size(new):
             return
 
-        self.batch_total = len(self.batch_queue)
-        self.batch_completed_count = 0
-        self.batch_active_workers = 0
-        self.max_parallel_workers = get_parallel_downloads()
-
+        if self.batch_queue or self._batch_workers:       # ya hay un lote en marcha: se suman a la cola
+            self.batch_queue.extend(new)
+            self.batch_total += len(new)
+        else:
+            self.batch_queue = list(new)
+            self.batch_total = len(new)
+            self.batch_completed_count = 0
+        self.batch_paused = False
         self.batch_banner.setVisible(True)
         self.batch_banner_label.setText(f"Descargando {self.batch_total} canciones...")
-        self.notify(f"Descargando {self.batch_total} canciones. Puedes verlas en «Descargas».")
+        self.notify(f"Descargando {len(new)} canciones. Puedes verlas en «Descargas».")
+        self._fill_batch_workers()
 
-        for _ in range(min(self.max_parallel_workers, len(self.batch_queue))):
-            self.download_next_parallel_worker()
+    def _fill_batch_workers(self):
+        """Pone en marcha tantas descargas como permita el límite del equipo (y la pausa)."""
+        self.max_parallel_workers = get_parallel_downloads()
+        while self.batch_queue and not self.batch_paused and len(self._batch_workers) < self.max_parallel_workers:
+            item = self.batch_queue.pop(0)
+            worker = DownloadWorker(item, str(get_download_dir()), get_audio_quality())
+            self._batch_workers.append(worker)
+            self.batch_active_workers = len(self._batch_workers)
+            self.downloads.track(worker, item)
+            _ACTIVE_THREADS.add(worker)
+            worker.finished_signal.connect(lambda res, w=worker: self.on_parallel_worker_finished(res, w))
+            worker.start()
+        if not self.batch_queue and not self._batch_workers:
+            self.batch_banner_label.setText(f"¡Listo! {self.batch_total} canciones descargadas")
+            self.notify("Descarga completada")
+            self.refresh_sidebar_library()
+        self._refresh_queue_controls()
 
-    def download_next_parallel_worker(self):
-        if not self.batch_queue:
-            if self.batch_active_workers == 0:
-                self.batch_banner_label.setText(f"¡Listo! {self.batch_total} canciones descargadas")
-                self.notify("Descarga completada")
-                self.refresh_sidebar_library()
-            return
-
-        item = self.batch_queue.pop(0)
-        self.batch_active_workers += 1
-        worker = DownloadWorker(item, str(get_download_dir()), get_audio_quality())
-        self.downloads.track(worker, item)
-        _ACTIVE_THREADS.add(worker)
-        worker.finished_signal.connect(lambda res, w=worker: self.on_parallel_worker_finished(res, w))
-        worker.start()
+    # nombre antiguo, por compatibilidad
+    download_next_parallel_worker = _fill_batch_workers
 
     def on_parallel_worker_finished(self, result: dict, worker):
         _ACTIVE_THREADS.discard(worker)
+        if worker in self._batch_workers:
+            self._batch_workers.remove(worker)
+        self.batch_active_workers = len(self._batch_workers)
         self._settle_pending(result, worker.item_info)
-        self.batch_active_workers -= 1
         self.batch_completed_count += 1
-        self.batch_banner_label.setText(f"Descargando… {self.batch_completed_count} de {self.batch_total}")
-        self.download_next_parallel_worker()   # la biblioteca se actualiza una sola vez, al terminar el lote
+        if result.get("success") and result.get("warning"):
+            logging.info(f"Descargada con aviso: {result['warning']}")
+        paused = " (en pausa)" if self.batch_paused and self.batch_queue else ""
+        self.batch_banner_label.setText(f"Descargando… {self.batch_completed_count} de {self.batch_total}{paused}")
+        self._fill_batch_workers()   # la biblioteca se actualiza una sola vez, al terminar el lote
+
+    # ---- pausar, reanudar y cancelar la cola
+    def pause_batch(self):
+        self.batch_paused = True
+        self.notify("Descargas en pausa: terminan las que ya empezaron.")
+        self._refresh_queue_controls()
+
+    def resume_batch(self):
+        self.batch_paused = False
+        self.notify("Descargas reanudadas")
+        self._fill_batch_workers()
+
+    def cancel_batch_queue(self):
+        n = len(self.batch_queue)
+        self.batch_queue = []
+        self.batch_paused = False
+        self.notify(f"Se quitaron {n} canciones de la cola" if n else "No había nada en la cola")
+        self._fill_batch_workers()
+
+    def _refresh_queue_controls(self):
+        if hasattr(self, "downloads_panel"):
+            self.downloads_panel.refresh_queue()
+        self.on_downloads_changed()
 
     # ------------------------------------------------ canciones sueltas
     def _settle_pending(self, result: dict, info: dict):
@@ -115,6 +186,14 @@ class DownloadsMixin:
             if on_done is not None:
                 on_done({"success": False, "queued": True})
             return
+        need_mb, free = self.estimate_download([info])
+        if free < (need_mb + 250) * 1024 * 1024:           # casi sin espacio: se avisa antes de empezar
+            if not ask_confirm(self, "Poco espacio en el disco",
+                               f"Solo quedan {storage_service.format_bytes(free)} libres. ¿Quieres descargar de todas formas?\n\n"
+                               "Con «Ahorrar espacio» (en Ajustes) las canciones ocupan menos de la mitad.", ok="Descargar"):
+                if on_done is not None:
+                    on_done({"success": False, "cancelled": True})
+                return
         worker = DownloadWorker(info, str(get_download_dir()), get_audio_quality())
         self.downloads.track(worker, info)
         _ACTIVE_THREADS.add(worker)

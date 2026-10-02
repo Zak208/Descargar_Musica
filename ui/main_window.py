@@ -64,8 +64,9 @@ from ui.home_page import build_home_page
 from ui.player_bar import build_player_bar
 from ui.lyrics_dialog import LyricsDialog
 from ui.lyrics_editor import LyricsEditorDialog
-from services import lyrics_store, transcribe_service, session_service, backup_service
+from services import lyric_align, lyrics_store, transcribe_service, session_service, backup_service
 from services import http as web
+from services import update_service, ytdlp_loader
 from ui.metadata_dialog import MetadataDialog
 from ui.equalizer_dialog import EqualizerDialog
 from ui.queue_dialog import QueueDialog
@@ -185,6 +186,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self._session_timer.timeout.connect(lambda: self.player_bar.isVisible() and self.save_session())
         self._session_timer.start()
         QTimer.singleShot(8000, backup_service.auto_backup_if_due)
+        QTimer.singleShot(12000, self.check_updates)         # una vez cada 24 h, solo con conexión
         QTimer.singleShot(25000, perf.trim_memory)       # tras el arranque se devuelve a Windows lo que sobra
         self._trim_timer = QTimer(self)                   # y cada 10 minutos mientras no se esté usando
         self._trim_timer.setInterval(600_000)
@@ -482,6 +484,41 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             return
         self._start_transcription(path)
 
+    # ---------- sincronizar una letra con la canción (tiempos automáticos) ----------
+    _align_worker = None
+
+    def _sync_lyrics(self, editor, phrases: list, audio_path: str):
+        """El sistema escucha la canción y pone el tiempo a cada frase del editor."""
+        if not audio_path or not os.path.isfile(audio_path):
+            editor.set_sync_busy("Solo se puede con canciones descargadas.")
+            return
+
+        def go():
+            worker = lyric_align.AlignWorker(audio_path, phrases, self)
+            worker.progress.connect(lambda pct: editor.set_sync_busy(f"El sistema está escuchando la canción… {pct}%", pct))
+            worker.done.connect(editor.apply_times)
+            worker.failed.connect(lambda msg: editor.set_sync_busy(msg))
+            self._align_worker = worker
+            editor.set_sync_busy("El sistema está escuchando la canción…", -2)
+            worker.start()
+
+        if transcribe_service.is_ready():
+            go()
+            return
+        if not ask_confirm(
+                editor, "Poner los tiempos automáticamente",
+                f"Para escuchar la canción el programa necesita un reconocedor de voz (unos {transcribe_service.DOWNLOAD_MB} MB). "
+                "Se descarga una sola vez y después funciona sin internet. ¿Descargarlo ahora?", ok="Descargar"):
+            editor.set_sync_busy("")
+            return
+        setup = transcribe_service.SetupWorker(self)
+        setup.progress.connect(lambda pct: editor.set_sync_busy(f"Descargando el reconocedor de voz… {pct}%", pct))
+        setup.done.connect(go)
+        setup.failed.connect(lambda msg: editor.set_sync_busy(f"No se pudo descargar: {friendly_error(msg)}"))
+        self._lyrics_job = setup
+        editor.set_sync_busy("Descargando el reconocedor de voz… 0%", 0)
+        setup.start()
+
     def _start_transcription(self, path: str):
         key = self.lyrics_key()
         worker = transcribe_service.TranscribeWorker(path, key, self)
@@ -549,9 +586,14 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
                 text = data.get("plain_text", "")
         stored = lyrics_store.load(key)
         host = self._lyrics_host(origin)
+        local = info.get("local_path") or ""
         editor = LyricsEditorDialog(host, info.get("title", ""), text, player=self.player,
-                                    can_restore=bool(stored and stored.get("source") == "user"))
+                                    can_restore=bool(stored and stored.get("source") == "user"),
+                                    audio_path=local if os.path.isfile(local) else "")
+        editor.sync_requested.connect(lambda phrases: self._sync_lyrics(editor, phrases, local))
         if editor.exec() != 1:
+            if self._align_worker is not None and self._align_worker.isRunning():
+                self._align_worker.cancel()
             return
         if editor.restore:
             lyrics_store.delete(key, "user")
@@ -688,7 +730,91 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
     def open_help(self):
         if getattr(self, "help_dialog", None) is None:
             self.help_dialog = HelpDialog(self)
+        self.help_dialog.refresh_updates()
         self.help_dialog.exec()
+
+    # ---------- actualizaciones (motor de descargas y aplicación) ----------
+    def check_updates(self, manual: bool = False):
+        """Mira en GitHub si hay versión nueva. Solo con conexión; sola, una vez cada 24 horas."""
+        if self.is_offline():
+            if manual:
+                self.notify("Sin conexión: no se puede buscar actualizaciones.")
+            return
+        if not manual and not update_service.due("last_update_check"):
+            return
+        worker = getattr(self, "_update_check", None)
+        if worker is not None and worker.isRunning():
+            return
+        if manual:
+            self.notify("Buscando actualizaciones...")
+        self._update_check = update_service.UpdateCheckWorker(self)
+        self._update_check.result.connect(lambda app_new, engine_new: self._on_update_result(app_new, engine_new, manual))
+        self._update_check.start()
+
+    def _on_update_result(self, app_new: str, engine_new: str, manual: bool):
+        update_service.mark_checked("last_update_check")
+        self._pending_engine = engine_new
+        self._pending_app = app_new
+        dlg = getattr(self, "help_dialog", None)
+        if dlg is not None:
+            dlg.btn_engine.setVisible(bool(engine_new))
+            dlg.btn_app.setVisible(bool(app_new))
+            dlg.refresh_updates()
+            if app_new:
+                dlg.lbl_app.setText(f"Aplicación: versión {__version__} · hay una versión nueva ({app_new})")
+            if engine_new:
+                dlg.lbl_engine.setText(f"Motor de descargas (yt-dlp): versión {ytdlp_loader.active_version()} · "
+                                       f"hay una nueva ({engine_new})")
+        if engine_new and load_settings().get("ytdlp_auto_update", True):
+            self.update_engine(quiet=True)
+        elif engine_new and manual:
+            self.notify(f"Hay una versión nueva del motor de descargas ({engine_new}).")
+        if app_new:
+            margin = (self.player_bar.height() + 24) if self.player_bar.isVisible() else 40
+            self.toast.show_message(f"Hay una versión nueva de Descargador de Música ({app_new})", bottom_margin=margin,
+                                    action=("Ver novedades", self.open_app_releases))
+        elif manual and not engine_new:
+            self.notify("Todo está al día.")
+
+    def update_engine(self, quiet: bool = False):
+        tag = getattr(self, "_pending_engine", "")
+        if not tag:
+            self.check_updates(manual=True)
+            return
+        worker = getattr(self, "_engine_worker", None)
+        if worker is not None and worker.isRunning():
+            return
+        dlg = getattr(self, "help_dialog", None)
+        self._engine_worker = update_service.YtdlpUpdateWorker(tag, self)
+        if dlg is not None:
+            dlg.update_progress.setVisible(True)
+            dlg.update_progress.setValue(0)
+            self._engine_worker.progress.connect(dlg.update_progress.setValue)
+        self._engine_worker.done.connect(lambda v: self._on_engine_updated(v, quiet))
+        self._engine_worker.failed.connect(lambda msg: self._on_engine_failed(msg, quiet))
+        self._engine_worker.start()
+
+    def _on_engine_updated(self, version: str, quiet: bool):
+        self._pending_engine = ""
+        dlg = getattr(self, "help_dialog", None)
+        if dlg is not None:
+            dlg.update_progress.setVisible(False)
+            dlg.btn_engine.setVisible(False)
+            dlg.refresh_updates()
+        if ytdlp_loader.is_loaded():
+            self.notify(f"Motor de descargas actualizado a {version}: se usará al reiniciar la aplicación.")
+        else:
+            self.notify(f"Motor de descargas actualizado a {version}")
+
+    def _on_engine_failed(self, message: str, quiet: bool):
+        dlg = getattr(self, "help_dialog", None)
+        if dlg is not None:
+            dlg.update_progress.setVisible(False)
+        if not quiet:
+            self.notify(f"No se pudo actualizar: {friendly_error(message)}")
+
+    def open_app_releases(self):
+        QDesktopServices.openUrl(QUrl(update_service.APP_PAGE))
 
     def restart_app(self):
         """Cierra y vuelve a abrir la aplicación (por ejemplo, tras restaurar una copia de seguridad)."""

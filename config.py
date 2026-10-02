@@ -64,7 +64,10 @@ def _migrate_legacy_data(new_dir: Path) -> None:
 
 APP_DATA_DIR = _resolve_data_dir()
 try:
-    _migrate_legacy_data(APP_DATA_DIR)
+    # solo el programa compilado, y solo si no se pidió otra carpeta (las pruebas usan carpetas temporales
+    # y nunca deben llevarse los datos de la carpeta del proyecto)
+    if getattr(sys, 'frozen', False) and not os.environ.get("DESCARGADOR_DATA_DIR"):
+        _migrate_legacy_data(APP_DATA_DIR)
 except Exception:
     pass
 APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -150,6 +153,12 @@ def set_audio_quality(quality: str):
     settings = load_settings()
     settings["quality"] = quality
     save_settings(settings)
+
+
+def get_organize_mode() -> str:
+    """Cómo se guardan las canciones: 'flat' (todas juntas, por defecto), 'artist' o 'artist_album'."""
+    mode = load_settings().get("organize", "flat")
+    return mode if mode in ("flat", "artist", "artist_album") else "flat"
 
 
 def get_theme() -> str:

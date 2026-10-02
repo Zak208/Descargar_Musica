@@ -3,6 +3,26 @@
 Formato: `MAYOR.MENOR.PARCHE`. MAYOR = cambios que rompen datos o uso, MENOR = funciones nuevas, PARCHE = arreglos.
 Cada versión subida a GitHub tiene su etiqueta `vX.Y.Z` (pestaña *Releases/Tags*).
 
+## 1.10.0
+**Descargas**
+- Elige la versión correcta: compara las duraciones de varios resultados de YouTube y comprueba el archivo descargado; si no es lo esperado (otra versión, archivo dañado o no disponible) prueba solo con otra (hasta 3 intentos) y, si ninguna coincide, se queda con la más parecida y lo avisa.
+- Cola de descargas con pausa, reanudar y cancelar; las descargas nuevas se suman a la cola en vez de reiniciarla.
+- Aviso antes de descargar mucho o con poco espacio en el disco (con el tamaño estimado).
+- Organización opcional de las canciones: todas juntas (por defecto), por artista, o por artista y álbum.
+
+**Letras**
+- Poner el tiempo a una letra pegada: el sistema escucha la canción y encaja tu texto (error mediano de 0,4 s en las pruebas), o márcalos tú con la barra espaciadora mientras suena.
+
+**Actualizaciones**
+- El motor de descargas (yt-dlp) se actualiza por separado desde Ayuda (huella SHA-256 comprobada; automático una vez al día si quieres) y la app avisa si hay una versión nueva.
+- yt-dlp se carga solo cuando hace falta (≈ 27 MB menos de memoria y 0,3 s de CPU al abrir).
+
+**Proyecto**
+- Publicación automática de versiones con GitHub Actions (compila el `.exe`, lo comprueba y lo sube a Releases).
+- El programa compilado pesa ≈ 270 MB (antes 481 MB). Medido con el `.exe`: ≈ 1,3 s de CPU en total al arrancar y 0 % en reposo.
+- Arreglo en las pruebas: ya no mueven los datos de la carpeta del proyecto a su carpeta temporal.
+- Limpieza de carpetas antiguas del proyecto (copias de seguridad y restos de desarrollo archivados en un .zip fuera del repositorio).
+
 ## 1.9.0
 **Más cómoda**
 - Deshacer: al quitar una canción de una lista, quitar de favoritas, dejar de seguir a un artista o eliminar una lista, aparece «Deshacer» (también Ctrl+Z durante 90 s). Ya no hay que confirmar.

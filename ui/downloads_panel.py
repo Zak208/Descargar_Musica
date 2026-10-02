@@ -156,6 +156,27 @@ class DownloadsPanel(InlineDialog):
         head.addWidget(self.btn_clear)
         root.addLayout(head)
 
+        # Cola de descargas (se pueden pausar y cancelar)
+        self.queue_box = QFrame()
+        self.queue_box.setObjectName("OfflineBanner")
+        ql = QHBoxLayout(self.queue_box)
+        ql.setContentsMargins(12, 8, 8, 8)
+        ql.setSpacing(8)
+        self.queue_lbl = QLabel("")
+        self.queue_lbl.setWordWrap(True)
+        self.queue_lbl.setStyleSheet("background: transparent; font-size: 12px; font-weight: 600;")
+        ql.addWidget(self.queue_lbl, stretch=1)
+        self.queue_toggle = QPushButton("Pausar")
+        self.queue_toggle.setCursor(Qt.PointingHandCursor)
+        self.queue_toggle.clicked.connect(self._queue_toggle)
+        ql.addWidget(self.queue_toggle)
+        self.queue_cancel = QPushButton("Cancelar cola")
+        self.queue_cancel.setCursor(Qt.PointingHandCursor)
+        self.queue_cancel.clicked.connect(lambda: self.window_ref.cancel_batch_queue())
+        ql.addWidget(self.queue_cancel)
+        root.addWidget(self.queue_box)
+        self.queue_box.setVisible(False)
+
         # Pendientes (descargas que esperan a que vuelva internet)
         self.pending_box = QFrame()
         self.pending_box.setObjectName("OfflineBanner")
@@ -201,6 +222,22 @@ class DownloadsPanel(InlineDialog):
         if self.isVisible():
             self.refresh()
 
+    def refresh_queue(self):
+        w = self.window_ref
+        n = len(w.batch_queue)
+        show = n > 0 or (w.batch_paused and bool(w._batch_workers))
+        self.queue_box.setVisible(show)
+        if show:
+            self.queue_lbl.setText((f"{n} canción{'es' if n != 1 else ''} en cola" if n else "Terminando las últimas")
+                                   + (" · en pausa" if w.batch_paused else ""))
+            self.queue_toggle.setText("Reanudar" if w.batch_paused else "Pausar")
+
+    def _queue_toggle(self):
+        if self.window_ref.batch_paused:
+            self.window_ref.resume_batch()
+        else:
+            self.window_ref.pause_batch()
+
     def refresh_pending(self):
         n = pending_downloads.count()
         self.pending_box.setVisible(n > 0)
@@ -239,6 +276,7 @@ class DownloadsPanel(InlineDialog):
                     self.body_layout.insertWidget(pos, row)
             row.update_from(entry)
         self.refresh_pending()
+        self.refresh_queue()
         self.empty.setVisible(not entries)
         self.btn_clear.setVisible(any(e["state"] not in ACTIVE_STATES for e in entries.values()))
         self.scroll.setFixedHeight(max(70, min(380, self.body.sizeHint().height() + 6)))

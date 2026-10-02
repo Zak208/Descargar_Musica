@@ -4,7 +4,8 @@ import multiprocessing
 
 if "--selftest" in sys.argv:     # la autocomprobación trabaja con datos temporales: nunca toca los del usuario
     import tempfile
-    os.environ.setdefault("DESCARGADOR_DATA_DIR", tempfile.mkdtemp(prefix="descargador_selftest_"))
+    if not os.environ.get("DESCARGADOR_DATA_DIR"):      # (vacía también cuenta como «sin indicar»)
+        os.environ["DESCARGADOR_DATA_DIR"] = tempfile.mkdtemp(prefix="descargador_selftest_")
 
 from ui.common import hide_subprocess_windows
 hide_subprocess_windows()
@@ -72,12 +73,31 @@ def selftest() -> int:
     check(f"iconos SVG ({len(svgs)} archivos, fallan: {bad or 'ninguno'})", svgs and not bad)
 
     try:
-        import yt_dlp, mutagen, requests  # noqa: F401
-        check("librerías (yt-dlp, mutagen, requests)", True)
+        import mutagen, requests  # noqa: F401
+        check("librerías (mutagen, requests)", True)
     except Exception as e:
         check(f"librerías: {e}", False)
+    try:
+        from services import library_db, http, ytdlp_loader
+        with library_db.connect() as con:
+            con.execute("SELECT 1")
+        http.session()
+        ytdlp_loader.get()
+        check(f"índice SQLite, sesión web y yt-dlp {ytdlp_loader.active_version()}", True)
+    except Exception as e:
+        check(f"índice SQLite / web / yt-dlp: {e}", False)
+    try:
+        from services.smtc_service import MediaControls
+        controls = MediaControls()
+        check("control multimedia de Windows" + ("" if controls.available else " (no disponible; es opcional)"), True)
+        controls.shutdown()
+    except Exception as e:
+        check(f"control multimedia de Windows: {e}", False)
     from services.ffmpeg_service import FFmpegService
-    check("ffmpeg disponible", FFmpegService.is_ffmpeg_available())
+    if os.environ.get("SELFTEST_SIN_FFMPEG"):      # la compilación automática no incluye FFmpeg (se descarga al usarlo)
+        check("ffmpeg: se descarga al primer uso", True)
+    else:
+        check("ffmpeg disponible", FFmpegService.is_ffmpeg_available())
 
     strays = []
 

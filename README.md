@@ -1,11 +1,12 @@
 # Descargador de Música
 
-**Versión actual: 1.9.0** · [Historial de versiones](CHANGELOG.md) · cada versión subida tiene su etiqueta `vX.Y.Z` en GitHub
+**Versión actual: 1.10.0** · [Historial de versiones](CHANGELOG.md) · cada versión subida tiene su etiqueta `vX.Y.Z` en GitHub
 
 Aplicación de escritorio para **Windows** que combina un reproductor con aspecto de Spotify y un descargador de música:
 buscas una canción, un artista o un álbum, escuchas un adelanto y la descargas a tu equipo en MP3, M4A, FLAC o WAV,
-con su portada y sus etiquetas. Todo (listas, favoritos, artistas que sigues, recomendaciones) funciona en local,
-sin cuentas ni claves.
+con su portada, sus etiquetas y su letra. Todo (listas, favoritos, artistas que sigues, recomendaciones) funciona en
+local, sin cuentas ni claves. Está pensada para gastar muy poco y para que cualquiera pueda usarla sin saber de
+informática. **Tu música descargada y tus listas funcionan también sin internet.**
 
 > **Aviso legal.** Esta herramienta es para uso personal. Descargar contenido protegido por derechos de autor puede
 > estar prohibido en tu país o ir contra las condiciones de uso de las plataformas de origen. Eres responsable del uso
@@ -20,13 +21,15 @@ sin cuentas ni claves.
 3. [Instalación y ejecución](#instalación-y-ejecución)
 4. [Crear el ejecutable (.exe)](#crear-el-ejecutable-exe)
 5. [Cómo se usa](#cómo-se-usa)
-6. [Cómo funciona por dentro](#cómo-funciona-por-dentro)
-7. [Estructura del proyecto](#estructura-del-proyecto)
-8. [Datos que guarda y privacidad](#datos-que-guarda-y-privacidad)
-9. [Rendimiento y modo ahorro](#rendimiento-y-modo-ahorro)
-10. [Pruebas](#pruebas)
-11. [Solución de problemas](#solución-de-problemas)
-12. [Créditos y licencias de terceros](#créditos-y-licencias-de-terceros)
+6. [Sin conexión](#sin-conexión)
+7. [Cómo funciona por dentro](#cómo-funciona-por-dentro)
+8. [Estructura del proyecto](#estructura-del-proyecto)
+9. [Datos que guarda y privacidad](#datos-que-guarda-y-privacidad)
+10. [Rendimiento y consumo](#rendimiento-y-consumo)
+11. [Pruebas](#pruebas)
+12. [Solución de problemas](#solución-de-problemas)
+13. [Publicar una versión](#publicar-una-versión)
+14. [Créditos y licencias de terceros](#créditos-y-licencias-de-terceros)
 
 ---
 
@@ -37,48 +40,80 @@ sin cuentas ni claves.
   Al llegar al final de los resultados se cargan más automáticamente.
 - También acepta enlaces de YouTube (canción o lista) y de Spotify (canción, álbum o lista): de Spotify solo se leen
   los títulos de su página pública y el audio se busca en YouTube; no se usa la API oficial ni ninguna cuenta.
+  Puedes **pegar un enlace con Ctrl+V** en cualquier sitio o **soltarlo sobre la ventana**.
 - Escucha un adelanto antes de descargar.
 - Descarga una canción, un álbum completo, o «descargar y crear lista» (descarga el álbum y crea una lista con su portada).
-- Calidades: *Alta calidad* (MP3 320), *Normal* (MP3 192), *Fidelidad original* (M4A, sin recomprimir), *FLAC* y *WAV*.
+- **Elige la versión correcta**: compara las duraciones de los resultados de YouTube, comprueba el archivo descargado y,
+  si no es lo esperado (otra versión, archivo dañado o no disponible), prueba solo con otra (hasta 3 intentos).
+- Calidades explicadas con lo que ocupa una canción de unos 4 minutos: *Alta calidad* (MP3 320, ≈ 9 MB), *Normal*
+  (MP3 192, ≈ 6 MB), *Ahorrar espacio* (MP3 128, ≈ 4 MB), *Fidelidad original* (M4A sin recomprimir), *FLAC* y *WAV*.
   Las canciones vienen de fuentes ya comprimidas, así que FLAC y WAV no suenan mejor: solo ocupan más.
-- Panel de **descargas en curso** con el progreso de cada canción.
+- Organización opcional: todas juntas (por defecto), una carpeta por artista, o artista y álbum.
+- Panel de **descargas en curso** con progreso, **cola con pausa, reanudar y cancelar**, aviso si va a faltar espacio en
+  el disco y confirmación con el tamaño estimado cuando descargas mucho.
+- La letra se guarda **dentro del archivo** (etiquetas ID3/MP4/FLAC) para que viaje con la canción y funcione sin internet.
 
 **Biblioteca al estilo Spotify**
 - *Canciones que te gustan* (con pestañas *Todas / Descargadas / Sin descargar*), *Mis descargas* y tus propias listas.
-- Listas con filas numeradas como en Spotify: al pasar el ratón el número se convierte en ▶, un clic marca la fila y
-  muestra los tres puntitos (menú: añadir a una lista, quitar de la lista, descargar, ir al artista o al álbum…) y un
-  doble clic reproduce la canción.
+- Filas numeradas: al pasar el ratón el número se convierte en ▶ (un clic sobre él reproduce), un clic marca la fila y
+  muestra los tres puntitos (añadir a una lista, quitar, descargar, ir al artista o al álbum…) y un doble clic reproduce.
+- **Selección múltiple** (Ctrl o Mayús + clic) con barra de acciones: añadir a una lista, reproducir a continuación,
+  descargar, quitar de la lista o enviar a la papelera. Se pueden **arrastrar** (una o varias) a una lista de la barra
+  lateral, y dentro de una playlist **arrastrar para reordenar**.
+- **Deshacer** (botón o Ctrl+Z, 90 s) al quitar de una lista, de favoritas, dejar de seguir a un artista o eliminar una
+  lista; borrar una canción la manda a la **papelera de Windows**.
 - Listas con portada personalizable, columnas (título, álbum, fecha en que se añadió, duración), orden por cualquier
-  columna, buscador y duración total.
-- Seguir artistas: aparecen en la barra lateral y en Inicio. Filtros *Todo / Listas / Artistas*.
-- La carpeta de música se vigila: si borras o añades archivos desde el Explorador, la app se actualiza sola.
+  columna, buscador y duración total. Manejo con teclado: ↑ ↓, Intro, Supr, Esc.
+- **Listas automáticas** (se arman solas): añadidas esta semana, canciones largas, lo más escuchado, aún sin escuchar,
+  sin artista o álbum. Más **«Mixes de tu música»**, **«Lo más escuchado»** y **«Redescubre»** en Inicio (estadísticas
+  locales: nada se envía a ningún sitio).
+- En *Mis descargas* → «…»: **buscar canciones repetidas** (propone quedarse con la de mejor calidad) y **mejorar los
+  datos** (artista, álbum y portada) buscando la ficha más parecida; tú revisas antes de aplicar.
+- Seguir artistas: aparecen en la barra lateral y en Inicio. La carpeta de música se vigila y la app se actualiza sola.
 
 **Descubrir**
 - Inicio con recomendaciones calculadas a partir de tu música: *mixes*, artistas y canciones parecidos,
   «porque escuchas a…», novedades de los artistas que sigues, éxitos del momento y exploración por géneros.
 
 **Reproductor**
-- Cola, aleatorio, repetir, «anterior» como en Spotify (reinicia pasados 20 s; antes vuelve a la canción previa),
-  reproductor pequeño siempre visible, letras sincronizadas y **ecualizador** real (graves, medios y agudos) que está
-  siempre activo: con todo en 0 el audio no se toca y solo se procesa si mueves algún control.
+- Cola, aleatorio, repetir, «anterior» como en Spotify, reproductor pequeño siempre visible y **ecualizador** real
+  (graves, medios y agudos, con ajustes como Auriculares o Noche) que está siempre activo: con todo en 0 el audio no se toca.
+- **Botón del reloj** en la barra: *temporizador para dormir* (con bajada gradual del volumen, o «al terminar la
+  canción»), *velocidad* de reproducción, *repetir un tramo* A-B, *fundido* entre canciones e **igualar el volumen entre
+  canciones** (se mide una vez con FFmpeg y se guarda).
+- **Control multimedia de Windows** (título y portada en el panel del sistema; botones de auriculares y teclados) y
+  **controles en la bandeja** del sistema, con opción de seguir sonando al cerrar la ventana.
+- Se **sigue donde lo dejaste**: volumen, canción y punto en que iba, cola, lista abierta, aleatorio/repetir, panel y
+  tamaño de la ventana.
 - Panel lateral derecho **«En reproducción»**: portada grande, botón «+» para guardar, letra que avanza sola,
-  información del artista (seguidores y una breve reseña) y la siguiente canción.
-- **Letras** (panel lateral y ventana propia, que se puede poner a pantalla completa con F11): se oscurecen las frases ya leídas, se subraya la que tienes bajo el ratón y al pulsarla la canción salta a ese
-  momento. Si una canción no tiene letra, en las canciones **descargadas** puedes pulsar **«Generar con el sistema»**: el
-  programa escucha la canción y escribe lo que canta (con tiempos). Queda marcada como «generada por el sistema» porque puede
-  tener errores. Con **«Editar»** (o «Escribir la letra yo») abres un editor dentro de la app: un campo para el momento de la canción (o «Tiempo actual»), otro para la frase y «Añadir» la sube a la lista, donde puedes corregir cualquier línea con doble clic;
-  la letra propia manda sobre cualquier otra y se puede restaurar. La primera vez, y solo si aceptas, se descarga el reconocedor
-  de voz (whisper.cpp, ≈ 68 MB, con comprobación SHA-256); después funciona sin internet.
-- 12 colores de aplicación.
+  información del artista y la siguiente canción.
+- **Letras** (panel lateral y ventana propia, con pantalla completa en F11): se oscurecen las frases ya leídas, se
+  subraya la que tienes bajo el ratón y al pulsarla la canción salta a ese momento. Si una canción no tiene letra, en
+  las **descargadas** puedes pulsar **«Generar con el sistema»** (el programa escucha la canción y escribe lo que canta,
+  con tiempos; queda marcada como generada porque puede tener errores). Con **«Editar»** abres un editor sencillo:
+  escribes o pegas la letra y puedes **ponerles los tiempos automáticamente** (el sistema escucha la canción y encaja
+  tu texto; en las pruebas el error mediano es de 0,4 s) o **marcarlos con la barra espaciadora** mientras suena.
+  La letra propia manda sobre cualquier otra y se puede restaurar. La primera vez, y solo si aceptas, se descarga el
+  reconocedor de voz (whisper.cpp, ≈ 68 MB, con comprobación SHA-256); después funciona sin internet.
+- 12 colores de aplicación, **tamaño de la aplicación** (100/115/130 %) y **alto contraste** (Ajustes → Accesibilidad).
+
+**Cuidado de tus datos**
+- Tus datos viven en `%APPDATA%\Descargador de Música`, **fuera de la carpeta del programa**: actualizar o mover el
+  `.exe` nunca los borra. Hay **copia de seguridad en un clic** (y una automática cada semana), restauración,
+  **«Liberar espacio»** y un **informe de problemas sin datos personales** (Ayuda).
+- **Actualizaciones**: el motor de descargas (yt-dlp) se puede actualizar por separado desde Ayuda (o solo, una vez al
+  día) para que las descargas sigan funcionando cuando YouTube cambia algo, y la app avisa si hay versión nueva.
+- **Asistente de bienvenida** de 3 pasos y **recorrido guiado** (Ayuda).
 
 ## Requisitos
 
-- **Windows 10 u 11** (es donde se ha desarrollado y probado; el código no depende de nada exclusivo de Windows salvo detalles menores, como abrir el Explorador).
+- **Windows 10 u 11** (es donde se ha desarrollado y probado).
 - **Python 3.12** (para ejecutar desde el código). Con el `.exe` compilado no hace falta instalar nada.
-- Conexión a internet para buscar, escuchar adelantos, descargar, letras y recomendaciones.
+- Conexión a internet para buscar, escuchar adelantos, descargar y recomendaciones. **Sin ella** sigues escuchando y
+  organizando tu música descargada.
 - **FFmpeg** (convierte el audio y aplica el ecualizador). No hace falta instalarlo a mano: si no lo encuentra,
-  la aplicación lo descarga sola la primera vez (carpeta `app_data/ffmpeg`).
-  Si prefieres tenerlo ya, copia `ffmpeg.exe` en una carpeta `bin/` junto a `main.py` (`ffprobe.exe` no hace falta).
+  la aplicación lo descarga sola la primera vez. Si prefieres tenerlo ya, copia `ffmpeg.exe` en una carpeta `bin/` junto
+  a `main.py` (`ffprobe.exe` no hace falta).
 
 ## Instalación y ejecución
 
@@ -93,7 +128,8 @@ pip install -r requirements.txt
 python main.py
 ```
 
-Las canciones se guardan por defecto en `Música\Canciones_YouTube` (se puede cambiar en **Ajustes**).
+Las canciones se guardan por defecto en `Música\Canciones_YouTube` (se puede cambiar en **Ajustes**). Ejecutando desde el
+código, los datos se guardan en la carpeta `app_data/` del proyecto.
 
 ## Crear el ejecutable (.exe)
 
@@ -102,11 +138,12 @@ pip install -r requirements-build.txt
 python -m PyInstaller --noconfirm --distpath dist_app --workpath build_tmp Descargar_Musica.spec
 ```
 
-También puedes hacer doble clic en `compilar_exe.bat`. El resultado queda en `dist_app\Descargar_Musica\`
-(copia esa carpeta completa a otro equipo para usarla; empieza con los datos vacíos).
-Si existe `bin/ffmpeg.exe`, se incluye dentro (sin `ffprobe.exe`, que no hace falta y ocupa ~145 MB); si no, la app descargará FFmpeg al abrirse.
+También puedes hacer doble clic en `compilar_exe.bat`. El resultado queda en `dist_app\Descargar_Musica\` (≈ 270 MB con
+FFmpeg; copia esa carpeta completa a otro equipo para usarla). Si existe `bin/ffmpeg.exe`, se incluye dentro (sin
+`ffprobe.exe`, que no hace falta y ocupa ~145 MB); si no, la app descargará FFmpeg al abrirse.
 
-Para comprobar que el ejecutable ha quedado bien (iconos, tipografía, librerías, FFmpeg y ausencia de ventanas sueltas):
+Para comprobar que el ejecutable ha quedado bien (iconos, tipografía, índice SQLite, yt-dlp, control multimedia, FFmpeg y
+ausencia de ventanas sueltas; trabaja con datos temporales, nunca con los tuyos):
 
 ```bash
 Descargar_Musica.exe --selftest        # escribe selftest.log junto al programa
@@ -116,24 +153,40 @@ Descargar_Musica.exe --selftest        # escribe selftest.log junto al programa
 
 | Quiero… | Cómo |
 |---|---|
-| Buscar | Escribe en la barra de arriba (Intro, o espera un instante). También puedes pegar un enlace. |
-| Escuchar / reproducir | Doble clic en la fila (en los resultados de búsqueda, el botón ▶ redondo). |
+| Buscar | Escribe en la barra de arriba (Intro, o espera un instante). También puedes pegar (Ctrl+V) o soltar un enlace. |
+| Escuchar / reproducir | Doble clic en la fila, o clic sobre el ▶ que sale en lugar del número. |
 | Descargar | Botón verde **Descargar**. En un álbum: *Descargar álbum completo* o *Descargar y crear lista*. |
-| Guardar una canción | Botón «+» (fila, tarjeta, panel o barra de reproducción): el primer clic la guarda en «Canciones que te gustan»; si ya está guardada, abre la lista de listas para marcarla (✓ verde) o quitarla de cada una. |
-| Crear una lista | **+** en *Tu biblioteca* → nombre. Añade canciones con «Añadir canciones» o con el menú `+` de cada canción. |
+| Guardar una canción | Botón «+»: el primer clic la guarda en «Canciones que te gustan»; si ya está guardada, abre la lista de listas para marcarla (✓ verde) o quitarla de cada una. |
+| Crear una lista | **+** en *Tu biblioteca* → nombre; o arrastra canciones sobre una lista de la barra lateral. |
+| Marcar varias canciones | Ctrl + clic (suma) o Mayús + clic (rango); aparece una barra con acciones. |
+| Reordenar una playlist | Arrastra las canciones dentro de la lista (con su orden propio). |
+| Deshacer | Botón «Deshacer» del aviso o Ctrl+Z. |
 | Cambiar la imagen de una lista | Pulsa su portada, o clic derecho en la barra lateral. |
 | Ordenar una lista | Pulsa los títulos de columna o el botón **Orden**. |
 | Seguir a un artista | Botón **Seguir** en su perfil. |
-| Ver las descargas en curso | Botón **Descargas** (arriba a la derecha). |
-| Más opciones de una canción | Un clic en la fila y los tres puntitos de la derecha, o clic derecho. |
+| Ver / pausar las descargas | Botón **Descargas** (arriba a la derecha). |
+| Temporizador, velocidad, repetir tramo | Botón del reloj en la barra de reproducción. |
 | Ver la portada, la letra y el artista | Botón de panel de la barra de reproducción (**En reproducción**). |
-| Ecualizador, cola, letra, reproductor pequeño | Botones de la barra de reproducción. |
+| Letra sin letra / corregirla | **Generar con el sistema**, **Escribir la letra yo** o **Editar**. |
 | Saltar a una frase de la letra | Pulsa la frase (se subraya al pasar el ratón). |
-| Letra de una canción sin letra | **Generar con el sistema** (canciones descargadas) o **Escribir la letra yo**; **Editar** para corregir. |
-| Letra a pantalla completa | Botón de la esquina de la ventana de letras o `F11` (`Esc` para salir). |
+| Copia de seguridad, espacio, calidad, colores | **Ajustes**. |
+| Recorrido, atajos, actualizar el motor, informe de problemas | **Ayuda**. |
 
-**Atajos de teclado:** `Espacio` pausa/reanuda · `←` / `→` retroceden/avanzan 5 s · `M` silencia · `Ctrl+F` va al buscador ·
-teclas multimedia del teclado (reproducir, siguiente, anterior).
+**Atajos de teclado:** `Espacio` pausa/reanuda · `←` / `→` retroceden/avanzan 5 s · `M` silencia · `Ctrl+F` va al
+buscador · `Ctrl+V` pega un enlace · `Ctrl+Z` deshace · `↑` `↓` `Intro` `Supr` `Esc` en las listas · `F11` letra a pantalla
+completa · teclas multimedia del teclado.
+
+## Sin conexión
+
+La aplicación detecta si hay internet (con un aviso de Qt, sin consultar nada cada pocos segundos) y se adapta:
+
+- Aparece un aviso amable y todo se recupera solo al volver la conexión. Se puede forzar el **modo sin conexión** en Ajustes.
+- Las canciones **no descargadas se oscurecen y no se pueden seleccionar**; «siguiente» solo salta a las descargadas.
+- **Inicio** muestra tus listas, «Mixes de tu música» (hechos con lo descargado) y lo reciente.
+- La **búsqueda** busca solo dentro de tu música descargada. Artistas y álbumes abren tus canciones de ellos.
+- Las listas muestran «N de M disponibles sin conexión» y empiezan viendo solo lo descargado.
+- Lo que pidas **descargar** sin conexión (o que falle por la red) queda **pendiente** y se descarga solo al volver.
+- Las letras, la información de los artistas y las portadas ya vistos se guardan para verlos sin conexión.
 
 ## Cómo funciona por dentro
 
@@ -142,122 +195,173 @@ teclas multimedia del teclado (reproducir, siguiente, anterior).
                          └─────► yt-dlp (enlaces y búsqueda en YouTube)         [services/youtube_service.py]
 
  Adelanto  ──► yt-dlp obtiene la URL del audio ──► QMediaPlayer
- Descarga  ──► yt-dlp + FFmpeg (conversión) ──► mutagen (título, artista, álbum, portada) ──► carpeta de música
+ Descarga  ──► yt-dlp (compara versiones) + FFmpeg ──► comprobación ──► mutagen (etiquetas, portada, letra) ──► tu música
 
- Carpeta de música ──► LibraryScanWorker (lee etiquetas una vez y las guarda en caché)
+ Carpeta de música ──► LibraryScanWorker ──► índice SQLite (etiquetas, reproducciones, volumen medido)
                   └──► QFileSystemWatcher (detecta cambios y actualiza la interfaz sin recargarla)
 
  Recomendaciones ──► perfil de gustos (tus descargas, favoritas y artistas seguidos)
                 └──► Deezer (artistas relacionados, populares, géneros, listas de éxitos) + iTunes (novedades)
 
- Letras ──► LRCLIB (sincronizadas) y lyrics.ovh; si no hay, las propias o las generadas con whisper.cpp (local)
- Ecualizador ──► copia temporal con filtros de FFmpeg
+ Letras ──► tuya ► copia guardada ► la del archivo ► LRCLIB / lyrics.ovh (solo del artista correcto) ► generada con whisper.cpp
+ Ecualizador ──► copia temporal con filtros de FFmpeg        Volumen igualado ──► FFmpeg (ebur128) una vez por canción
+ Red ──► una sesión web compartida (conexiones reutilizadas) · detección de conexión por eventos de Qt
 ```
 
-- **Interfaz**: PySide6 (Qt). La ventana principal reparte su lógica en módulos «mixin»
-  (`playback_mixin`, `lists_mixin`, `home_mixin`, `search_mixin`, `downloads_mixin`).
-- **Ventanas internas**: los cuadros de diálogo se muestran sobre la propia ventana (`ui/overlay.py`), no como
-  ventanas aparte. Solo la letra de la canción es una ventana independiente.
-- **Reproducción**: se mantiene una *lista de reproducción de contexto* (la lista o página desde la que pulsaste ▶)
-  y un historial, de modo que «siguiente» y «anterior» se comportan como en Spotify.
-- **Listas sin recargas**: al cambiar algo (añadir, quitar, renombrar, descargar) solo se actualizan las filas afectadas.
-- **Imágenes**: un único grupo de 3 hilos con caché en memoria y en disco (`ui/imageloader.py`).
-- **Temas**: los colores se definen una vez (`ui/styles.py`) y se aplican a toda la aplicación.
+- **Interfaz**: PySide6 (Qt). La ventana principal reparte su lógica en módulos «mixin» (`playback_mixin`, `lists_mixin`,
+  `home_mixin`, `search_mixin`, `downloads_mixin`, `offline_mixin`, `usability_mixin`, `playback_options`).
+- **Ventanas internas**: los cuadros de diálogo se muestran sobre la propia ventana (`ui/overlay.py`), no como ventanas
+  aparte. Solo la letra de la canción es una ventana independiente.
+- **Reproducción**: se mantiene una *lista de reproducción de contexto* y un historial, de modo que «siguiente» y
+  «anterior» se comportan como en Spotify.
+- **Listas sin recargas**: al cambiar algo solo se actualizan las filas afectadas.
+- **Tareas pesadas de una en una** (`services/heavy.py`) y con prioridad baja.
 
 ## Estructura del proyecto
 
 ```
 main.py                    punto de entrada (y --selftest)
 config.py                  rutas, ajustes y escritura segura de JSON
-version.py                 número de versión (también en CHANGELOG.md)
+version.py                 número de versión (también en CHANGELOG.md) y versión de yt-dlp incluida
 CHANGELOG.md               qué trae cada versión
 Descargar_Musica.spec      configuración de PyInstaller
 compilar_exe.bat           atajo para compilar
+.github/workflows/         publicación automática de versiones (compila el .exe y lo sube a GitHub)
 requirements*.txt          dependencias (ejecución / compilación)
 assets/                    iconos SVG, logo y tipografía Poppins
 services/                  lógica sin interfaz
     catalog_service.py       búsqueda en iTunes (artistas, álbumes, canciones)
-    youtube_service.py       búsqueda, adelanto y descarga con yt-dlp
+    youtube_service.py       búsqueda, adelanto y descarga con yt-dlp (versiones, comprobación y reintentos)
+    ytdlp_loader.py          carga de yt-dlp bajo demanda y su actualización
+    update_service.py        avisos de versión nueva y actualización del motor de descargas
     spotify_service.py       lectura de enlaces de Spotify
     metadata_service.py      etiquetas y portadas (mutagen)
-    library_service.py       biblioteca local, caché de etiquetas y vigilancia de la carpeta
-    playlist_service.py      favoritos y listas
+    library_service.py       biblioteca local y vigilancia de la carpeta
+    library_db.py            índice SQLite: etiquetas, reproducciones y volumen medido
+    library_search.py        búsqueda en tu música (sin acentos ni mayúsculas)
+    local_mixes.py           mixes y listas automáticas con tu música
+    duplicates.py            canciones repetidas
+    tag_fixer.py             mejorar etiquetas (iTunes)
+    playlist_service.py      favoritos y listas (con deshacer y reordenar)
     artist_service.py        artistas seguidos
-    recommendation_service.py  recomendaciones (Deezer + iTunes)
-    lyrics_service.py        letras de internet (solo del artista correcto)
-    lyrics_store.py          letras propias y generadas (app_data/letras)
-    transcribe_service.py    «generar letra»: reconocimiento de voz local (whisper.cpp)
+    recommendation_service.py  recomendaciones (Deezer + iTunes) e información de artistas
+    lyrics_service.py        letras de internet · lyrics_store.py letras propias, generadas y guardadas
+    transcribe_service.py    «generar letra» con reconocimiento de voz local (whisper.cpp)
+    lyric_align.py           poner el tiempo a una letra pegada
+    loudness_service.py      igualar el volumen entre canciones
+    smtc_service.py          control multimedia de Windows
     equalizer_service.py     ecualizador con FFmpeg
+    network_service.py       ¿hay internet? · http.py sesión web compartida
+    pending_downloads.py     descargas pendientes sin conexión
+    session_service.py       seguir donde lo dejaste
+    backup_service.py        copia de seguridad · storage_service.py espacio · diagnostics_service.py informe y reparación
+    recycle.py               papelera de Windows · quality.py calidades · heavy.py tareas pesadas
     ffmpeg_service.py        localiza o descarga FFmpeg
 ui/                        interfaz
     main_window.py           ventana principal
-    *_mixin.py               reproducción, listas, inicio, búsqueda y descargas
+    *_mixin.py, playback_options.py   reproducción, listas, inicio, búsqueda, descargas, sin conexión, comodidad
     *_page.py                páginas (inicio, lista, biblioteca, artista, álbum)
-    track_row.py             fila de canción estilo Spotify (número, ▶ al pasar el ratón, tres puntitos)
-    now_playing.py           panel lateral «En reproducción» (se abre solo al reproducir)
-    lyric_line.py            frase de letra (se apaga al leerla, subrayado y clic para saltar)
-    lyrics_dialog.py         ventana de letras (pantalla completa, texto que crece con la ventana)
-    lyrics_editor.py         editor de letras (tiempo + frase → lista editable)
-    save_popup.py            botón «+» y listita de guardado en listas
+    track_row.py             fila de canción estilo Spotify
+    now_playing.py           panel lateral «En reproducción»
+    lyric_line.py, lyrics_dialog.py, lyrics_editor.py   letras
+    library_tools.py         repetidas y mejora de etiquetas
+    settings_dialog.py, help_dialog.py, welcome.py, tour.py   ajustes, ayuda, bienvenida y recorrido
+    dragdrop.py              arrastrar y soltar
     overlay.py, dialogs.py   ventanas internas
+    perf.py                  ahorro de recursos, equipo modesto, batería y memoria
     styles.py, covers.py ... estilos, portadas, iconos, animaciones
-dev_tools/                 pruebas automáticas
+dev_tools/                 pruebas automáticas y medición de arranque
 ```
 
 ## Datos que guarda y privacidad
 
-Todo se guarda en la carpeta `app_data/` junto al programa (no se envía a ningún sitio):
+Todo se guarda **solo en tu equipo**: en `%APPDATA%\Descargador de Música` si usas el `.exe`, o en `app_data/` si ejecutas
+desde el código (la variable `DESCARGADOR_DATA_DIR` lo cambia; las pruebas la usan):
 
 | Archivo | Contenido |
 |---|---|
-| `settings.json` | calidad, carpeta de descargas, tema, modo ahorro |
+| `settings.json` | calidad, carpeta de descargas, tema, modo ahorro y demás ajustes |
 | `favoritos.json`, `playlists.json`, `artistas_seguidos.json` | tus listas |
-| `historial_descargas.json`, `biblioteca_cache.json` | descargas realizadas y caché de etiquetas |
-| `recomendaciones.json` | última recomendación calculada |
+| `historial_descargas.json`, `descargas_pendientes.json` | descargas realizadas y pendientes |
+| `biblioteca.sqlite` | índice de tu música: etiquetas, reproducciones y volumen medido |
+| `sesion.json` | cómo dejaste la aplicación |
+| `letras/`, `artistas_info.json`, `recomendaciones.json` | letras (tuyas, generadas y copias), información de artistas y recomendaciones |
+| `copias/` | copias de seguridad automáticas |
 | `covers/`, `img_cache/`, `eq_cache/` | imágenes y copias temporales |
-| `ffmpeg/` | FFmpeg descargado automáticamente |
-| `letras/` | letras que escribes tú o que genera el sistema |
-| `whisper/` | reconocedor de voz (solo si aceptas generar letras) |
+| `yt_dlp/` | motor de descargas actualizado (si lo actualizas) |
+| `ffmpeg/`, `whisper/` | FFmpeg y reconocedor de voz descargados (solo si hacen falta) |
+| `app_descargas.log` | registro de avisos y errores |
 
-La aplicación **no usa cuentas, claves ni telemetría**. Lo único que sale de tu equipo son las búsquedas y peticiones
-a los servicios públicos que usa (iTunes, Deezer, LRCLIB, lyrics.ovh, YouTube mediante yt-dlp, la página pública de Spotify si pegas un enlace suyo, y la descarga de FFmpeg desde GitHub y, solo si aceptas generar letras, la del reconocedor de voz desde GitHub y Hugging Face).
-`app_data/` y los registros están excluidos del repositorio (`.gitignore`) para que tus listas e historial nunca se suban.
+La aplicación **no usa cuentas, claves ni telemetría**. Lo único que sale de tu equipo son las búsquedas y peticiones a
+los servicios públicos que usa (iTunes, Deezer, LRCLIB, lyrics.ovh, YouTube mediante yt-dlp, la página pública de
+Spotify si pegas un enlace suyo, y GitHub para avisar de versiones nuevas y descargar FFmpeg o yt-dlp; y, solo si
+aceptas generar letras, el reconocedor de voz desde GitHub y Hugging Face, con comprobación de huella SHA-256).
+Las estadísticas («lo más escuchado») se calculan y quedan en tu equipo. `app_data/` y los registros están excluidos
+del repositorio (`.gitignore`) para que tus listas e historial nunca se suban.
 
-## Rendimiento y modo ahorro
+## Rendimiento y consumo
 
-Está pensada para equipos modestos. En **Ajustes → Rendimiento** hay un *modo ahorro de recursos* (activado por defecto)
-que desactiva animaciones, usa imágenes más ligeras y ralentiza el visualizador. Además:
+Está pensada para equipos modestos. Medido con el programa compilado (sin pantalla), tras arrancar:
 
-- las listas largas solo crean las filas visibles (se completan al desplazarse);
-- las etiquetas se leen una sola vez y se guardan en caché;
-- la biblioteca se vigila con un observador del sistema en lugar de releer la carpeta;
-- las imágenes se cachean y se procesan con pocos hilos.
+- **CPU**: ≈ 1,3 s en total durante el arranque y 0 % en reposo (antes ≈ 20-40 s de CPU en los primeros segundos).
+  Lo que más ayudó: **una sola sesión web compartida** con conexiones reutilizadas (cada petición suelta gastaba ≈ 170 ms
+  de CPU solo en cargar certificados).
+- **Memoria**: ≈ 120 MB reales; Windows muestra ≈ 8 MB de «conjunto de trabajo» en reposo porque la aplicación devuelve
+  lo que no usa tras arrancar y al minimizarla. yt-dlp (≈ 27 MB) solo se carga la primera vez que se busca o descarga.
+- **Disco**: ≈ 270 MB (antes 481 MB): ya no se incluye `ffprobe`.
+
+Medidas que aplica: modo ahorro (activado por defecto), índice SQLite, caché de imágenes con tope de memoria, tareas pesadas
+de una en una y con prioridad baja, procesos hijos (ffmpeg…) con prioridad baja, animaciones detenidas con la ventana
+minimizada, listas que solo crean las filas visibles, recomendaciones que no se piden solas con batería baja o datos medidos,
+y detección de equipo modesto (4 GB o menos / 2 núcleos o menos: descargas de una en una y visualizador apagado).
+`python dev_tools/medir_arranque.py` mide CPU y memoria del arranque.
 
 ## Pruebas
 
-Se ejecutan sin abrir ventanas, desde la raíz del proyecto (algunas usan internet y tu carpeta de música; limpian lo que crean):
+Se ejecutan sin abrir ventanas, desde la raíz del proyecto, con una carpeta de datos temporal (nunca tocan tus listas ni
+ajustes; algunas usan internet y tu carpeta de música y limpian lo que crean):
 
 ```bash
-python dev_tools/prueba_interfaz.py     # ventanas internas, búsqueda, álbumes, orden, vigilancia de la carpeta...
-python dev_tools/prueba_listas.py       # listas, artistas, sin recargas
-python dev_tools/prueba_detalles.py     # fechas «añadida», rueda lateral, géneros, ventanas sueltas
-python dev_tools/prueba_letras.py       # coincidencia de artista, letras propias/generadas, estados de las frases
-python dev_tools/prueba_filas.py        # filas estilo Spotify, menú, panel «En reproducción», ecualizador siempre activo
+python dev_tools/prueba_base.py          # datos fuera del programa, copia de seguridad, espacio, sesión, ayuda y recorrido
+python dev_tools/prueba_sin_conexion.py  # banner, tarjetas oscurecidas, Inicio local, búsqueda local, descargas pendientes
+python dev_tools/prueba_consumo.py       # sesión web compartida, límite de memoria, tareas pesadas, equipo modesto
+python dev_tools/prueba_comodidad.py     # deshacer, papelera, arrastrar y soltar, teclado, pegar enlaces, alto contraste
+python dev_tools/prueba_reproductor.py   # volumen igualado, temporizador, velocidad, tramo, fundido, control multimedia
+python dev_tools/prueba_biblioteca.py    # repetidas, etiquetas, listas automáticas, selección múltiple, reordenar
+python dev_tools/prueba_descargas.py     # versión correcta, reintentos, carpetas, cola con pausa, espacio, actualización de yt-dlp
+python dev_tools/prueba_sincronizar.py   # tiempos de la letra (con una sincronización real si hay reconocedor de voz)
+python dev_tools/prueba_letras.py        # letras: artista, propias/generadas, estados de las frases
+python dev_tools/prueba_filas.py         # filas estilo Spotify, menú, panel «En reproducción», ecualizador
+python dev_tools/prueba_interfaz.py      # ventanas internas, búsqueda, álbumes, orden, vigilancia de la carpeta...
+python dev_tools/prueba_listas.py        # listas, artistas, sin recargas
+python dev_tools/prueba_detalles.py      # fechas «añadida», rueda lateral, géneros, ventanas sueltas
 ```
 
 ## Solución de problemas
 
-- **No suena el adelanto / no descarga**: comprueba tu conexión. YouTube cambia a menudo; actualiza yt-dlp con
-  `pip install -U yt-dlp` (si usas el `.exe`, vuelve a compilarlo con la versión nueva).
-- **«Falta un componente de audio»**: FFmpeg no se pudo descargar. Copia `ffmpeg.exe` en `bin/` o en `app_data/ffmpeg/`.
+- **No suena el adelanto / no descarga**: comprueba tu conexión. YouTube cambia a menudo: en **Ayuda → Actualizaciones**
+  pulsa «Actualizar el motor de descargas» (o deja activada la actualización automática).
+- **«Falta un componente de audio»**: FFmpeg no se pudo descargar. Copia `ffmpeg.exe` en `bin/` o en la carpeta `ffmpeg/` de tus datos.
+- **Algo no va bien**: en **Ayuda** pulsa «Reparar la aplicación» (vacía cachés, no toca tus datos) o «Copiar informe de
+  problemas» (no lleva datos personales).
+- **Perdí mis listas**: en **Ajustes → Copia de seguridad** restaura una copia, o mira la carpeta `copias/` de tus datos.
 - **No aparecen los iconos o el texto se ve distinto**: ejecuta `Descargar_Musica.exe --selftest` y revisa `selftest.log`.
-- **La app va justa de recursos**: activa el *modo ahorro* en Ajustes.
-- **Errores**: se anotan en `app_descargas.log` junto al programa.
+- **La app va justa de recursos**: activa el *modo ahorro* en Ajustes; en equipos modestos ya viene ajustado.
+- **Errores**: se anotan en `app_descargas.log` (en la carpeta de tus datos).
+
+## Publicar una versión
+
+1. Sube el número en `version.py`, añade la sección en `CHANGELOG.md` y actualiza «Versión actual» arriba.
+2. `git commit`, `git tag -a vX.Y.Z -m "..."` y `git push origin HEAD --tags`.
+3. GitHub Actions (`.github/workflows/release.yml`) compila el `.exe` en Windows, lo comprueba con `--selftest` y
+   publica la versión con el `.zip` adjunto y las notas sacadas del `CHANGELOG.md`.
 
 ## Créditos y licencias de terceros
 
 - Interfaz: [PySide6 / Qt](https://www.qt.io/qt-for-python) (LGPL).
 - Descargas: [yt-dlp](https://github.com/yt-dlp/yt-dlp) (Unlicense) y [FFmpeg](https://ffmpeg.org/) (LGPL/GPL según la compilación).
+- Reconocimiento de voz opcional: [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (MIT) y modelos de Whisper (MIT).
+- Control multimedia de Windows: [pywinrt](https://github.com/pywinrt/pywinrt) (MIT).
 - Etiquetas de audio: [mutagen](https://github.com/quodlibet/mutagen) (GPL).
 - Tipografía: [Poppins](https://fonts.google.com/specimen/Poppins) (SIL Open Font License, incluida en `assets/fonts/OFL.txt`).
 - Datos: iTunes Search API, Deezer API, [LRCLIB](https://lrclib.net/) y lyrics.ovh.

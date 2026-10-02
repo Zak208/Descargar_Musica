@@ -2,10 +2,10 @@
 y al pulsar «Añadir» la línea sube a la lista. Sirve para crear una letra desde cero o corregir la que generó el sistema."""
 import re
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QEvent, Signal
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QTableWidget, QTableWidgetItem, QHeaderView,
-    QAbstractItemView, QApplication
+    QAbstractItemView, QApplication, QProgressBar
 )
 
 from services.lyrics_store import parse_text
@@ -37,10 +37,13 @@ def fmt_time(ms: int) -> str:
 
 class LyricsEditorDialog(InlineDialog):
     """Resultado: `text` (la letra, con «[mm:ss.xx]» delante de las líneas con tiempo) y `restore` (volver a la original)."""
+    sync_requested = Signal(list)          # pide al sistema poner el tiempo a las frases (lista de textos)
 
-    def __init__(self, parent, title: str, text: str, player=None, can_restore: bool = False):
+    def __init__(self, parent, title: str, text: str, player=None, can_restore: bool = False, audio_path: str = ""):
         super().__init__(parent)
         self.player = player
+        self.audio_path = audio_path
+        self._tap = False
         self.text = text
         self.restore = False
         self._loading = False
@@ -113,6 +116,34 @@ class LyricsEditorDialog(InlineDialog):
         self.table.itemChanged.connect(self._item_changed)
         lay.addWidget(self.table, stretch=1)
 
+        # ---- poner los tiempos sin escribirlos
+        sync_box = QHBoxLayout()
+        sync_box.setSpacing(8)
+        self.btn_auto = QPushButton("Ponerles el tiempo automáticamente")
+        self.btn_auto.setCursor(Qt.PointingHandCursor)
+        self.btn_auto.setToolTip("El sistema escucha la canción y pone el momento de cada frase de tu letra (canciones descargadas)")
+        self.btn_auto.setEnabled(bool(audio_path))
+        self.btn_auto.clicked.connect(self._request_sync)
+        sync_box.addWidget(self.btn_auto)
+        self.btn_tap = QPushButton("Marcar con la barra espaciadora")
+        self.btn_tap.setCursor(Qt.PointingHandCursor)
+        self.btn_tap.setToolTip("La canción suena desde el principio: pulsa Espacio cuando empiece cada frase")
+        self.btn_tap.setEnabled(player is not None)
+        self.btn_tap.clicked.connect(self._toggle_tap)
+        sync_box.addWidget(self.btn_tap)
+        sync_box.addStretch()
+        lay.addLayout(sync_box)
+        self.sync_lbl = QLabel("")
+        self.sync_lbl.setObjectName("SettingsHint")
+        self.sync_lbl.setWordWrap(True)
+        self.sync_lbl.setVisible(False)
+        lay.addWidget(self.sync_lbl)
+        self.sync_bar = QProgressBar()
+        self.sync_bar.setTextVisible(False)
+        self.sync_bar.setFixedHeight(6)
+        self.sync_bar.setVisible(False)
+        lay.addWidget(self.sync_bar)
+
         tools = QHBoxLayout()
         tools.setSpacing(8)
         self.btn_remove = QPushButton("Quitar la línea marcada")
@@ -152,6 +183,7 @@ class LyricsEditorDialog(InlineDialog):
         row.addWidget(self.btn_ok)
         lay.addLayout(row)
 
+        self.table.installEventFilter(self)
         self._fill(text)
         self.text_input.setFocus()
 
@@ -240,6 +272,94 @@ class LyricsEditorDialog(InlineDialog):
             self._append_row(fmt_time(ms) if synced else "", phrase)
         self._loading = False
         self._update_count()
+
+    # ----------------------------------------------- tiempos automáticos y con el teclado
+    def phrases(self) -> list:
+        return [(self.table.item(r, 1).text() if self.table.item(r, 1) else "").strip() for r in range(self.table.rowCount())]
+
+    def _request_sync(self):
+        lines = [p for p in self.phrases() if p]
+        if not lines:
+            self.set_sync_busy("Escribe o pega primero la letra: el sistema le pondrá los tiempos.")
+            return
+        self.btn_auto.setEnabled(False)
+        self.set_sync_busy("Preparando…", 0)
+        self.sync_requested.emit(lines)
+
+    def set_sync_busy(self, text: str, percent: int = -1):
+        """Texto y barra mientras el sistema trabaja. percent: -1 sin barra, -2 barra que avanza sola."""
+        self.sync_lbl.setText(text)
+        self.sync_lbl.setVisible(bool(text))
+        self.sync_bar.setVisible(percent != -1)
+        if percent == -2:
+            self.sync_bar.setRange(0, 0)
+        elif percent >= 0:
+            self.sync_bar.setRange(0, 100)
+            self.sync_bar.setValue(percent)
+        if percent == -1:
+            self.btn_auto.setEnabled(bool(self.audio_path))
+
+    def apply_times(self, times: list):
+        """Pone en la tabla los tiempos calculados (uno por cada frase con texto, en orden)."""
+        self._loading = True
+        it = iter(times)
+        for row in range(self.table.rowCount()):
+            if not (self.table.item(row, 1) and self.table.item(row, 1).text().strip()):
+                continue
+            ms = next(it, None)
+            self.table.setItem(row, 0, QTableWidgetItem(fmt_time(ms) if ms is not None else ""))
+        self._loading = False
+        self.set_sync_busy("Listo: revisa los tiempos y corrige los que no te cuadren (doble clic).")
+        self.btn_auto.setEnabled(bool(self.audio_path))
+
+    def _toggle_tap(self):
+        self._set_tap(not self._tap)
+
+    def _set_tap(self, on: bool):
+        self._tap = on
+        if on:
+            if self.table.rowCount() == 0:
+                self._tap = False
+                self.set_sync_busy("Escribe o pega primero la letra.")
+                return
+            self.btn_tap.setText("Terminar de marcar")
+            self.set_sync_busy("Pulsa la barra espaciadora justo cuando empiece cada frase (Esc para terminar).")
+            self.table.selectRow(0)
+            self.table.setFocus()
+            if self.player is not None:
+                self.player.setPosition(0)
+                self.player.play()
+        else:
+            self.btn_tap.setText("Marcar con la barra espaciadora")
+            if self.sync_lbl.text().startswith("Pulsa la barra"):
+                self.set_sync_busy("")
+            if self.player is not None:
+                self.player.pause()
+
+    def _stamp_row(self):
+        row = self.table.currentRow()
+        if row < 0 or self.player is None:
+            return
+        ms = max(0, int(self.player.position()) - 180)       # se descuenta lo que tarda la mano en pulsar
+        self._loading = True
+        self.table.setItem(row, 0, QTableWidgetItem(fmt_time(ms)))
+        self._loading = False
+        if row + 1 < self.table.rowCount():
+            self.table.selectRow(row + 1)
+            self.table.scrollToItem(self.table.item(row + 1, 1))
+        else:
+            self._set_tap(False)
+            self.set_sync_busy("Listo: has marcado todas las frases. Revisa los tiempos y guarda.")
+
+    def eventFilter(self, obj, event):
+        if self._tap and obj is self.table and event.type() == QEvent.KeyPress:
+            if event.key() == Qt.Key_Space:
+                self._stamp_row()
+                return True
+            if event.key() == Qt.Key_Escape:
+                self._set_tap(False)
+                return True
+        return super().eventFilter(obj, event)
 
     def _collect(self) -> str:
         out = []

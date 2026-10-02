@@ -1,8 +1,11 @@
 """Ventana de Ayuda: recorrido, atajos de teclado, informe de problemas y reparación."""
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QGridLayout, QApplication, QScrollArea, QWidget
+    QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QGridLayout, QApplication, QScrollArea, QWidget, QCheckBox,
+    QProgressBar
 )
+
+from config import load_settings, save_settings
 
 from services import diagnostics_service, storage_service
 from ui.dialogs import ask_confirm
@@ -73,8 +76,41 @@ class HelpDialog(InlineDialog):
         keys_lay.addLayout(grid)
         root.addWidget(keys_box)
 
-        self.updates_box, self.updates_lay = _group("Actualizaciones")
-        self.updates_box.setVisible(False)       # lo rellena la ventana principal cuando hay servicio de actualizaciones
+        self.updates_box, upd = _group(
+            "Actualizaciones",
+            "El motor de descargas (yt-dlp) se actualiza por separado: así las descargas siguen funcionando cuando "
+            "YouTube cambia algo, sin esperar a una versión nueva del programa.")
+        self.lbl_app = QLabel("")
+        self.lbl_app.setObjectName("SettingsHint")
+        self.lbl_app.setWordWrap(True)
+        upd.addWidget(self.lbl_app)
+        self.lbl_engine = QLabel("")
+        self.lbl_engine.setObjectName("SettingsHint")
+        self.lbl_engine.setWordWrap(True)
+        upd.addWidget(self.lbl_engine)
+        self.update_progress = QProgressBar()
+        self.update_progress.setTextVisible(False)
+        self.update_progress.setFixedHeight(6)
+        self.update_progress.setVisible(False)
+        upd.addWidget(self.update_progress)
+        urow = QHBoxLayout()
+        self.btn_check = _button("Buscar actualizaciones")
+        self.btn_check.clicked.connect(lambda: self.window_ref.check_updates(manual=True))
+        self.btn_engine = _button("Actualizar el motor de descargas")
+        self.btn_engine.clicked.connect(lambda: self.window_ref.update_engine())
+        self.btn_engine.setVisible(False)
+        self.btn_app = _button("Ver la versión nueva")
+        self.btn_app.clicked.connect(self.window_ref.open_app_releases)
+        self.btn_app.setVisible(False)
+        urow.addWidget(self.btn_check)
+        urow.addWidget(self.btn_engine)
+        urow.addWidget(self.btn_app)
+        urow.addStretch()
+        upd.addLayout(urow)
+        self.chk_auto_engine = QCheckBox("Mantener el motor de descargas al día automáticamente")
+        self.chk_auto_engine.setChecked(bool(load_settings().get("ytdlp_auto_update", True)))
+        self.chk_auto_engine.toggled.connect(lambda on: self._save("ytdlp_auto_update", on))
+        upd.addWidget(self.chk_auto_engine)
         root.addWidget(self.updates_box)
 
         help_box, help_lay = _group(
@@ -104,6 +140,18 @@ class HelpDialog(InlineDialog):
         btn_close.clicked.connect(self.accept)
         footer.addWidget(btn_close)
         outer.addLayout(footer)
+
+    @staticmethod
+    def _save(name: str, value):
+        settings = load_settings()
+        settings[name] = bool(value)
+        save_settings(settings)
+
+    def refresh_updates(self):
+        """Pone al día los textos de la parte de actualizaciones."""
+        from services import ytdlp_loader
+        self.lbl_app.setText(f"Aplicación: versión {__version__}")
+        self.lbl_engine.setText(f"Motor de descargas (yt-dlp): versión {ytdlp_loader.active_version()}")
 
     def _tour(self):
         self.accept()

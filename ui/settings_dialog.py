@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
 )
 
 from config import (
-    get_download_dir, get_audio_quality, load_settings, save_settings
+    get_download_dir, get_audio_quality, get_organize_mode, load_settings, save_settings
 )
 from services import backup_service, quality, storage_service
 from ui.dialogs import ask_confirm, show_message
@@ -113,7 +113,20 @@ class SettingsDialog(InlineDialog):
 
         self.btn_change_dir = _button("Cambiar carpeta...", "folder.svg")
         dest_lay.addWidget(self.btn_change_dir, alignment=Qt.AlignLeft)
-        self.dest_extra_lay = dest_lay      # otros ajustes de descargas se añaden aquí (ver downloads_options)
+        org_row = QHBoxLayout()
+        org_row.addWidget(QLabel("Organizar las canciones"))
+        self.organize_combo = QComboBox()
+        for value, text in (("flat", "Todas juntas en la carpeta (recomendado)"), ("artist", "En una carpeta por artista"),
+                            ("artist_album", "Carpeta de artista y de álbum")):
+            self.organize_combo.addItem(text, value)
+        self.organize_combo.setCurrentIndex(max(0, self.organize_combo.findData(get_organize_mode())))
+        self.organize_combo.currentIndexChanged.connect(lambda _i: self._save_value("organize", self.organize_combo.currentData()))
+        org_row.addWidget(self.organize_combo, stretch=1)
+        dest_lay.addLayout(org_row)
+        org_hint = QLabel("Solo afecta a las canciones que descargues desde ahora; las que ya tienes no se mueven.")
+        org_hint.setObjectName("SettingsHint")
+        org_hint.setWordWrap(True)
+        dest_lay.addWidget(org_hint)
         root.addWidget(dest_box)
 
         # --- Rendimiento ---
@@ -275,6 +288,12 @@ class SettingsDialog(InlineDialog):
         outer.addLayout(footer)
 
         self.refresh_space()
+
+    @staticmethod
+    def _save_value(name: str, value):
+        settings = load_settings()
+        settings[name] = value
+        save_settings(settings)
 
     @staticmethod
     def _save_flag(name: str, value: bool):
