@@ -472,6 +472,12 @@ class GlowCover(QWidget):
         self.setFixedSize(size + 2 * self.PAD, size + self.PAD * 2 - 2)
         self._glow = None
 
+    def set_cover_size(self, size: int):
+        """La portada cambia de tamaño (el panel se ensanchó o se encogió)."""
+        self.cover.setFixedSize(size, size)
+        self.setFixedSize(size + 2 * self.PAD, size + self.PAD * 2 - 2)
+        self.update()
+
     def set_glow(self, pix):
         from ui.ambient import blurred
         self._glow = blurred(pix, 10) if pix is not None and not pix.isNull() else None

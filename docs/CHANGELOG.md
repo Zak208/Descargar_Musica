@@ -3,6 +3,10 @@
 Formato: `MAYOR.MENOR.PARCHE`. MAYOR = cambios que rompen datos o uso, MENOR = funciones nuevas, PARCHE = arreglos.
 Cada versión subida a GitHub tiene su etiqueta `vX.Y.Z` (pestaña *Releases/Tags*).
 
+## 1.17.1
+**Arreglos**
+- **El panel «En reproducción» ya se adapta a su ancho**: al estrecharlo, el contenido se cortaba por el borde derecho (la portada tenía un tamaño fijo, los textos no pasaban a varias líneas y el título y los botones exigían más ancho del que había). Ahora la portada crece y se encoge con el panel, los textos se reparten en líneas, los botones se estrechan y el título se acorta; nada obliga al panel a ser más ancho. Prueba nueva con el panel al mínimo, al ancho normal y al máximo.
+
 ## 1.17.0
 **Paneles laterales y distribución**
 - **Panel «En reproducción» redimensionable**: arrastra el borde izquierdo del panel (entre el contenido y el panel) para hacerlo más ancho o más estrecho, como en Spotify. Doble clic en el borde vuelve al ancho de siempre y el ancho elegido se recuerda.

@@ -4,7 +4,7 @@ import os
 from PySide6.QtCore import Qt, Signal, QSize, QTimer, QPropertyAnimation, QEasingCurve, QRectF, QVariantAnimation
 from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QLinearGradient
 from PySide6.QtWidgets import (
-    QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QScrollArea, QWidget, QProgressBar
+    QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QScrollArea, QWidget, QProgressBar, QSizePolicy
 )
 
 from services import network_service
@@ -26,7 +26,6 @@ from ui.textfx import CountLabel, DotsLabel, grow_underline
 from ui.widgets import ElidedLabel
 
 PANEL_WIDTH = 330          # ancho por defecto; se puede cambiar arrastrando el borde (ver ui/panel_grip.py)
-COVER = 286
 
 
 class ClickableLabel(QLabel):
@@ -361,6 +360,7 @@ class NowPlayingPanel(QFrame):
         head.setContentsMargins(18, 0, 10, 8)
         self.heading = QLabel("En reproducción")
         self.heading.setObjectName("PanelTitle")
+        self.heading.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)      # en un panel estrecho se acorta, no lo ensancha
         head.addWidget(self.heading)
         head.addStretch()
         btn_full = QPushButton("")
@@ -408,7 +408,7 @@ class NowPlayingPanel(QFrame):
         main_lay.setContentsMargins(0, 0, 0, 0)
         main_lay.setSpacing(10)
 
-        self.cover_box = GlowCover(COVER, 12)         # portada con una luz de su color detrás
+        self.cover_box = GlowCover(self._cover_side(), 12)         # portada con una luz de su color detrás
         self.cover = self.cover_box.cover
         self.cover.setStyleSheet("background-color: #2A2A2A; border-radius: 12px;")
         main_lay.addWidget(self.cover_box, alignment=Qt.AlignHCenter)
@@ -450,6 +450,7 @@ class NowPlayingPanel(QFrame):
         al.setSpacing(8)
         self.artist_photo = QLabel()
         self.artist_photo.setFixedHeight(170)
+        self.artist_photo.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         self.artist_photo.setAlignment(Qt.AlignCenter)
         self.artist_photo.setStyleSheet("background-color: #2A2A2A; border-top-left-radius: 12px; border-top-right-radius: 12px;")
         al.addWidget(self.artist_photo)
@@ -528,6 +529,7 @@ class NowPlayingPanel(QFrame):
         self.body.addWidget(self.next_card)
         self.body.addStretch()
 
+        self._make_shrinkable(inner)
         self.show_empty()
 
     # ------------------------------------------------------------------ estado
@@ -564,12 +566,43 @@ class NowPlayingPanel(QFrame):
                 self._refresh_follow()
         self.refresh_next()
 
+    def _make_shrinkable(self, root: QWidget):
+        """Nada del contenido debe obligar al panel a ser más ancho que el que se eligió (si no, el borde derecho se
+        cortaba): los textos pasan a varias líneas y los botones se pueden estrechar."""
+        from ui.widgets import ElidedLabel
+        for label in root.findChildren(QLabel):
+            if isinstance(label, ElidedLabel) or (label.pixmap() is not None and not label.pixmap().isNull()):
+                continue
+            label.setWordWrap(True)
+            label.setMinimumWidth(0)
+        for button in root.findChildren(QPushButton):
+            if button.text():
+                button.setSizePolicy(QSizePolicy.Ignored, button.sizePolicy().verticalPolicy())
+                button.setMinimumWidth(0)
+
+    def _cover_side(self) -> int:
+        """Lado de la portada: ocupa el ancho del panel (menos los márgenes y la luz de alrededor)."""
+        return max(110, min(460, self.width() - 36 - 14 - 2 * GlowCover.PAD))      # menos márgenes y la barra de desplazamiento
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        side = self._cover_side()
+        if hasattr(self, "cover_box") and side != self.cover.width():
+            self.cover_box.set_cover_size(side)
+            if self._info:
+                QTimer.singleShot(180, self._reload_cover_if_changed)       # se vuelve a pedir al tamaño nuevo (sale de la caché)
+
+    def _reload_cover_if_changed(self):
+        if self._info and self._cover_side() == self.cover.width():
+            self._load_cover(self._info)
+
     def _load_cover(self, info):
         url, local = info.get("thumbnail"), info.get("local_path")
+        side = self.cover.width()
         if url:
-            loader = ImageLoaderThread(url, False, (COVER, COVER), 12)
+            loader = ImageLoaderThread(url, False, (side, side), 12)
         elif local and os.path.isfile(local):
-            loader = LocalCoverLoader(local, False, (COVER, COVER), 12)
+            loader = LocalCoverLoader(local, False, (side, side), 12)
         else:
             self.cover.clear()
             return

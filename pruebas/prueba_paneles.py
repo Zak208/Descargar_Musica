@@ -83,6 +83,20 @@ check("la ventana no se puede encoger por debajo de lo necesario", w.width() >= 
 check("el contenido conserva su ancho mínimo con el panel abierto", w.content_widget.width() >= w.CONTENT_MIN_WIDTH - 1)
 check("el ancho del panel tiene límites", clamp_width(5000, 3000, 0) == PANEL_MAX and clamp_width(10, 3000, 0) == PANEL_MIN
       and clamp_width(600, 1200, 1000) == PANEL_MIN)
+# el contenido del panel se adapta al ancho elegido (nada se corta por el borde derecho)
+from PySide6.QtWidgets import QScrollArea
+w.current_item_info = {"title": "Una canción con un título bastante largo para probar", "uploader": "Artista de nombre largo & otro artista",
+                       "local_path": None, "id": "x"}
+w.now_panel.set_track(w.current_item_info)
+for width in (PANEL_MIN, 330, PANEL_MAX):
+    w.now_panel.setFixedWidth(width)
+    pump(0.4)
+    scroll = w.now_panel.findChildren(QScrollArea)[0]
+    inner = scroll.widget()
+    check(f"con el panel a {width} px el contenido cabe sin cortarse", inner.minimumSizeHint().width() <= scroll.viewport().width()
+          and inner.width() <= scroll.viewport().width() and w.now_panel.cover_box.width() + 36 <= scroll.viewport().width() + 2)
+check("la portada crece y se encoge con el panel", w.now_panel.cover.width() > 400)
+w.now_panel.setFixedWidth(330)
 grip.mouseDoubleClickEvent(None)
 check("doble clic en el tirador vuelve al ancho de siempre", w.now_panel.width() == 330)
 w.set_now_playing_visible(False)
