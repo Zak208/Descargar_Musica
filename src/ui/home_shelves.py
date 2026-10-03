@@ -1,7 +1,7 @@
 """Piezas de la página de inicio y de los perfiles de artista: tarjetas de canción, artista, mix y accesos rápidos."""
 from PySide6.QtCore import Qt, Signal, QSize
 from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QWidget
+from PySide6.QtWidgets import QFrame, QGridLayout, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QWidget
 
 from services.playlist_service import PlaylistService
 from ui.animations import reveal_widget
@@ -87,6 +87,59 @@ def clear_layout(layout):
         if w:
             w.setParent(None)
             w.deleteLater()
+
+
+class QuickGrid(QWidget):
+    """Accesos rápidos de Inicio: se reparten por todo el ancho disponible. Las columnas se adaptan al ancho (de 1 a 4) y
+    nunca hay más columnas que accesos, así que con dos accesos cada uno ocupa la mitad, no una cuarta parte."""
+    MIN_TILE = 250
+    MAX_COLUMNS = 4
+
+    def __init__(self, parent=None, min_tile: int = 250, max_columns: int = 4, spacing: int = 12, fill: bool = True,
+                 margins=(0, 4, 0, 8)):
+        """`fill`: las columnas se reparten el ancho (accesos de Inicio); si no, cada tarjeta mantiene su tamaño y se van
+        colocando de izquierda a derecha (biblioteca)."""
+        super().__init__(parent)
+        self.MIN_TILE, self.MAX_COLUMNS, self._fill = min_tile, max_columns, fill
+        self.grid = QGridLayout(self)
+        self.grid.setContentsMargins(*margins)
+        self.grid.setHorizontalSpacing(spacing)
+        self.grid.setVerticalSpacing(spacing)
+        if not fill:
+            self.grid.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        self._tiles = []
+        self._columns = 0
+
+    def set_tiles(self, tiles: list):
+        for tile in self._tiles:
+            self.grid.removeWidget(tile)
+            tile.setParent(None)
+            tile.deleteLater()
+        self._tiles = list(tiles)
+        for tile in self._tiles:
+            tile.setParent(self)
+        self._columns = 0
+        self._reflow()
+
+    def columns_for(self, width: int) -> int:
+        return max(1, min(self.MAX_COLUMNS, len(self._tiles) or 1 if self._fill else self.MAX_COLUMNS, width // self.MIN_TILE))
+
+    def _reflow(self):
+        columns = self.columns_for(self.width())
+        if columns == self._columns:
+            return
+        self._columns = columns
+        for tile in self._tiles:
+            self.grid.removeWidget(tile)
+        for i, tile in enumerate(self._tiles):
+            self.grid.addWidget(tile, i // columns, i % columns)
+            tile.show()
+        for c in range(self.MAX_COLUMNS):
+            self.grid.setColumnStretch(c, 1 if (self._fill and c < columns) else 0)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._reflow()
 
 
 class TrackTile(QFrame, GlowHover):

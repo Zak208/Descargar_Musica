@@ -183,9 +183,17 @@ class Toast(QFrame):
         self._slide.setEndValue(pos)
         self._slide.start()
 
+    def _repaint_parent(self):
+        """Tras esconderse, se repinta lo que había debajo: en Windows, con efectos de transparencia, a veces quedaba un
+        «fantasma» del aviso hasta que se tocaba la pantalla."""
+        parent = self.parentWidget()
+        if parent is not None:
+            parent.update(self.geometry().adjusted(-16, -16, 16, 16))
+
     def dismiss_now(self):
         self._stop_clock()
         self.hide()
+        self._repaint_parent()
         self.deleteLater()
 
     # ------------------------------------------------- cuenta atrás y barra
@@ -255,5 +263,6 @@ class Toast(QFrame):
     def _on_anim_finished(self):
         if self._effect.opacity() <= 0.01:
             self.hide()
+            self._repaint_parent()
             if not self.primary:
                 self.deleteLater()

@@ -73,24 +73,22 @@ class HomeMixin:
                                "rediscover")
 
         # Accesos rápidos
-        clear_layout(self.home_quick_grid)
         entries = [("favorites", "favorites", "Canciones que te gustan"), ("downloads", "downloads", "Mis descargas")]
         for p_id, data in list(PlaylistService.get_playlists().items())[:4]:
             entries.append(("playlist", p_id, data.get("name", "Playlist")))
         for art in ArtistService.get_followed()[:2]:
             entries.append(("artist", art["id"], art["name"]))
         entries = entries[:8]
-        columns = 4
-        for i, (kind, list_id, title) in enumerate(entries):
+        tiles = []
+        for kind, list_id, title in entries:
             tile = QuickTile(kind, list_id, title)
             if kind == "artist":
                 art = next(a for a in ArtistService.get_followed() if a["id"] == list_id)
                 tile.clicked.connect(lambda a=art: self.open_artist_by_name(a))
             else:
                 tile.clicked.connect(lambda k=kind, lid=list_id: self.open_list(k, lid))
-            self.home_quick_grid.addWidget(tile, i // columns, i % columns)
-        for c in range(columns):
-            self.home_quick_grid.setColumnStretch(c, 1)
+            tiles.append(tile)
+        self.home_quick_box.set_tiles(tiles)       # las columnas se adaptan al ancho disponible
 
         # Tus artistas
         clear_layout(self.home_followed_row)

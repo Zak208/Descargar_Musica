@@ -63,5 +63,8 @@ def run_calibration(window, done):
         chosen = level_for(cpu)
         motion.set_level(chosen)
         done(chosen, cpu)
+        # la prueba mueve muchas capas: al terminar se repinta todo para no dejar restos en pantalla
+        QTimer.singleShot(250, window.update)
+        QTimer.singleShot(1200, window.update)
 
     QTimer.singleShot(DURATION_MS, finish)

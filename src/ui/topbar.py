@@ -1,6 +1,6 @@
 """Barra superior estilo Spotify, de lado a lado de la ventana: marca, inicio + buscador centrados, info y descargas."""
 from PySide6.QtCore import Qt, Signal, QSize, QTimer
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QLineEdit, QPushButton, QLabel
+from PySide6.QtWidgets import QWidget, QHBoxLayout, QLineEdit, QPushButton, QLabel, QSizePolicy
 
 from ui.animations import pop_icon
 from ui.downloadfx import RingButton
@@ -31,6 +31,7 @@ class TopBar(QWidget):
         self.logo.setPixmap(icon("music.svg", accent(), 64).pixmap(26, 26))
         self.brand = QLabel("Descargador de Música")
         self.brand.setObjectName("BrandLabel")
+        self.brand.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)      # no obliga a la ventana a ser más ancha
         left_lay.addWidget(self.logo)
         left_lay.addWidget(self.brand)
         # botón azul que aparece cuando hay una versión nueva de la aplicación
@@ -86,6 +87,7 @@ class TopBar(QWidget):
         right_lay.addStretch()
         self.info = QLabel("")
         self.info.setObjectName("TopInfo")
+        self.info.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         right_lay.addWidget(self.info)
         self.btn_downloads = RingButton(" Descargas")
         self.btn_downloads.setObjectName("TopPillBtn")
@@ -155,13 +157,23 @@ class TopBar(QWidget):
     def set_info(self, text: str):
         self.info.setText(text)
 
+    NARROW = 1150
+
+    def resizeEvent(self, event):
+        """En una ventana estrecha se esconden el nombre y el resumen para que lo importante no se corte."""
+        super().resizeEvent(event)
+        narrow = self.width() < self.NARROW
+        self.info.setVisible(not narrow)
+        self._brand_hidden_by_width = narrow
+        self.brand.setVisible(not narrow and not self.btn_update.isVisible())
+
     def set_update_button(self, text: str, enabled: bool = True, tip: str = ""):
         """Botón azul de actualización (arriba a la izquierda). Texto vacío = oculto."""
         self.btn_update.setText(text)
         self.btn_update.setEnabled(enabled)
         self.btn_update.setToolTip(tip)
         self.btn_update.setVisible(bool(text))
-        self.brand.setVisible(not text)          # con el botón a la vista, el nombre cede su sitio (no cabrían los dos)
+        self.brand.setVisible(not text and not getattr(self, "_brand_hidden_by_width", False))   # el botón cede... o el nombre
 
     def set_download_progress(self, percent):
         """Anillo de progreso conjunto en el botón de descargas (None cuando no hay nada en marcha)."""

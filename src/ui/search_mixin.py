@@ -56,6 +56,7 @@ class SearchMixin:
 
         self.status_label = QLabel("Escribe un artista, álbum o canción para comenzar")
         self.status_label.setObjectName("StatusDetail")
+        self.status_label.setWordWrap(True)          # un mensaje largo no debe ensanchar la ventana
         self.status_label.setStyleSheet("font-size: 15px; font-weight: bold; color: #B3B3B3;")
         lay.addWidget(self.status_label)
 

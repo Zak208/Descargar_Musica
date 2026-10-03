@@ -1,8 +1,7 @@
 """Ventana de Ajustes: calidad, destino de descargas, espacio, copia de seguridad, rendimiento y tema visual."""
 from PySide6.QtCore import Qt, QSize, QTimer
 from PySide6.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox,
-    QFrame, QGridLayout, QScrollArea, QWidget, QFileDialog
+    QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QGridLayout, QScrollArea, QWidget, QFileDialog
 )
 
 from config import (
@@ -15,7 +14,7 @@ from ui.icons import icon
 from version import __version__
 from ui.overlay import InlineDialog
 from ui import motion, perf
-from ui.controls import SegmentedControl, ToggleSwitch as QCheckBox
+from ui.controls import NoWheelComboBox, SegmentedControl, ToggleSwitch as QCheckBox
 from ui.perf import eco, set_eco, visualizer_enabled, set_visualizer
 from ui.playback_options import FADES
 
@@ -88,7 +87,7 @@ class SettingsDialog(InlineDialog):
             "Sin pérdida y Estudio no suenan mejor (el audio de origen ya viene comprimido): solo ocupan más."
         )
         row = QHBoxLayout()
-        self.quality_combo = QComboBox()
+        self.quality_combo = NoWheelComboBox()
         for key, *_rest in quality.QUALITIES:
             self.quality_combo.addItem(quality.label(key), key)
         idx = self.quality_combo.findData(get_audio_quality())
@@ -118,7 +117,7 @@ class SettingsDialog(InlineDialog):
         dest_lay.addWidget(self.btn_change_dir, alignment=Qt.AlignLeft)
         org_row = QHBoxLayout()
         org_row.addWidget(QLabel("Organizar las canciones"))
-        self.organize_combo = QComboBox()
+        self.organize_combo = NoWheelComboBox()
         for value, text in (("flat", "Todas juntas en la carpeta (recomendado)"), ("artist", "En una carpeta por artista"),
                             ("artist_album", "Carpeta de artista y de álbum")):
             self.organize_combo.addItem(text, value)
@@ -183,7 +182,7 @@ class SettingsDialog(InlineDialog):
         play_lay.addWidget(self.chk_normalize)
         fade_row = QHBoxLayout()
         fade_row.addWidget(QLabel("Fundido entre canciones"))
-        self.fade_combo = QComboBox()
+        self.fade_combo = NoWheelComboBox()
         for seconds, text in FADES:
             self.fade_combo.addItem(text, seconds)
         self.fade_combo.setCurrentIndex(max(0, self.fade_combo.findData(int(load_settings().get("fade_seconds", 0)))))
@@ -208,7 +207,7 @@ class SettingsDialog(InlineDialog):
             "Con las flechas ↑ ↓, Intro y Supr puedes mover las listas sin ratón.")
         row_scale = QHBoxLayout()
         row_scale.addWidget(QLabel("Tamaño de la aplicación"))
-        self.scale_combo = QComboBox()
+        self.scale_combo = NoWheelComboBox()
         for label, value in (("Normal", 1.0), ("Grande", 1.15), ("Muy grande", 1.3)):
             self.scale_combo.addItem(label, value)
         current_scale = float(load_settings().get("ui_scale", 1.0) or 1.0)
@@ -269,13 +268,13 @@ class SettingsDialog(InlineDialog):
             "Avanzado: acceso a YouTube",
             "Si YouTube empieza a rechazar descargas, prueba el modo automático. Las cookies del navegador sirven para vídeos "
             "con restricción de edad; solo se leen en tu equipo y nunca se guardan ni se envían a ningún otro sitio.")
-        self.yt_client_combo = QComboBox()
+        self.yt_client_combo = NoWheelComboBox()
         self.yt_client_combo.addItem("Normal (recomendado)", "android_web")
         self.yt_client_combo.addItem("Automático (que elija yt-dlp)", "auto")
         self.yt_client_combo.setCurrentIndex(max(0, self.yt_client_combo.findData(load_settings().get("yt_client", "android_web"))))
         self.yt_client_combo.currentIndexChanged.connect(lambda _i: self._save_value("yt_client", self.yt_client_combo.currentData()))
         adv_lay.addWidget(self.yt_client_combo)
-        self.cookies_combo = QComboBox()
+        self.cookies_combo = NoWheelComboBox()
         self.cookies_combo.addItem("No usar cookies del navegador", "")
         for key, name in (("chrome", "Google Chrome"), ("edge", "Microsoft Edge"), ("firefox", "Firefox"),
                           ("brave", "Brave"), ("opera", "Opera"), ("vivaldi", "Vivaldi")):
@@ -324,7 +323,7 @@ class SettingsDialog(InlineDialog):
         # --- Apariencia ---
         look_box, look_lay = _group("Colores de la aplicación", "Elige el color principal. Se cambia al instante.")
         # El selector real es un desplegable oculto; las muestras de color lo controlan.
-        self.theme_combo = QComboBox()
+        self.theme_combo = NoWheelComboBox()
         self.theme_combo.setVisible(False)
         for key, cfg in THEME_CONFIGS.items():
             self.theme_combo.addItem(cfg["name"], key)

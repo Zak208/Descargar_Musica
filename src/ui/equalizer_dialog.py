@@ -1,9 +1,10 @@
 """Ecualizador: ajuste del sonido con tres bandas (graves, medios y agudos) y ajustes predefinidos."""
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSlider, QComboBox, QFrame
+    QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSlider, QFrame
 )
 
+from ui.controls import NoWheelComboBox
 from ui.overlay import InlineDialog
 from services.equalizer_service import PRESETS, load_eq_settings, save_eq_settings
 
@@ -58,7 +59,7 @@ class EqualizerDialog(InlineDialog):
         preset_lbl = QLabel("Ajuste")
         preset_lbl.setObjectName("SettingsLabel")
         preset_row.addWidget(preset_lbl)
-        self.preset_combo = QComboBox()
+        self.preset_combo = NoWheelComboBox()
         for name in PRESETS:
             self.preset_combo.addItem(name)
         self.preset_combo.currentTextChanged.connect(self._on_preset_selected)

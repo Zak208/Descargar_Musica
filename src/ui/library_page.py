@@ -1,7 +1,7 @@
 """Tu biblioteca: cuadrícula con todas tus listas (me gusta, descargas y playlists propias)."""
 from PySide6.QtCore import Qt, Signal, QSize
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QScrollArea, QGridLayout, QMenu
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QScrollArea, QMenu
 )
 
 from ui.icons import icon
@@ -11,8 +11,8 @@ from ui.controls import CoverLabel
 from ui.hover import TileHover
 from ui.scrolling import polish_scroll_area
 from ui.widgets import ElidedLabel
+from ui.home_shelves import QuickGrid
 
-COLUMNS = 4
 CARD_W = 158
 TILE = 126
 
@@ -133,30 +133,20 @@ class LibraryPage(QWidget):
 
         hint = QLabel("Tus canciones favoritas, tu música descargada, tus listas y los artistas que sigues.")
         hint.setObjectName("SectionSubtitle")
+        hint.setWordWrap(True)
         main.addWidget(hint)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         polish_scroll_area(scroll)
-        inner = QWidget()
-        self.grid = QGridLayout(inner)
-        self.grid.setContentsMargins(0, 8, 0, 20)
-        self.grid.setHorizontalSpacing(14)
-        self.grid.setVerticalSpacing(14)
-        self.grid.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        # las tarjetas se colocan por filas según el ancho que haya (antes eran siempre 4 columnas)
+        inner = self.cards = QuickGrid(min_tile=CARD_W + 14, max_columns=8, spacing=14, fill=False, margins=(0, 8, 0, 20))
         scroll.setWidget(inner)
         main.addWidget(scroll, stretch=1)
 
     def load(self, favorites_count: int, downloads_count: int, playlists: dict, artists: list = None,
              animate: bool = True, smart: list = None):
-        while self.grid.count():
-            item = self.grid.takeAt(0)
-            w = item.widget()
-            if w:
-                w.setParent(None)
-                w.deleteLater()
-
         cards = [
             ("favorites", "favorites", "Canciones que te gustan", favorites_count),
             ("downloads", "downloads", "Mis descargas", downloads_count),
@@ -169,18 +159,20 @@ class LibraryPage(QWidget):
         for key, name, count in smart or []:         # listas automáticas (se arman solas con tu música)
             cards.append(("smart", key, name, count))
 
-        for i, (kind, list_id, name, count) in enumerate(cards):
+        widgets = []
+        for kind, list_id, name, count in cards:
             card = ListCard(kind, list_id, name, count)
             card.clicked.connect(self.list_selected.emit)
             card.context_requested.connect(self._context)
-            self.grid.addWidget(card, i // COLUMNS, i % COLUMNS)
-            if animate:
-                fade_in(card, 260, min(i, 10) * 45)
+            widgets.append(card)
         if not playlists:       # todavía no hay listas propias: se invita a crear la primera
-            i = len(cards)
             invite = NewListCard()
             invite.clicked.connect(self.new_list_requested.emit)
-            self.grid.addWidget(invite, i // COLUMNS, i % COLUMNS)
+            widgets.append(invite)
+        self.cards.set_tiles(widgets)
+        if animate:
+            for i, card in enumerate(widgets):
+                fade_in(card, 260, min(i, 10) * 45)
 
     def _context(self, kind: str, list_id: str, pos):
         if kind == "artist":

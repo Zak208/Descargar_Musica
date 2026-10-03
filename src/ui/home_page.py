@@ -4,10 +4,10 @@ from datetime import datetime
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton, QFrame, QScrollArea
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QScrollArea
 )
 
-from ui.home_shelves import make_shelf
+from ui.home_shelves import make_shelf, QuickGrid
 from ui.continue_card import ContinueCard
 from ui.controls import SpinIconButton
 from ui.icons import icon
@@ -99,11 +99,7 @@ def build_home_page(self):
     self.home_layout.addWidget(self.home_continue)
 
     # Accesos rápidos (tus listas y artistas)
-    self.home_quick_box = QWidget()
-    self.home_quick_grid = QGridLayout(self.home_quick_box)
-    self.home_quick_grid.setContentsMargins(0, 4, 0, 8)
-    self.home_quick_grid.setHorizontalSpacing(12)
-    self.home_quick_grid.setVerticalSpacing(12)
+    self.home_quick_box = QuickGrid()
     self.home_layout.addWidget(self.home_quick_box)
 
     # Secciones (todas empiezan ocultas)

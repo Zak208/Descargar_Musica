@@ -66,8 +66,9 @@ from ui.friendly import friendly_error
 from ui.common import resource_path, _ACTIVE_THREADS
 from ui.song_card import SongResultCard, square_cover
 from ui.track_row import TrackRow
-from ui.now_playing import NowPlayingPanel, PANEL_WIDTH
-from ui.sidebar import build_sidebar
+from ui.now_playing import NowPlayingPanel
+from ui.panel_grip import PanelGrip, GRIP_WIDTH, PANEL_DEFAULT, clamp_width
+from ui.sidebar import build_sidebar, SidebarMixin
 from ui.home_page import build_home_page
 from ui.player_bar import build_player_bar
 from services import backup_service
@@ -109,14 +110,15 @@ class FFmpegDownloadWorker(QThread):
 
 
 class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin, DownloadsMixin, OfflineMixin,
-                 UsabilityMixin, PlaybackOptionsMixin, UpdatesMixin, LyricsMixin, SessionMixin, ThemeMixin, EqualizerMixin):
+                 UsabilityMixin, PlaybackOptionsMixin, UpdatesMixin, LyricsMixin, SessionMixin, ThemeMixin, EqualizerMixin,
+                 SidebarMixin):
     playing_changed = Signal(bool)          # empieza o se detiene el sonido (los indicadores de «sonando» lo siguen)
 
     def __init__(self):
         super().__init__()
         web.warm_up()          # prepara en segundo plano la conexión segura compartida (ahorra CPU en cada petición)
         self.setWindowTitle(f"Descargador de Música {__version__}")
-        self.setWindowIcon(QIcon(resource_path("assets/logo.jpg")))
+        self.setWindowIcon(QIcon(resource_path("assets/app.ico")))
         self.setAcceptDrops(True)       # se pueden soltar enlaces de YouTube/Spotify o archivos de audio
         self.resize(1360, 860)
         self.setStyleSheet(MAIN_STYLE)
@@ -178,6 +180,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self._download_info_reset.timeout.connect(self.update_header_info)
         self.init_ui()
         self.restore_geometry_early()
+        self.init_sidebar_state()
         self.apply_accessibility_names()
         self._reload_pending_keys()
         if self.is_offline():                       # por si se abre ya sin conexión (o con el modo sin conexión activado)
@@ -287,6 +290,13 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self.full_player = None
         self.now_panel.setVisible(False)
         self.top_hbox.addWidget(self.now_panel)
+        # tirador para cambiar el ancho del panel arrastrando (flota sobre el hueco entre el contenido y el panel)
+        saved_width = int(load_settings().get("panel_width", PANEL_DEFAULT) or PANEL_DEFAULT)
+        self.now_panel.setFixedWidth(clamp_width(saved_width, 4000, 0))
+        self.panel_grip = PanelGrip(self.now_panel, self, self._width_besides_panel, central_widget)
+        self.panel_grip.resizing.connect(self._on_panel_resizing)
+        self.panel_grip.finished.connect(self._save_panel_width)
+        self.panel_grip.hide()
 
         # Barra superior (de lado a lado): marca, inicio, buscador, información general y descargas en curso
         self.topbar = TopBar()
@@ -609,14 +619,53 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self.set_context(self.library_items())
         self.play_local_file(path)
 
+    CONTENT_MIN_WIDTH = 680
+
     def _fit_minimum_size(self):
-        """El tamaño mínimo de la ventana es el que necesita la aplicación para no recortar ni encoger nada."""
-        self.content_widget.setMinimumWidth(720)
+        """El tamaño mínimo de la ventana es el que necesita la aplicación para no recortar ni encoger nada: se recalcula
+        al abrir o cerrar el panel de la derecha, al cambiar su ancho y al plegar la barra de la izquierda."""
+        self.content_widget.setMinimumWidth(self.CONTENT_MIN_WIDTH)
+        layout = self.centralWidget().layout()
+        self.top_hbox.invalidate()
+        layout.invalidate()
+        layout.activate()                          # el mínimo se calcula con la distribución al día
         hint = self.minimumSizeHint()
         hint.setHeight(max(hint.height(), 720))   # alto razonable: las listas se desplazan, pero el resto no debe agobiarse
         self.setMinimumSize(hint)
         if self.width() < hint.width() or self.height() < hint.height():
             self.resize(max(self.width(), hint.width()), max(self.height(), hint.height()))
+        self._place_panel_grip()
+
+    def _width_besides_panel(self) -> int:
+        """Ancho que ocupa todo lo que no es el panel de la derecha (barra lateral, contenido mínimo y márgenes)."""
+        margins = self.main_vbox.contentsMargins()
+        spacing = self.top_hbox.spacing()
+        return margins.left() + margins.right() + self.sidebar.width() + self.CONTENT_MIN_WIDTH + spacing * 2
+
+    def _on_panel_resizing(self, _width: int):
+        self._fit_minimum_size()
+        QTimer.singleShot(0, self._place_panel_grip)
+
+    def _save_panel_width(self, width: int):
+        settings = load_settings()
+        settings["panel_width"] = int(width)
+        save_settings(settings)
+
+    def _place_panel_grip(self):
+        """El tirador flota justo a la izquierda del panel (solo cuando el panel se ve)."""
+        grip = getattr(self, "panel_grip", None)
+        if grip is None:
+            return
+        panel = self.now_panel
+        grip.setVisible(panel.isVisible())
+        if panel.isVisible():
+            g = panel.geometry()
+            grip.setGeometry(g.x() - GRIP_WIDTH, g.y(), GRIP_WIDTH, g.height())
+            grip.raise_()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        QTimer.singleShot(0, self._place_panel_grip)
 
     def toast_margin(self) -> int:
         """Distancia al borde inferior para los avisos: por encima de la barra de reproducción si se ve."""
@@ -997,6 +1046,26 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         if dlg.exec():
             self.refresh_sidebar_library()
 
+    def release_file(self, path: str) -> bool:
+        """Suelta el archivo si algún reproductor lo tiene abierto: Windows no deja borrar ni renombrar un archivo abierto,
+        aunque la canción esté parada o en pausa. Devuelve True si era el que estaba cargado como principal."""
+        key = os.path.normcase(os.path.abspath(path))
+        decks = [self.player] + ([self._spare_deck[0]] if self._spare_deck else []) + ([self._out_deck[0]] if self._out_deck else [])
+        was_current = False
+        for deck in decks:
+            try:
+                source = deck.source().toLocalFile()
+                if source and os.path.normcase(os.path.abspath(source)) == key:
+                    deck.stop()
+                    deck.setSource(QUrl())
+                    was_current = was_current or deck is self.player
+            except RuntimeError:
+                continue
+        if was_current:
+            QApplication.processEvents()
+            time.sleep(0.15)                     # el reproductor tarda un instante en soltar el archivo
+        return was_current
+
     def rename_file(self, path: str):
         """Cambia el nombre del archivo (la extensión se conserva)."""
         stem, ext = os.path.splitext(os.path.basename(path))
@@ -1007,6 +1076,8 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             if os.path.exists(new_path) and os.path.normcase(new_path) != os.path.normcase(path):
                 show_message(self, "No se pudo cambiar el nombre", "Ya hay un archivo con ese nombre.")
                 return
+            if self.release_file(path):
+                self.stop_player()
             try:
                 os.rename(path, new_path)
             except Exception as e:
@@ -1031,7 +1102,14 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         """Manda la canción a la papelera de Windows (se puede recuperar desde allí)."""
         from services import recycle
         name = os.path.basename(path)
-        if recycle.move_to_recycle_bin(path):
+        if self.release_file(path):
+            self.stop_player()                     # era la canción cargada: se descarga del reproductor para poder borrarla
+        deleted = recycle.move_to_recycle_bin(path)
+        if not deleted:                              # puede que algo aún lo tenga abierto un instante: se reintenta una vez
+            QApplication.processEvents()
+            time.sleep(0.3)
+            deleted = recycle.move_to_recycle_bin(path)
+        if deleted:
             PlaylistService.relocate(path)
             self.rescan_library()
             margin = self.toast_margin()
@@ -1062,7 +1140,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         xf_ms = self._xf_request if (autoplay and self.player.playbackState() == QMediaPlayer.PlayingState) else 0
         self._xf_request = 0
         if xf_ms > 0:
-            self._begin_crossfade(xf_ms)       # lo que suena sigue sonando en otro reproductor y baja; este recibe la nueva
+            self._begin_crossfade(xf_ms, path)       # lo que suena sigue sonando en otro reproductor y baja; este recibe la nueva
         else:
             self._finish_crossfade()
             self.player.stop()
@@ -1245,13 +1323,9 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             self.now_panel.set_track(self.current_item_info)
             fade_in(self.now_panel, 240)
         # la ventana necesita sitio para el panel: el mínimo crece (o vuelve a su valor) con él
-        extra = PANEL_WIDTH + 8
-        if show:
-            self.setMinimumWidth(self.minimumWidth() + extra)
-            if self.width() < self.minimumWidth():
-                self.resize(self.minimumWidth(), self.height())
-        else:
-            self.setMinimumWidth(max(0, self.minimumWidth() - extra))
+        self.top_hbox.activate()
+        self._fit_minimum_size()
+        QTimer.singleShot(0, self._fit_minimum_size)
 
     def sync_favorite_hearts(self):
         """Mantiene sincronizados todos los corazones (barra inferior y tarjetas de la pantalla)."""

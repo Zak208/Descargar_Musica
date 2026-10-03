@@ -10,7 +10,7 @@ from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from config import load_settings, save_settings
-from services import envelope, library_db, loudness_service
+from services import envelope, library_db, loudness_service, tempo
 from services.smtc_service import MediaControls
 from ui.icons import icon
 from ui.styles import accent
@@ -21,6 +21,24 @@ FADES = ((0, "Sin fundido"), (2, "2 segundos"), (4, "4 segundos"), (6, "6 segund
          (10, "10 segundos"), (12, "12 segundos"))
 SLEEP_FADE_SECONDS = 20          # el volumen baja poco a poco durante los últimos 20 s del temporizador
 MANUAL_CROSSFADE_MS = 1500       # al saltar tú de canción, el fundido cruzado es más corto
+
+
+RATE_BACK_MS = 9000            # lo que tarda la canción que entró acelerada o frenada en volver a su velocidad
+
+
+def crossfade_levels(t: float) -> tuple:
+    """(volumen de la que entra, volumen de la que sale) en el instante `t` (0 a 1) del fundido cruzado.
+
+    Las dos suenan a la vez y bien altas durante casi todo el cruce: la que entra sube enseguida (llega al máximo al 70 %)
+    y la que sale aguanta (empieza a bajar al 30 %), así nunca hay un hueco de volumen bajo. Para que el momento en que
+    suenan las dos no se note más fuerte, la suma se limita a un poco más que una sola canción."""
+    t = max(0.0, min(1.0, t))
+    incoming = math.sin(min(1.0, t / 0.7) * math.pi / 2)
+    outgoing = math.cos(max(0.0, (t - 0.3) / 0.7) * math.pi / 2)
+    power = math.hypot(incoming, outgoing)
+    if power > 1.12:
+        incoming, outgoing = incoming * 1.12 / power, outgoing * 1.12 / power
+    return incoming, outgoing
 
 
 class ActivePlayer:
@@ -99,6 +117,16 @@ class PlaybackOptionsMixin:
         self._xf_anim.setEasingCurve(QEasingCurve.Linear)
         self._xf_anim.valueChanged.connect(lambda v: self._on_xf_value(float(v)))
         self._xf_anim.finished.connect(self._finish_crossfade)
+        # igualar el ritmo: la canción que entra se acelera o frena un poco para llevar el tempo de la que sale y luego
+        # vuelve a su velocidad poco a poco
+        self._xf_matched = False
+        self._tempo_queue = []
+        self._tempo_worker = None
+        self._rate_back = QVariantAnimation(self)
+        self._rate_back.setDuration(RATE_BACK_MS)
+        self._rate_back.setEasingCurve(QEasingCurve.InOutSine)
+        self._rate_back.valueChanged.connect(lambda v: self.player.setPlaybackRate(float(v)))
+        self._rate_back.finished.connect(lambda: setattr(self, "_xf_matched", False))
         self._credit_timer = QTimer(self)             # una reproducción cuenta tras 30 s escuchando (como en Spotify)
         self._credit_timer.setSingleShot(True)
         self._credit_timer.setInterval(30000)
@@ -173,10 +201,13 @@ class PlaybackOptionsMixin:
             return max(500, min(self._fade_ms, remaining))
         return min(self._fade_ms, MANUAL_CROSSFADE_MS)
 
-    def _begin_crossfade(self, ms: int):
+    def _begin_crossfade(self, ms: int, next_path: str = None):
         """La canción que suena pasa a un reproductor aparte que baja el volumen; el reproductor libre queda como
-        el principal para recibir la canción nueva, que sube a la vez. Se llama antes de cargar la nueva."""
+        el principal para recibir la canción nueva, que sube a la vez. Se llama antes de cargar la nueva.
+        `next_path`: archivo de la canción que entra (para igualar su ritmo con el de la que sale)."""
         start = self._fade_factor
+        out_path = (self.current_item_info or {}).get("local_path")
+        self._rate_back.stop()
         self._finish_crossfade()
         out_player, out_audio = self.player, self.audio_output
         spare = self._spare_deck
@@ -189,7 +220,13 @@ class PlaybackOptionsMixin:
         self._out_start = start
         self._out_factor = start
         self.player, self.audio_output = spare
-        self.player.setPlaybackRate(out_player.playbackRate())
+        out_rate = out_player.playbackRate()
+        match = None
+        if next_path and out_path and abs(out_rate - 1.0) <= 0.12 and (abs(out_rate - 1.0) < 0.02 or self._xf_matched):
+            bpm_out, bpm_in = tempo.get(out_path), tempo.get(next_path)
+            match = tempo.match_rate(bpm_out * out_rate if bpm_out else None, bpm_in)
+        self._xf_matched = match is not None
+        self.player.setPlaybackRate(match if match is not None else out_rate)
         self._fade_factor = 0.0
         self._fading_out = False
         self._fade_anim.stop()
@@ -200,8 +237,8 @@ class PlaybackOptionsMixin:
 
     def _on_xf_value(self, t: float):
         t = max(0.0, min(1.0, t))
-        self._fade_factor = math.sin(t * math.pi / 2)          # potencia constante: la suma suena pareja
-        self._out_factor = self._out_start * math.cos(t * math.pi / 2)
+        self._fade_factor, out = crossfade_levels(t)
+        self._out_factor = self._out_start * out
         self._apply_volume()
 
     def _finish_crossfade(self):
@@ -222,10 +259,18 @@ class PlaybackOptionsMixin:
             self._xf_active = False
             self._fade_factor = 1.0
             self._apply_volume()
+            rate = self.player.playbackRate()
+            if self._xf_matched and abs(rate - 1.0) > 0.003:
+                self._rate_back.stop()
+                self._rate_back.setStartValue(float(rate))
+                self._rate_back.setEndValue(1.0)
+                self._rate_back.start()
 
     # ---------------------------------------------- empieza una canción nueva
     def on_track_started(self):
         info = self.current_item_info
+        if self._xf_matched and not self._xf_active and self._rate_back.state() != QVariantAnimation.Running:
+            self._xf_matched = False
         self._ab = [None, None]
         self._fading_out = False
         self._fade_anim.stop()
@@ -257,6 +302,9 @@ class PlaybackOptionsMixin:
                 QTimer.singleShot(4000, lambda p=nxt: self._measure_loudness(p, quiet=True))
         self._apply_volume()
         self._load_envelope(path)
+        if path and self._fade_ms > 0 and not self._sleep_end_of_track:
+            nxt_path = self._next_local_path()
+            QTimer.singleShot(3000, lambda a=path, b=nxt_path: self._ensure_tempo(a, b))   # para igualar el ritmo al mezclar
         self._refresh_options_icon()
         self._update_system_info()
         self._credit_path = path
@@ -302,7 +350,36 @@ class PlaybackOptionsMixin:
             self._env_wanted = current                # mientras tanto se cambió de canción: se calcula la de ahora
             self._start_envelope_worker()
 
+    # ------------------------------------------------ tempo para el fundido
+    def _ensure_tempo(self, *paths):
+        """Calcula (una vez por canción y de una en una) el tempo de las canciones que van a mezclarse."""
+        for p in paths:
+            if p and not tempo.known(p) and p not in self._tempo_queue:
+                self._tempo_queue.append(p)
+        self._run_tempo_queue()
+
+    def _run_tempo_queue(self):
+        if self._tempo_worker is not None and self._tempo_worker.isRunning():
+            return
+        while self._tempo_queue:
+            path = self._tempo_queue.pop(0)
+            if tempo.known(path) or not os.path.isfile(path):
+                continue
+            worker = envelope.EnvelopeWorker(path, self)
+            worker.done.connect(lambda p, data: tempo.remember(p, data))
+            worker.finished.connect(lambda w=worker: self._tempo_finished(w))
+            self._tempo_worker = worker
+            worker.start()
+            return
+
+    def _tempo_finished(self, worker):
+        if not tempo.known(worker.path):
+            tempo.remember(worker.path, b"")          # no se pudo: se apunta para no insistir
+        self._tempo_worker = None
+        self._run_tempo_queue()
+
     def _on_envelope(self, path: str, data: bytes):
+        tempo.remember(path, data)
         if path == (self.current_item_info or {}).get("local_path") and hasattr(self, "visualizer"):
             self.visualizer.set_envelope(data)
 
@@ -450,6 +527,8 @@ class PlaybackOptionsMixin:
 
     # ------------------------------------------------------ velocidad y tramo
     def set_playback_rate(self, rate: float):
+        self._rate_back.stop()
+        self._xf_matched = False
         self.player.setPlaybackRate(rate)
         self._refresh_options_icon()
         self.notify("Velocidad normal" if abs(rate - 1.0) < 0.01 else f"Velocidad {rate:g}×".replace(".", ","))

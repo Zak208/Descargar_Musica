@@ -178,8 +178,7 @@ page.set_sort("custom", False)
 # biblioteca, Inicio y listas automáticas
 w.open_library()
 pump(0.8)
-kinds = [w.page_library.grid.itemAt(i).widget().kind for i in range(w.page_library.grid.count())
-         if hasattr(w.page_library.grid.itemAt(i).widget(), "kind")]
+kinds = [t.kind for t in w.page_library.cards._tiles if hasattr(t, "kind")]
 check("biblioteca: aparecen las listas automáticas", "smart" in kinds)
 library_db.register_play(w.library_items()[0]["local_path"])
 w.refresh_home()

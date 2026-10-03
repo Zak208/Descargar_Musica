@@ -2,7 +2,7 @@
 portada con fundido y zoom, y botón de reproducir/pausa que se transforma. En reposo no gastan nada."""
 from PySide6.QtCore import Qt, QSize, QRectF, QPointF, QVariantAnimation, QEasingCurve, Signal, QEvent
 from PySide6.QtGui import QPainter, QColor, QPainterPath, QPixmap, QFontMetrics, QPen, QIcon
-from PySide6.QtWidgets import QCheckBox, QWidget, QLabel, QFrame, QPushButton, QSizePolicy
+from PySide6.QtWidgets import QCheckBox, QComboBox, QWidget, QLabel, QFrame, QPushButton, QSizePolicy
 
 from ui import motion
 from ui.styles import accent, live_accent
@@ -11,6 +11,18 @@ from ui.styles import accent, live_accent
 def _mix(a: QColor, b: QColor, t: float) -> QColor:
     return QColor(int(a.red() + (b.red() - a.red()) * t), int(a.green() + (b.green() - a.green()) * t),
                   int(a.blue() + (b.blue() - a.blue()) * t))
+
+
+class NoWheelComboBox(QComboBox):
+    """Desplegable que NO cambia de opción con la rueda del ratón (se despliega al pulsar y se elige). La rueda sigue
+    desplazando la ventana en la que está, en vez de cambiar un ajuste sin querer."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFocusPolicy(Qt.StrongFocus)
+
+    def wheelEvent(self, event):
+        event.ignore()
 
 
 class ToggleSwitch(QCheckBox):

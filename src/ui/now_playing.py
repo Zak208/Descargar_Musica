@@ -25,7 +25,7 @@ from ui.anim_clock import clock
 from ui.textfx import CountLabel, DotsLabel, grow_underline
 from ui.widgets import ElidedLabel
 
-PANEL_WIDTH = 330
+PANEL_WIDTH = 330          # ancho por defecto; se puede cambiar arrastrando el borde (ver ui/panel_grip.py)
 COVER = 286
 
 
@@ -685,7 +685,7 @@ class NowPlayingPanel(QFrame):
             self.artist_fans.setText("")
         self.artist_bio.setText(data.get("bio") or "No hay información disponible de este artista.")
         if data.get("picture"):
-            loader = ImageLoaderThread(data["picture"], False, (PANEL_WIDTH - 36, 170), 0)
+            loader = ImageLoaderThread(data["picture"], False, (max(200, self.width() - 36), 170), 0)
             loader.image_loaded.connect(lambda pix: self._safe_set(self.artist_photo, pix))
             self._artist_loader = loader
             loader.start()

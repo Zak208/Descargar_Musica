@@ -214,6 +214,7 @@ class ListsMixin:
                     item.track_dropped.connect(lambda info, k=kind, lid=list_id: self.on_track_dropped(k, lid, info))
                     if kind == "playlist":
                         item.context_requested.connect(lambda pos_, pid=list_id: self._playlist_menu(pid, pos_))
+                item.set_compact(getattr(self, "_sidebar_compact", False))
                 layout.insertWidget(pos, item)
                 self._side_items[key] = (item, signature)
             else:
@@ -225,7 +226,8 @@ class ListsMixin:
 
         hint = getattr(self, "side_hint", None)
         if hint is not None:
-            hint.setVisible(self._lib_filter == "artists" and not ArtistService.get_followed())
+            hint.setVisible(self._lib_filter == "artists" and not ArtistService.get_followed()
+                            and not getattr(self, "_sidebar_compact", False))
 
     # ---------------------------------------------------------------- artistas
     def toggle_follow_artist(self, artist_id, name: str, avatar: str = "") -> bool:

@@ -447,6 +447,10 @@ QPushButton#SidebarBtn {
     border: none;
     border-radius: 8px;
 }
+QPushButton#SidebarBtn[compact="true"] {
+    padding: 10px 0px;
+    text-align: center;
+}
 QPushButton#SidebarBtn:hover {
     background-color: rgba(255, 255, 255, 0.12);
     color: #FFFFFF;

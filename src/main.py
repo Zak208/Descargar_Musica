@@ -82,6 +82,12 @@ def selftest() -> int:
     _settings["first_run_done"] = True
     save_settings(_settings)
 
+    try:                       # identidad propia en la barra de tareas de Windows: mismo icono que la ventana y agrupación correcta
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Zak208.DescargadorMusica")
+    except Exception:
+        pass
+
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     from ui.fonts import load_app_fonts
@@ -116,7 +122,8 @@ def selftest() -> int:
     try:
         import importlib
         for name in ("ui.nowplaying_full", "ui.calibrate", "ui.keep_change", "ui.celebrate", "ui.winext", "ui.emptystate",
-                     "ui.continue_card", "ui.focusring", "ui.tooltips", "services.envelope", "services.app_updater", "services.word_timing", "ui.single_instance"):
+                     "ui.continue_card", "ui.focusring", "ui.tooltips", "services.envelope", "services.app_updater", "services.word_timing", "ui.single_instance",
+                     "services.tempo", "ui.panel_grip"):
             importlib.import_module(name)
         check("módulos de las animaciones y de la pantalla completa", True)
     except Exception as e:

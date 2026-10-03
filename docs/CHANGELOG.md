@@ -3,6 +3,24 @@
 Formato: `MAYOR.MENOR.PARCHE`. MAYOR = cambios que rompen datos o uso, MENOR = funciones nuevas, PARCHE = arreglos.
 Cada versión subida a GitHub tiene su etiqueta `vX.Y.Z` (pestaña *Releases/Tags*).
 
+## 1.17.0
+**Paneles laterales y distribución**
+- **Panel «En reproducción» redimensionable**: arrastra el borde izquierdo del panel (entre el contenido y el panel) para hacerlo más ancho o más estrecho, como en Spotify. Doble clic en el borde vuelve al ancho de siempre y el ancho elegido se recuerda.
+- **Barra lateral izquierda plegable**: el botón de arriba (flecha) la deja solo con iconos y portadas; al pasar el ratón por cada icono sale una burbuja con su nombre. Se recuerda al cerrar.
+- **Tamaño mínimo de la ventana de verdad**: se recalcula al abrir o cerrar el panel, al cambiar su ancho y al plegar la barra, y ya no deja que se corte nada (la barra superior exigía 1.275 px y la ventana dejaba encoger a menos; ahora el nombre y el resumen se esconden solos en ventanas estrechas, y el mensaje de búsqueda se ajusta en vez de ensanchar).
+- **Inicio y Tu biblioteca se adaptan al ancho**: los accesos rápidos reparten todo el ancho (con 2 accesos, cada uno ocupa la mitad en vez de una cuarta parte), y las tarjetas de la biblioteca se colocan en tantas columnas como quepan (antes eran siempre 4).
+
+**Fundido entre canciones más natural**
+- **Iguala el ritmo**: el tempo de cada canción se calcula una vez a partir de la envolvente que ya se guardaba (sin analizar el audio otra vez); al mezclar, la canción que entra se acelera o frena un poco (hasta un 10 %, sin cambiar el tono) para llevar el ritmo de la que sale, y vuelve a su velocidad poco a poco. Si no hay un pulso claro o los ritmos son muy distintos, no se toca nada.
+- **Sin hueco de volumen**: las dos canciones suenan a la vez y altas durante casi todo el cruce (la que entra sube enseguida; la que sale aguanta hasta casi el final) en vez de bajar hasta casi el silencio.
+
+**Arreglos**
+- **Borrar o renombrar la canción que está parada a la mitad** daba error porque el reproductor seguía teniendo el archivo abierto; ahora lo suelta antes (y reintenta una vez). Prueba nueva con un archivo real.
+- **Icono**: la ventana usa el mismo icono que la barra de tareas y el programa (antes la ventana llevaba otra imagen) y Windows lo agrupa con su propia identidad.
+- **Ajustes**: los desplegables ya no cambian de opción con la rueda del ratón (se pulsa, se despliega y se elige); la rueda sigue desplazando la ventana.
+- **«Probar animaciones»**: los avisos se repintan al esconderse y la prueba repinta la ventana al terminar para no dejar restos en pantalla.
+- Pruebas nuevas: `prueba_paneles.py`, `prueba_ritmo.py` y `prueba_borrar_sonando.py`.
+
 ## 1.16.0
 **Proyecto reorganizado y `lanzador.bat`**
 - **Carpeta principal limpia**: solo queda `lanzador.bat` (el único `.bat`), `README.md`, `LICENSE`, `requirements.txt`, `pyproject.toml` y las carpetas `src/` (todo el código), `empaquetado/` (spec de PyInstaller, asistente de instalación e imágenes, dependencias de compilación), `docs/` (changelog, guía de colaboración, licencias de terceros y aviso legal) y `pruebas/` (pruebas automáticas y `pytest`). Desaparecen `compilar_exe.bat`, `dev_tools/`, `tests/` e `installer/`.
