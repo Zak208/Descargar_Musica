@@ -72,6 +72,8 @@ class SideListItem(QFrame):
         self._sub.setVisible(not compact)
         self._lay.setContentsMargins(0, 7, 0, 7) if compact else self._lay.setContentsMargins(8, 7, 8, 7)
         self._lay.setAlignment(self.cover, Qt.AlignHCenter if compact else Qt.AlignLeft)
+        self._lay.setStretch(1, 0 if compact else 1)           # el hueco de los textos escondidos no debe empujar la portada
+        self._lay.setSpacing(0 if compact else 12)
         self.setToolTip(f"{self._title}\n{self._subtitle}" if compact else "")
 
     def mouseReleaseEvent(self, ev):
@@ -138,8 +140,8 @@ def build_sidebar(self):
     self.btn_sidebar_toggle.setToolTip("Reducir la barra lateral")
     self.btn_sidebar_toggle.setCursor(Qt.PointingHandCursor)
     self.btn_sidebar_toggle.clicked.connect(self.toggle_sidebar)
-    toggle_row.addStretch()
     toggle_row.addWidget(self.btn_sidebar_toggle)
+    toggle_row.setAlignment(self.btn_sidebar_toggle, Qt.AlignRight)
     self._sidebar_toggle_row = toggle_row
     nav_lay.addLayout(toggle_row)
     self.btn_nav_home = nav_button("Inicio", "home.svg", lambda: self.switch_to_page(Page.HOME))
@@ -195,6 +197,7 @@ def build_sidebar(self):
     self.playlists_container.setSpacing(2)
     self.playlists_container.setAlignment(Qt.AlignTop)
     scroll.setWidget(lists_widget)
+    self._side_scroll = scroll
     lib_lay.addWidget(scroll, stretch=1)
     self.side_hint = QLabel("Aún no sigues a ningún artista.\nEntra en el perfil de uno y pulsa «Seguir».")
     self.side_hint.setObjectName("SectionSubtitle")
@@ -269,6 +272,8 @@ class SidebarMixin:
             b.setProperty("compact", compact)
             b.style().unpolish(b)
             b.style().polish(b)
+        # plegada, sin barra de desplazamiento: las portadas quedan justo en el centro
+        self._side_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff if compact else Qt.ScrollBarAsNeeded)
         self.btn_add_list.setVisible(not compact)
         for chip in self.library_chips.values():
             chip.setVisible(not compact)

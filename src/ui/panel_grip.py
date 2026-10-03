@@ -8,7 +8,7 @@ from ui.styles import accent
 
 GRIP_WIDTH = 10
 PANEL_MIN = 270
-PANEL_MAX = 620
+PANEL_MAX = 820
 PANEL_DEFAULT = 330
 
 
@@ -33,6 +33,7 @@ class PanelGrip(QWidget):
         self.setToolTip("Arrastra para cambiar el ancho del panel")
         self._start_x = 0
         self._start_w = 0
+        self._start_window_w = 0
         self._hover = False
         self._drag = False
 
@@ -51,13 +52,14 @@ class PanelGrip(QWidget):
             self._drag = True
             self._start_x = event.globalPosition().x()
             self._start_w = self.panel.width()
+            self._start_window_w = self.window_ref.width()       # la ventana no cambia mientras se arrastra: sin saltos
             self.update()
             event.accept()
 
     def mouseMoveEvent(self, event):
         if self._drag:
             wanted = int(self._start_w + (self._start_x - event.globalPosition().x()))
-            width = clamp_width(wanted, self.window_ref.width(), self._others())
+            width = clamp_width(wanted, self._start_window_w, self._others())
             if width != self.panel.width():
                 self.panel.setFixedWidth(width)
                 self.resizing.emit(width)

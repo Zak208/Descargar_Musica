@@ -619,7 +619,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self.set_context(self.library_items())
         self.play_local_file(path)
 
-    CONTENT_MIN_WIDTH = 680
+    CONTENT_MIN_WIDTH = 600
 
     def _fit_minimum_size(self):
         """El tamaño mínimo de la ventana es el que necesita la aplicación para no recortar ni encoger nada: se recalcula
@@ -634,6 +634,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self.setMinimumSize(hint)
         if self.width() < hint.width() or self.height() < hint.height():
             self.resize(max(self.width(), hint.width()), max(self.height(), hint.height()))
+        self.top_hbox.activate()
         self._place_panel_grip()
 
     def _width_besides_panel(self) -> int:
@@ -643,13 +644,16 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         return margins.left() + margins.right() + self.sidebar.width() + self.CONTENT_MIN_WIDTH + spacing * 2
 
     def _on_panel_resizing(self, _width: int):
-        self._fit_minimum_size()
-        QTimer.singleShot(0, self._place_panel_grip)
+        # mientras se arrastra solo se recoloca el tirador; el tamaño mínimo se recalcula al soltar (hacerlo en cada
+        # movimiento cambiaba el tamaño de la ventana y el panel daba saltos)
+        self.top_hbox.activate()
+        self._place_panel_grip()
 
     def _save_panel_width(self, width: int):
         settings = load_settings()
         settings["panel_width"] = int(width)
         save_settings(settings)
+        self._fit_minimum_size()
 
     def _place_panel_grip(self):
         """El tirador flota justo a la izquierda del panel (solo cuando el panel se ve)."""

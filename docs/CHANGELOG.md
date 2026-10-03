@@ -3,6 +3,12 @@
 Formato: `MAYOR.MENOR.PARCHE`. MAYOR = cambios que rompen datos o uso, MENOR = funciones nuevas, PARCHE = arreglos.
 Cada versión subida a GitHub tiene su etiqueta `vX.Y.Z` (pestaña *Releases/Tags*).
 
+## 1.17.2
+**Arreglos**
+- **Arrastrar el panel derecho muy deprisa daba saltos**: en cada movimiento se recalculaba el tamaño mínimo de la ventana, lo que cambiaba su tamaño y, con él, el límite del panel. Ahora la ventana no se toca mientras arrastras (el mínimo se recalcula al soltar) y el ancho sigue exactamente al ratón.
+- **Más ancho posible**: el panel puede llegar hasta 820 px (antes 620) y el contenido central se conforma con 600 px (antes 680).
+- **Barra izquierda plegada**: los iconos y las portadas quedan justo en el centro (el hueco de los textos escondidos y la barra de desplazamiento los empujaban), y la flecha de plegar y desplegar también.
+
 ## 1.17.1
 **Arreglos**
 - **El panel «En reproducción» ya se adapta a su ancho**: al estrecharlo, el contenido se cortaba por el borde derecho (la portada tenía un tamaño fijo, los textos no pasaban a varias líneas y el título y los botones exigían más ancho del que había). Ahora la portada crece y se encoge con el panel, los textos se reparten en líneas, los botones se estrechan y el título se acorta; nada obliga al panel a ser más ancho. Prueba nueva con el panel al mínimo, al ancho normal y al máximo.

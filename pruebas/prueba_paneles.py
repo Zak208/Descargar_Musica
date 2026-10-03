@@ -97,6 +97,25 @@ for width in (PANEL_MIN, 330, PANEL_MAX):
           and inner.width() <= scroll.viewport().width() and w.now_panel.cover_box.width() + 36 <= scroll.viewport().width() + 2)
 check("la portada crece y se encoge con el panel", w.now_panel.cover.width() > 400)
 w.now_panel.setFixedWidth(330)
+# arrastre muy rápido: el ancho sigue exactamente al ratón, sin saltos ni cambios de tamaño de la ventana
+from PySide6.QtGui import QMouseEvent as _ME
+w.now_panel.setFixedWidth(330)
+pump(0.2)
+win_w = w.width()
+start_g = grip.mapToGlobal(QPoint(5, 100))
+QTest.mousePress(grip, Qt.LeftButton, Qt.NoModifier, QPoint(5, 100))
+widths = []
+for dx in (400, -300, 250, -500, 120, 60, 300):
+    g = QPointF(start_g.x() - dx, start_g.y())
+    QApplication.sendEvent(grip, _ME(_ME.MouseMove, QPointF(5, 100), g, Qt.NoButton, Qt.LeftButton, Qt.NoModifier))
+    widths.append((dx, w.now_panel.width()))
+QTest.mouseRelease(grip, Qt.LeftButton, Qt.NoModifier, QPoint(5, 100))
+pump(0.3)
+check("al arrastrar muy rápido el ancho es siempre el que marca el ratón", all(
+    ww == clamp_width(330 + dx, win_w, w._width_besides_panel()) for dx, ww in widths))
+check("y la ventana no cambia de tamaño mientras tanto", w.width() == win_w)
+check("el panel puede llegar bastante más ancho que antes", clamp_width(800, 1900, w._width_besides_panel()) >= 700)
+w.now_panel.setFixedWidth(330)
 grip.mouseDoubleClickEvent(None)
 check("doble clic en el tirador vuelve al ancho de siempre", w.now_panel.width() == 330)
 w.set_now_playing_visible(False)
