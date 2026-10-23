@@ -1,6 +1,6 @@
 # Versiones exactas con las que se probó y se compila el programa (generado con pip freeze).
 # Instalar:  pip install -r requirements.lock.txt   ·   requirements.txt tiene los mínimos.
-certifi==2026.7.22
+certifi==2026.10.18
 charset-normalizer==3.5.2
 idna==3.20
 mutagen==1.48.1
