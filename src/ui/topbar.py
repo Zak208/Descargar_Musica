@@ -13,6 +13,7 @@ class TopBar(QWidget):
     home_clicked = Signal()
     downloads_clicked = Signal()
     update_clicked = Signal()
+    dj_clicked = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -34,6 +35,16 @@ class TopBar(QWidget):
         self.brand.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)      # no obliga a la ventana a ser más ancha
         left_lay.addWidget(self.logo)
         left_lay.addWidget(self.brand)
+        # menú DJ: carpeta general, qué parte suena y empezar la sesión (ver ui/dj_mixin.py)
+        self.btn_dj = QPushButton(" DJ")
+        self.btn_dj.setObjectName("TopPillBtn")
+        self.btn_dj.setIcon(icon("sliders.svg"))
+        self.btn_dj.setIconSize(QSize(16, 16))
+        self.btn_dj.setToolTip("Modo DJ: elige la carpeta y mezcla sus canciones")
+        self.btn_dj.setCursor(Qt.PointingHandCursor)
+        self.btn_dj.clicked.connect(self.dj_clicked.emit)
+        left_lay.addSpacing(6)
+        left_lay.addWidget(self.btn_dj)
         # botón azul que aparece cuando hay una versión nueva de la aplicación
         self.btn_update = QPushButton("")
         self.btn_update.setObjectName("UpdateBtn")
