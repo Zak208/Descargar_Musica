@@ -10,7 +10,7 @@ from PySide6.QtGui import QActionGroup, QDesktopServices
 from PySide6.QtMultimedia import QMediaPlayer
 from PySide6.QtWidgets import QFileDialog, QMenu
 
-from services import dj_service, tempo
+from services import dj_service, key_detect, tempo
 from services.dj_service import SOURCE_ALL, SOURCE_ROOT, DjScanWorker
 from services.track_analysis import AnalysisWorker
 from ui.dialogs import ask_text
@@ -159,7 +159,7 @@ class DjMixin:
         done, total = self._dj_an_progress
         if not total or done >= total:
             return ""
-        return f"Analizando canciones (ritmo, intro y final): {done} de {total}…"
+        return f"Analizando canciones (ritmo, tono, intro y final): {done} de {total}…"
 
     # ------------------------------------------------------------ corregir el BPM
     def _dj_effective_bpm(self, path: str) -> tuple:
@@ -239,6 +239,8 @@ class DjMixin:
             return ""
         found = found or {}
         parts = [f"{round(bpm)} BPM" + (" (a mano)" if manual else "") if bpm else "sin pulso claro"]
+        if found.get("tone"):                    # tono en la rueda Camelot; con «?» si no está claro (las etiquetas valen 1,0)
+            parts.append(found["tone"] + ("" if (found.get("tone_conf") or 0) >= key_detect.CONFIDENT else "?"))
         if found.get("intro_ms"):
             parts.append(f"intro {self.format_time(found['intro_ms'])}")
         if found.get("outro_ms"):

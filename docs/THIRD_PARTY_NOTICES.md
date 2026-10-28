@@ -8,6 +8,7 @@ El programa usa y/o descarga los siguientes componentes. Cada uno mantiene su pr
 | [yt-dlp](https://github.com/yt-dlp/yt-dlp) | Buscar y descargar audio | Unlicense | Incluido; se actualiza solo desde su web oficial (con SHA-256) |
 | [mutagen](https://github.com/quodlibet/mutagen) | Etiquetas de los archivos | GPL v2+ | Incluido |
 | [requests](https://github.com/psf/requests) | Peticiones web | Apache 2.0 | Incluido |
+| [NumPy](https://numpy.org/) | Análisis de audio del modo DJ (tono de las canciones) | BSD 3-Clause | Incluido |
 | [FFmpeg](https://ffmpeg.org/) (builds de [BtbN](https://github.com/BtbN/FFmpeg-Builds)) | Convertir audio | GPL v3 | **No se incluye**: se descarga la primera vez (con SHA-256) |
 | [whisper.cpp](https://github.com/ggml-org/whisper.cpp) y modelo `ggml-base` de OpenAI Whisper | Generar y sincronizar letras sin internet | MIT | **No se incluye**: se descarga si el usuario lo acepta (con SHA-256) |
 | [Poppins](https://fonts.google.com/specimen/Poppins) | Tipografía | SIL Open Font License 1.1 | Incluido |

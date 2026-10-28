@@ -149,6 +149,20 @@ dj_service.clear_bpm_override(nxt_path)
 w.dj_bpm(nxt_path, "auto")
 check("«auto» sin corrección no da error", dj_service.get_bpm_override(nxt_path) is None)
 
+# El tono (rueda Camelot) junto al BPM
+ejemplo = os.path.join(root, "ejemplo_tono.mp3")
+base_analisis = {"bpm": 128.0, "confidence": 2.0, "energy": 0.5, "intro_ms": 12000, "outro_ms": 20000, "duration_ms": 200000}
+w._dj_analysis[ejemplo] = dict(base_analisis, tone="8A", tone_conf=0.8)
+check("se enseña el tono junto al BPM", w.dj_describe({"local_path": ejemplo}) == "128 BPM · 8A · intro 00:12 · final 00:20")
+w._dj_analysis[ejemplo] = dict(base_analisis, tone="8A", tone_conf=0.3)
+check("un tono dudoso lleva «?»", "· 8A? ·" in w.dj_describe({"local_path": ejemplo}))
+w._dj_analysis[ejemplo] = dict(base_analisis, tone="11B", tone_conf=1.0)
+check("un tono de la etiqueta del archivo (confianza 1,0) no lleva «?»", "· 11B ·" in w.dj_describe({"local_path": ejemplo}))
+for sin_tono in ("", None):
+    w._dj_analysis[ejemplo] = dict(base_analisis, tone=sin_tono, tone_conf=0.0)
+    check(f"sin tono ({sin_tono!r}) no se escribe nada de tono", w.dj_describe({"local_path": ejemplo}) == "128 BPM · intro 00:12 · final 00:20")
+del w._dj_analysis[ejemplo]
+
 # Detalles de las correcciones
 check("el valor que se enseña al editar conserva el decimal", w._bpm_text(92.5) == "92.5" and w._bpm_text(95.0) == "95"
       and w._bpm_text(None) == "")

@@ -49,7 +49,9 @@ CREATE TABLE IF NOT EXISTS analysis (
     energy REAL DEFAULT 0,
     intro_ms INTEGER DEFAULT 0,
     outro_ms INTEGER DEFAULT 0,
-    duration_ms INTEGER DEFAULT 0
+    duration_ms INTEGER DEFAULT 0,
+    tone TEXT,
+    tone_conf REAL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_tracks_artist ON tracks(artist);
 CREATE INDEX IF NOT EXISTS idx_tracks_album ON tracks(album);
@@ -65,6 +67,12 @@ def _migrate(con) -> None:
     """Crea las tablas (la primera vez en cada ejecución) y aplica los cambios de versiones anteriores."""
     current = con.execute("PRAGMA user_version").fetchone()[0]
     con.executescript(SCHEMA)
+    # Columnas añadidas después de crear la tabla (las bases nuevas ya las traen): se comprueba si faltan, sin depender de
+    # la versión, así es seguro repetirlo.
+    analysis_cols = {row[1] for row in con.execute("PRAGMA table_info(analysis)")}
+    for name, definition in (("tone", "TEXT"), ("tone_conf", "REAL DEFAULT 0")):
+        if name not in analysis_cols:
+            con.execute(f"ALTER TABLE analysis ADD COLUMN {name} {definition}")
     # (aquí irán los pasos «si current < 2: ALTER TABLE ...» cuando alguna tabla cambie)
     if current < SCHEMA_VERSION:
         con.execute(f"PRAGMA user_version={SCHEMA_VERSION}")

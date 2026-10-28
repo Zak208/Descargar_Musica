@@ -184,6 +184,9 @@ else:
           and abs(found["bpm"] - 120) / 120 < 0.03)
     check(f"audio de verdad: intro de unos 8 s (da {found and found['intro_ms']} ms)",
           found is not None and 6000 <= found["intro_ms"] <= 11000)
+    from services import key_detect
+    check("el análisis completo trae el tono (los golpes secos no tienen armonía: «» o un tono dudoso)",
+          found is not None and (found["tone"] is not None if key_detect.available() else True))
     check("avisa del progreso (0 de 1 y 1 de 1)", steps == [(0, 1), (1, 1)])
     check("un archivo que no existe no se cuenta ni da error", len(got) == 1)
 

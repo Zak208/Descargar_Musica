@@ -421,6 +421,7 @@ python pruebas/prueba_letra_cambio.py  # la letra del panel se ve al cambiar de 
 - Reconocimiento de voz opcional: [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (MIT) y modelos de Whisper (MIT).
 - Control multimedia de Windows: [pywinrt](https://github.com/pywinrt/pywinrt) (MIT).
 - Etiquetas de audio: [mutagen](https://github.com/quodlibet/mutagen) (GPL).
+- Análisis de audio del modo DJ: [NumPy](https://numpy.org/) (BSD).
 - Tipografía: [Poppins](https://fonts.google.com/specimen/Poppins) (SIL Open Font License, incluida en `assets/fonts/OFL.txt`).
 - Datos: iTunes Search API, Deezer API, [LRCLIB](https://lrclib.net/) y lyrics.ovh.
 

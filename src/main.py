@@ -123,11 +123,26 @@ def selftest() -> int:
         import importlib
         for name in ("ui.nowplaying_full", "ui.calibrate", "ui.keep_change", "ui.celebrate", "ui.winext", "ui.emptystate",
                      "ui.continue_card", "ui.focusring", "ui.tooltips", "services.envelope", "services.app_updater", "services.word_timing", "ui.single_instance",
-                     "services.tempo", "ui.panel_grip"):
+                     "services.tempo", "ui.panel_grip", "ui.dj_mixin", "ui.dj_page", "services.dj_service",
+                     "services.track_analysis"):
             importlib.import_module(name)
         check("módulos de las animaciones y de la pantalla completa", True)
     except Exception as e:
         check(f"módulos de las animaciones: {e}", False)
+    try:                       # el tono del modo DJ usa numpy: se comprueba que viaja bien dentro del .exe
+        import numpy as np
+        from services import camelot, key_detect
+        seconds = np.arange(key_detect.SAMPLE_RATE * 8) / key_detect.SAMPLE_RATE
+
+        def chord(root):          # acorde mayor con armónicos y bajo; root es la nota MIDI (48 = do)
+            tones = sum(np.sin(2 * np.pi * 440.0 * 2 ** ((root + i - 69) / 12) * k * seconds) / k for i in (0, 4, 7) for k in (1, 2, 3))
+            return tones + np.sin(2 * np.pi * 440.0 * 2 ** ((root - 12 - 69) / 12) * seconds)
+
+        audio = np.concatenate([chord(root) for root in (48, 53, 55, 48)])          # do - fa - sol - do
+        found = key_detect.detect_from_samples((audio / np.abs(audio).max() * 0.5).astype("float32"))
+        check(f"tono con numpy (do - fa - sol - do, da «{found['tone']}»)", bool(found["tone"]) and camelot.compatible(found["tone"], "8B"))
+    except Exception as e:
+        check(f"tono con numpy: {e}", False)
     from services.ffmpeg_service import FFmpegService
     if os.environ.get("SELFTEST_SIN_FFMPEG"):      # la compilación automática no incluye FFmpeg (se descarga al usarlo)
         check("ffmpeg: se descarga al primer uso", True)

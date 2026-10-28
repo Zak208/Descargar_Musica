@@ -69,10 +69,29 @@ grande del proyecto.
 - **Puerta**: ninguna canción de tu carpeta con BPM claramente mal. Prueba `pruebas/prueba_dj_pagina.py` y
   `pruebas/prueba_analisis.py` en verde.
 
-### Fase 6 · Tonalidad (8 a 14 h)
-- Detectar la tonalidad y pasarla a la rueda Camelot (8A, 9B...).
-- Nueva dependencia (essentia o librosa). Ver «Empaquetado» más abajo: puede pesar mucho.
-- **Puerta**: la tonalidad coincide con la de una web de referencia en al menos 70 de 100. En música urbana falla más.
+### Fase 6 · Tonalidad ✅ hecho (pendiente de que la compruebes)
+- El tono sale en notación Camelot (`8A` = la menor, `8B` = do mayor...) junto al BPM en la página DJ: «128 BPM · 8A · intro
+  0:12 · final 0:20». Con «?» si no está claro (confianza menor de 0,55).
+- Cómo se calcula (`services/key_detect.py`, una vez por canción, en segundo plano): FFmpeg decodifica el audio, numpy saca
+  las notas que suenan (transformada de Fourier, afinación corregida) y se comparan con los 24 perfiles de tonalidad de
+  Krumhansl y Kessler. Unos 0,3 s por canción.
+- Si el archivo trae el tono en sus etiquetas (ID3 `TKEY`, `initialkey` de FLAC o MP4: Mixed In Key y las tiendas lo
+  escriben), se usa ese sin calcular nada.
+- `services/camelot.py`: la rueda, nombres musicales, lectura de tonos escritos de otras formas («F#m», «Bb», «C major») y
+  `score(a, b)` (1,0 igual; 0,8 relativo o un paso por la rueda; 0,5 diagonal o dos pasos; 0,0 chocan) para el orden
+  inteligente de la fase 7.
+- **Nueva dependencia: numpy** (BSD). Medido compilando el `.exe`: añade 27 MB sin comprimir (6 MB de numpy y 20 MB de la
+  librería de cálculo que lleva dentro), y el `.exe` compilado calcula el tono bien (autocomprobación). Sin numpy el
+  programa funciona igual, sin tono. Ojo: una compilación local mete también el `ffmpeg.exe` de tu carpeta `bin`
+  (138 MB; es cosa del `spec`, no de numpy); la compilación automática de GitHub no lo incluye.
+- Lo que está comprobado: los 24 tonos con audio sintético (también desafinado 35 centésimas y con ruido), y en tus 22
+  canciones, subir o bajar de tono con FFmpeg mueve el tono detectado lo que debe en el 91 % de los casos.
+- **Lo que NO está comprobado: el acierto real.** No hay tonos de referencia en tus archivos. Puerta: compara en la
+  página DJ unas 20 o 30 canciones con una web de tonos (Tunebat, Mixed In Key...) y cuenta cuántas coinciden (basta con
+  70 de 100; ojo, mayor frente a su relativo menor, por ejemplo `8B` y `8A`, mezclan igual de bien).
+- Limitaciones: música sin armonía clara (solo ritmo o bajo) da un tono poco fiable; el modo (mayor o menor) cambia a
+  veces según el tramo analizado; la energía sigue sin medirse en absoluto (pendiente antes de la fase 7).
+- Posible mejora si el acierto no llega: corregir el tono a mano (como el BPM) y probar otros perfiles de tonalidad.
 
 ### Fase 7 · Orden inteligente (10 a 16 h)
 - La siguiente canción se elige por compatibilidad: BPM cercano, tonalidad compatible, energía y género.

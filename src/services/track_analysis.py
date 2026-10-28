@@ -1,18 +1,20 @@
-"""Análisis de cada canción para el modo DJ: tempo (y lo fiable que es), energía, cuánto dura la intro y cuánto el final.
+"""Análisis de cada canción para el modo DJ: tempo (y lo fiable que es), energía, cuánto dura la intro y cuánto el final,
+y el tono (rueda Camelot, ver `key_detect`).
 
-Sale de la envolvente que ya se guarda para el visualizador (graves, medios y agudos cada 0,1 s), así que no se vuelve a
-escuchar el audio si la canción ya sonó alguna vez. Se calcula una vez por canción, en segundo plano, y se guarda en el
-índice de tu música; solo se repite si el archivo cambia (o si sube VERSION)."""
+El tempo, la energía, la intro y el final salen de la envolvente que ya se guarda para el visualizador (graves, medios y
+agudos cada 0,1 s), así que no se vuelve a escuchar el audio si la canción ya sonó alguna vez; el tono sí necesita
+decodificar la canción. Se calcula una vez por canción, en segundo plano, y se guarda en el índice de tu música; solo se
+repite si el archivo cambia (o si sube VERSION)."""
 import logging
 import os
 
 from PySide6.QtCore import QThread, Signal
 
-from services import envelope, library_db, tempo
+from services import envelope, key_detect, library_db, tempo
 
 logger = logging.getLogger(__name__)
 
-VERSION = 2                     # 2: el tempo se lleva a la ventana de su género (tempo.fold_for_genre)
+VERSION = 2                     # súbela si cambia el cálculo del tempo, la intro o el final (el tono pendiente se reintenta solo)
 SMOOTH_FRAMES = 20              # 2 s: la energía se suaviza para que un golpe suelto no cuente como «empieza la canción»
 BODY_SHARE = 0.6                # la intro termina cuando la energía llega al 60 % de la del cuerpo de la canción
 PAUSE_MS = 150                  # respiro entre canción y canción para las demás tareas pesadas
@@ -35,7 +37,8 @@ def _smoothed_energy(data: bytes) -> list:
 def analyze_envelope(data: bytes, genre: str = "") -> dict:
     """{bpm (o None), confidence, energy (0..1), intro_ms, outro_ms, duration_ms} a partir de la envolvente. Con el
     género de la canción, el tempo se lleva a la ventana habitual de ese género."""
-    result = {"bpm": None, "confidence": 0.0, "energy": 0.0, "intro_ms": 0, "outro_ms": 0, "duration_ms": 0}
+    result = {"bpm": None, "confidence": 0.0, "energy": 0.0, "intro_ms": 0, "outro_ms": 0, "duration_ms": 0,
+              "tone": None, "tone_conf": 0.0}               # tone None = todavía no se ha intentado sacar el tono
     if not data:
         return result
     energy = _smoothed_energy(data)
@@ -60,14 +63,20 @@ def analyze_envelope(data: bytes, genre: str = "") -> dict:
     return result
 
 
-def stored(path: str, mtime: float = None):
-    """Análisis ya guardado (si el archivo no cambió), o None."""
+FIELDS = ("bpm", "confidence", "energy", "intro_ms", "outro_ms", "duration_ms", "tone", "tone_conf")
+
+
+def stored(path: str, mtime: float = None, need_tone: bool = False):
+    """Análisis ya guardado (si el archivo no cambió), o None. Con `need_tone`, un análisis al que le falta el tono (se
+    guardó cuando no se podía calcular: sin numpy o sin FFmpeg) se da por no hecho, para volver a intentarlo."""
     try:
         mtime = os.path.getmtime(path) if mtime is None else mtime
         with library_db.connect() as con:
             row = con.execute("SELECT * FROM analysis WHERE path=?", (path,)).fetchone()
         if row and abs(row["mtime"] - mtime) < 1 and row["version"] == VERSION:
-            return {k: row[k] for k in ("bpm", "confidence", "energy", "intro_ms", "outro_ms", "duration_ms")}
+            if need_tone and row["tone"] is None:
+                return None
+            return {k: row[k] for k in FIELDS}
     except Exception:
         pass
     return None
@@ -76,13 +85,14 @@ def stored(path: str, mtime: float = None):
 def save(path: str, result: dict) -> None:
     try:
         with library_db.connect() as con:
-            con.execute("INSERT INTO analysis(path, mtime, version, bpm, confidence, energy, intro_ms, outro_ms, duration_ms) "
-                        "VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(path) DO UPDATE SET mtime=excluded.mtime, "
+            con.execute("INSERT INTO analysis(path, mtime, version, bpm, confidence, energy, intro_ms, outro_ms, duration_ms, "
+                        "tone, tone_conf) VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(path) DO UPDATE SET mtime=excluded.mtime, "
                         "version=excluded.version, bpm=excluded.bpm, confidence=excluded.confidence, "
                         "energy=excluded.energy, intro_ms=excluded.intro_ms, outro_ms=excluded.outro_ms, "
-                        "duration_ms=excluded.duration_ms",
+                        "duration_ms=excluded.duration_ms, tone=excluded.tone, tone_conf=excluded.tone_conf",
                         (path, os.path.getmtime(path), VERSION, result["bpm"], result["confidence"], result["energy"],
-                         result["intro_ms"], result["outro_ms"], result["duration_ms"]))
+                         result["intro_ms"], result["outro_ms"], result["duration_ms"], result.get("tone"),
+                         result.get("tone_conf", 0.0)))
     except Exception as e:
         logger.warning(f"No se pudo guardar el análisis: {e}")
 
@@ -101,6 +111,9 @@ def analyze(path: str):
         return None                           # no se pudo leer (archivo a medias, error de FFmpeg...): se reintentará
     from services.library_service import read_basic_tags
     result = analyze_envelope(data, read_basic_tags(path).get("genre", ""))
+    found = key_detect.detect(path)
+    if found is not None:                     # None = no se pudo intentar: queda sin tono y se reintenta más adelante
+        result.update(found)
     save(path, result)
     return result
 
@@ -123,10 +136,11 @@ class AnalysisWorker(QThread):
         from services.heavy import heavy_task
         self.setPriority(QThread.LowPriority)
         pending = []
+        need_tone = key_detect.available()
         for path in self.paths:
             if self.isInterruptionRequested():
                 return
-            known = stored(path) if os.path.isfile(path) else None
+            known = stored(path, need_tone=need_tone) if os.path.isfile(path) else None
             if known is not None:
                 self.result.emit(path, known)
             elif os.path.isfile(path):
