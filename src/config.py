@@ -180,6 +180,24 @@ def save_settings(settings: dict):
             logging.getLogger(__name__).error(f"Error guardando settings: {e}")
 
 
+def get_setting(name: str, default=None):
+    """Un ajuste suelto (o `default` si no existe)."""
+    return load_settings().get(name, default)
+
+
+def update_settings(**values) -> None:
+    """Cambia varios ajustes de una vez (lee, mezcla y guarda sin que otro hilo se cuele en medio)."""
+    with _io_lock:
+        settings = load_settings()
+        settings.update(values)
+        save_settings(settings)
+
+
+def set_setting(name: str, value) -> None:
+    """Guarda un ajuste suelto."""
+    update_settings(**{name: value})
+
+
 def get_download_dir() -> Path:
     """Obtiene el directorio de descargas configurado o el predeterminado."""
     settings = load_settings()

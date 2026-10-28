@@ -1,5 +1,6 @@
 import logging
 from services import http
+from services.timefmt import format_duration
 from PySide6.QtCore import QThread, Signal
 
 logger = logging.getLogger(__name__)
@@ -123,15 +124,13 @@ class CatalogSearchWorker(QThread):
                         seen_track_keys.add(track_key)
 
                         duration_s = item.get('trackTimeMillis', 0) // 1000
-                        mins = duration_s // 60
-                        secs = duration_s % 60
                         artwork = item.get('artworkUrl100', '').replace('100x100bb', '600x600bb')
                         results["tracks"].append({
                             "title": t_name or 'Sin título',
                             "uploader": art_name or 'Artista Desconocido',
                             "album": item.get('collectionName', ''),
                             "duration_secs": duration_s,
-                            "duration_str": f"{mins}:{secs:02d}",
+                            "duration_str": format_duration(duration_s, blank_zero=False),
                             "thumbnail": artwork,
                             "url": f"ytsearch1:{art_name} {t_name}",
                             "id": str(item.get('trackId', ''))
@@ -214,15 +213,13 @@ class ArtistDetailsWorker(QThread):
                             seen_song_names.add(s_name.lower())
 
                             duration_s = item.get('trackTimeMillis', 0) // 1000
-                            mins = duration_s // 60
-                            secs = duration_s % 60
                             artwork = item.get('artworkUrl100', '').replace('100x100bb', '600x600bb')
                             top_tracks.append({
                                 "title": s_name,
                                 "uploader": item.get('artistName', self.artist_name),
                                 "album": item.get('collectionName', ''),
                                 "duration_secs": duration_s,
-                                "duration_str": f"{mins}:{secs:02d}",
+                                "duration_str": format_duration(duration_s, blank_zero=False),
                                 "thumbnail": artwork,
                                 "url": f"ytsearch1:{self.artist_name} {s_name}",
                                 "id": str(item.get('trackId', ''))
@@ -311,8 +308,6 @@ class AlbumDetailsWorker(QThread):
             for item in results[1:]:
                 if item.get('wrapperType') == 'track':
                     duration_s = item.get('trackTimeMillis', 0) // 1000
-                    mins = duration_s // 60
-                    secs = duration_s % 60
                     track_no = item.get('trackNumber', len(tracks) + 1)
                     tracks.append({
                         "track_number": track_no,
@@ -320,7 +315,7 @@ class AlbumDetailsWorker(QThread):
                         "uploader": artist_name,
                         "album": album_name,
                         "duration_secs": duration_s,
-                        "duration_str": f"{mins}:{secs:02d}",
+                        "duration_str": format_duration(duration_s, blank_zero=False),
                         "thumbnail": artwork,
                         "url": f"ytsearch1:{artist_name} {item.get('trackName')}",
                         "id": str(item.get('trackId', ''))

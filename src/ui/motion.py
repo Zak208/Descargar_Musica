@@ -10,9 +10,7 @@ equipo va justo (ver `anim_clock`). Todas las duraciones salen de aquí, así ha
 import ctypes
 import sys
 
-from PySide6.QtCore import QEasingCurve
-
-from config import load_settings, save_settings
+from config import load_settings, set_setting
 
 NONE, SOFT, FULL = "none", "soft", "full"
 LEVELS = (NONE, SOFT, FULL)
@@ -22,12 +20,7 @@ LEVEL_NAMES = {NONE: "Ninguna", SOFT: "Suaves", FULL: "Completas"}
 DUR_TAP = 90
 DUR_FAST = 120
 DUR_BASE = 200
-DUR_SLOW = 320
 DUR_EXIT = 120
-
-EASE_IN = QEasingCurve.OutCubic          # lo que aparece
-EASE_OUT = QEasingCurve.InCubic          # lo que se va
-EASE_POP = QEasingCurve.OutBack          # solo para «latidos»
 
 _session_cap = None          # si el equipo va justo, el nivel baja hasta que se reinicie la aplicación
 _override = None
@@ -72,9 +65,7 @@ def set_level(value: str) -> None:
     global _session_cap
     if value not in LEVELS:
         return
-    settings = load_settings()
-    settings["motion"] = value
-    save_settings(settings)
+    set_setting("motion", value)
     _session_cap = None
 
 

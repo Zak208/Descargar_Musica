@@ -31,7 +31,8 @@ def tile_colors(kind: str) -> tuple:
     return TILE_COLORS.get(kind, TILE_COLORS["playlist"])
 
 
-def _rounded(pix: QPixmap, size: int, radius: int) -> QPixmap:
+def rounded_cover(pix: QPixmap, size: int, radius: int) -> QPixmap:
+    """Recorta al centro la imagen en formato cuadrado y le redondea las esquinas."""
     dpr = 2
     px = size * dpr
     scaled = pix.scaled(px, px, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
@@ -202,7 +203,7 @@ def list_cover_pixmap(kind: str, list_id, size: int = 48, radius: int = 8, label
         if path:
             img = QPixmap(path)
             if not img.isNull():
-                return _rounded(img, size, radius)
+                return rounded_cover(img, size, radius)
         mosaic = mosaic_cover(PlaylistService.get_playlists().get(list_id, {}).get("tracks", []), size, radius)
         if mosaic is not None:
             return mosaic

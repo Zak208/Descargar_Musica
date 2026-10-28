@@ -121,6 +121,7 @@ class DjMixin:
             self._dj_an_worker.cancel()
             return
         self._dj_an_restart = False
+        self._dj_an_progress = (0, 0)
         paths = dj_service.without_blocked(dj_service.tracks_for(self._dj_summary, self._dj_source()))
         worker = AnalysisWorker(paths, self)
         worker.result.connect(self._on_dj_analysis)
@@ -355,6 +356,7 @@ class DjMixin:
     def dj_unblock_all(self):
         dj_service.unblock_all()
         self.refresh_dj_page()
+        self._dj_start_analysis()          # las desbloqueadas también se analizan
         self.notify("Todas las canciones vuelven a poder sonar en el modo DJ.")
 
     def dj_queue_changed(self):
@@ -397,13 +399,16 @@ class DjMixin:
             return
         upcoming = self.upcoming_tracks(UPCOMING_SHOWN)
         page.set_session(True, self.current_item_info, self.peek_next(), upcoming, self._dj_remaining(), self.dj_describe)
-        self.dj_tick(self.player.position())
+        self.dj_tick()
 
-    def dj_tick(self, position_ms: int):
-        """Con cada avance de la canción: cuánto falta para que empiece la mezcla (solo si la página está a la vista)."""
+    def dj_tick(self, position_ms: int = None):
+        """Con cada avance de la canción: cuánto falta para que empiece la mezcla (solo si la página está a la vista).
+        Sin `position_ms` se lee del reproductor, pero solo cuando hace falta (no en cada cambio de estado)."""
         page = self.page_dj
         if page is None or not page.isVisible() or not self.dj_session_active():
             return
+        if position_ms is None:
+            position_ms = self.player.position()
         duration = self.player.duration()
         if getattr(self, "_xf_active", False):
             text = "Mezclando con la siguiente…"

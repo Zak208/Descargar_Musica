@@ -78,7 +78,6 @@ class LyricsBox(QFrame):
         self.set_color(QColor("#3D5A4A"))
         self._worker = None
         self._key = None
-        self._info_key = None
         self._lines = []      # [(ms, LyricLine)]
         self.data = None      # última letra mostrada (para poder editarla)
         lay = QVBoxLayout(self)

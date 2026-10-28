@@ -15,6 +15,25 @@ def _norm(text) -> str:
     return " ".join(str(text or "").strip().lower().split())
 
 
+def _new_item(track_info: dict, track_id: str, added_at: str) -> dict:
+    """La ficha que se guarda de una canción en favoritos o en una lista."""
+    item = {
+        "id": track_id or str(uuid.uuid4())[:8],
+        "title": track_info.get("title", "Canción"),
+        "uploader": track_info.get("uploader", "Artista Desconocido"),
+        "album": track_info.get("album", ""),
+        "duration_str": track_info.get("duration_str", "0:00"),
+        "duration_secs": track_info.get("duration_secs", 0),
+        "thumbnail": track_info.get("thumbnail", ""),
+        "url": track_info.get("url", f"ytsearch1:{track_info.get('uploader', '')} {track_info.get('title', '')}"),
+        "added_at": added_at,
+    }
+    if track_info.get("local_path"):
+        item["local_path"] = track_info["local_path"]
+        item["already_downloaded"] = True
+    return item
+
+
 class PlaylistService:
     # Caché en memoria de favoritos y listas: pasar el ratón por una fila consultaba estos archivos cada vez.
     # Se invalida sola si el archivo cambia (fecha y tamaño) o al guardar.
@@ -95,21 +114,7 @@ class PlaylistService:
             cls._save_json(FAVORITES_FILE, favs)
             return False
         else:
-            item = {
-                "id": track_id or str(uuid.uuid4())[:8],
-                "title": track_info.get("title", "Canción"),
-                "uploader": track_info.get("uploader", "Artista Desconocido"),
-                "album": track_info.get("album", ""),
-                "duration_str": track_info.get("duration_str", "0:00"),
-                "duration_secs": track_info.get("duration_secs", 0),
-                "thumbnail": track_info.get("thumbnail", ""),
-                "url": track_info.get("url", f"ytsearch1:{track_info.get('uploader', '')} {track_info.get('title', '')}"),
-                "added_at": datetime.now().strftime("%d/%m/%Y %H:%M")
-            }
-            if track_info.get("local_path"):
-                item["local_path"] = track_info["local_path"]
-                item["already_downloaded"] = True
-            favs.insert(0, item)
+            favs.insert(0, _new_item(track_info, track_id, datetime.now().strftime("%d/%m/%Y %H:%M")))
             cls._save_json(FAVORITES_FILE, favs)
             return True
 
@@ -260,21 +265,7 @@ class PlaylistService:
             if cls._same(t, track_id, title, artist):
                 return False
 
-        item = {
-            "id": track_id or str(uuid.uuid4())[:8],
-            "title": track_info.get("title", "Canción"),
-            "uploader": track_info.get("uploader", "Artista Desconocido"),
-            "album": track_info.get("album", ""),
-            "duration_str": track_info.get("duration_str", "0:00"),
-            "duration_secs": track_info.get("duration_secs", 0),
-            "thumbnail": track_info.get("thumbnail", ""),
-            "url": track_info.get("url", f"ytsearch1:{track_info.get('uploader', '')} {track_info.get('title', '')}"),
-            "added_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        }
-        if track_info.get("local_path"):
-            item["local_path"] = track_info["local_path"]
-            item["already_downloaded"] = True
-        tracks.append(item)
+        tracks.append(_new_item(track_info, track_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
         cls._save_json(PLAYLISTS_FILE, playlists)
         return True
 

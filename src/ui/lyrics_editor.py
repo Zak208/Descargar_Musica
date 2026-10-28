@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QProgressBar
 )
 
-from services.lyrics_store import parse_text
+from services.lyrics_store import format_ms, parse_text
 from ui.overlay import InlineDialog
 
 _TIME = re.compile(r"^\[?\s*(?:(\d+):)?(\d+)(?:[.,](\d{1,3}))?\s*\]?$")
@@ -31,8 +31,7 @@ def parse_time(text: str):
 
 
 def fmt_time(ms: int) -> str:
-    total = max(0, ms) / 1000
-    return f"{int(total // 60):02d}:{total % 60:05.2f}"
+    return format_ms(ms)[1:-1]          # el mismo formato sin los corchetes
 
 
 class LyricsEditorDialog(InlineDialog):

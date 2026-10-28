@@ -8,6 +8,7 @@ from PySide6.QtCore import QThread, Signal
 from services.artist_names import first_artist
 from services.ffmpeg_service import FFmpegService
 from services.metadata_service import MetadataService
+from services.timefmt import format_duration
 from services.title_clean import has_junk
 from config import HISTORY_FILE, read_json, get_download_dir, get_audio_quality, get_organize_mode
 from services import quality as quality_service
@@ -258,9 +259,7 @@ class SearchWorker(QThread):
             thumbnail_url = thumbnails[-1].get('url', thumbnail_url)
 
         duration_secs = info.get('duration', 0) or 0
-        minutes = int(duration_secs // 60)
-        seconds = int(duration_secs % 60)
-        duration_str = f"{minutes}:{seconds:02d}"
+        duration_str = format_duration(duration_secs, blank_zero=False)
 
         raw_title = info.get('title', 'Sin título')
         raw_uploader = info.get('uploader') or info.get('channel') or 'Artista Desconocido'

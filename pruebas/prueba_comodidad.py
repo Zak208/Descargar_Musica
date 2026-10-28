@@ -117,11 +117,11 @@ check("favorita: deshacer la devuelve", PlaylistService.is_favorite(info["id"], 
 
 # ---- arrastrar y soltar
 mime = QMimeData()
-check("soltar: una canción arrastrada se reconoce", dragdrop.read_dropped_track(mime) is None)
+check("soltar: una canción arrastrada se reconoce", dragdrop.read_dropped_tracks(mime) == [])
 from PySide6.QtCore import QByteArray
 import json
 mime.setData(dragdrop.TRACK_MIME, QByteArray(json.dumps({"tracks": [{"id": "x", "title": "Tema"}], "source": None}).encode()))
-check("soltar: se lee la canción", dragdrop.read_dropped_track(mime) == {"id": "x", "title": "Tema"})
+check("soltar: se lee la canción", dragdrop.read_dropped_tracks(mime) == [{"id": "x", "title": "Tema"}])
 check("soltar en la ventana: una canción interna no se acepta como enlace", not dragdrop.can_accept_window_drop(mime))
 m2 = QMimeData()
 m2.setUrls([QUrl("https://www.youtube.com/watch?v=dQw4w9WgXcQ")])

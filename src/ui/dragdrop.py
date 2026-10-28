@@ -73,11 +73,6 @@ def read_dropped_tracks(mime) -> list:
     return data["tracks"] if data else []
 
 
-def read_dropped_track(mime) -> dict | None:
-    tracks = read_dropped_tracks(mime)
-    return tracks[0] if tracks else None
-
-
 def _dropped_links_and_files(mime) -> tuple:
     """(enlace de YouTube/Spotify o None, [archivos de audio])"""
     link = None

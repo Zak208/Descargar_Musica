@@ -126,7 +126,7 @@ class AlbumDetailsPage(QWidget):
 
         scroll.setWidget(content)
         main.addWidget(scroll, stretch=1)
-        self.back_top = BackToTop(scroll, self)
+        BackToTop(scroll, self)
 
     def start_loading(self):
         self.album_data = {}

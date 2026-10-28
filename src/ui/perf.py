@@ -5,7 +5,7 @@ import os
 import sys
 from ctypes import wintypes
 
-from config import load_settings, save_settings
+from config import load_settings, set_setting
 
 _eco = None
 _modest = None
@@ -22,9 +22,7 @@ def eco() -> bool:
 def set_eco(enabled: bool) -> None:
     global _eco
     _eco = bool(enabled)
-    settings = load_settings()
-    settings["eco_mode"] = _eco
-    save_settings(settings)
+    set_setting("eco_mode", _eco)
 
 
 def image_scale() -> int:
@@ -71,9 +69,7 @@ def visualizer_enabled() -> bool:
 
 
 def set_visualizer(enabled: bool) -> None:
-    settings = load_settings()
-    settings["visualizer"] = bool(enabled)
-    save_settings(settings)
+    set_setting("visualizer", bool(enabled))
 
 
 # ------------------------------------------------------------ batería

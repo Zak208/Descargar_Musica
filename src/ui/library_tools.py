@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
 
 from services import duplicates, recycle, tag_fixer
 from services.storage_service import format_bytes
+from services.timefmt import format_duration
 from ui.overlay import InlineDialog
 
 
@@ -97,8 +98,7 @@ class DuplicatesDialog(InlineDialog):
             lay.addWidget(name)
             for e in entries:
                 it = e["item"]
-                mins = int(e["duration"]) // 60
-                detail = f"{e['bitrate']} kbps · {format_bytes(e['size'])} · {mins}:{int(e['duration']) % 60:02d}"
+                detail = f"{e['bitrate']} kbps · {format_bytes(e['size'])} · {format_duration(e['duration'], blank_zero=False)}"
                 text = f"{os.path.basename(it['local_path'])}   ({detail})" + ("   ← la mejor" if e["keep"] else "")
                 chk = QCheckBox(text)
                 chk.setChecked(not e["keep"])

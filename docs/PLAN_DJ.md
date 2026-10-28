@@ -52,6 +52,9 @@ grande del proyecto.
   no se vuelve a escuchar el audio. Se analiza una vez en segundo plano y solo se repite si cambia el archivo.
 - La página DJ enseña «Analizando canciones: 34 de 100…» y el BPM, la intro y el final de cada canción.
 - El fundido aprovecha el BPM ya calculado.
+- Limitación conocida: la **energía** se calcula sobre una envolvente normalizada por canción, así que no sirve para
+  comparar canciones entre sí. Antes de la fase 7 (orden inteligente) hay que medirla en absoluto (por ejemplo con el
+  volumen LUFS que ya se calcula).
 - **Puerta**: el BPM es correcto en al menos 90 de 100 canciones (compruébalo con la página DJ con unas cuantas).
   Prueba `pruebas/prueba_analisis.py` en verde.
 

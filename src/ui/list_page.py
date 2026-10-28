@@ -502,7 +502,7 @@ class ListPage(QWidget):
 
         self.scroll.setWidget(content)
         main.addWidget(self.scroll, stretch=1)
-        self.back_top = BackToTop(self.scroll, self)
+        BackToTop(self.scroll, self)
         self.sticky = QFrame(self)
         self.sticky.setObjectName("StickyBar")
         self.sticky.setStyleSheet("QFrame#StickyBar { background-color: rgba(18, 18, 18, 235); border-radius: 12px; }")

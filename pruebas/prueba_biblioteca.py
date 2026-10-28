@@ -97,8 +97,7 @@ check("redescubre: solo lo que lleva tiempo sin sonar",
 library_db.register_play(items[0]["local_path"])
 library_db.register_play(items[0]["local_path"])
 library_db.register_play(items[1]["local_path"])
-check("estadísticas: se cuentan las reproducciones", library_db.play_stats()[items[0]["local_path"]][0] == 2
-      and library_db.top_played()[0] == items[0]["local_path"])
+check("estadísticas: se cuentan las reproducciones", library_db.play_stats()[items[0]["local_path"]][0] == 2)
 
 # ---- mover canciones de una playlist
 pid = PlaylistService.create_playlist("Orden")

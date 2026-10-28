@@ -12,6 +12,7 @@ from PySide6.QtCore import QObject, QThread, QTimer, Signal, QFileSystemWatcher
 
 from config import get_download_dir
 from services import library_db
+from services.timefmt import format_duration
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +83,7 @@ def build_item(path: str, mtime: float, tags: dict) -> dict:
         "year": int(tags.get("year") or 0),
         "track_no": int(tags.get("track_no") or 0),
         "duration_secs": secs,
-        "duration_str": f"{secs // 60}:{secs % 60:02d}" if secs else "",
+        "duration_str": format_duration(secs),
         "url": path,
         "local_path": path,
         "already_downloaded": True,

@@ -28,7 +28,7 @@ def build_home_page(self):
     self.page_intro.setWidgetResizable(True)
     self.page_intro.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
     polish_scroll_area(self.page_intro)
-    self.home_back_top = BackToTop(self.page_intro, self.page_intro)
+    BackToTop(self.page_intro, self.page_intro)
     content = QWidget()
     content.setObjectName("HomeContent")
     content.setStyleSheet("#HomeContent { background: transparent; }")

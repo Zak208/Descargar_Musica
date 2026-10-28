@@ -35,10 +35,8 @@ class ThemeMixin:
 
     def set_high_contrast(self, enabled: bool):
         """Alto contraste: textos y bordes más claros. Se aplica al instante."""
-        from config import load_settings, save_settings
-        settings = load_settings()
-        settings["high_contrast"] = bool(enabled)
-        save_settings(settings)
+        from config import set_setting
+        set_setting("high_contrast", bool(enabled))
         self._set_theme_filter(self.current_theme != "spotify" or enabled)
         self.setStyleSheet(get_theme_stylesheet(self.current_theme))
         for w in self.findChildren(QWidget):

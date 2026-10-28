@@ -131,7 +131,6 @@ class IdleHider:
     def __init__(self, window, controls, delay: int = 3000):
         from PySide6.QtCore import QObject, QTimer, QEvent
         from PySide6.QtWidgets import QApplication, QGraphicsOpacityEffect
-        self._QEvent = QEvent
         self._QApplication = QApplication
         self._Effect = QGraphicsOpacityEffect
         self.window = window

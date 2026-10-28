@@ -12,7 +12,7 @@ from urllib.parse import unquote
 
 from PySide6.QtCore import QThread, Signal
 
-from config import load_settings, save_settings
+from config import load_settings, save_settings, set_setting
 from services import http, network_service, ytdlp_loader
 from version import __version__
 
@@ -33,9 +33,7 @@ def due(setting_key: str, every: int = CHECK_EVERY) -> bool:
 
 
 def mark_checked(setting_key: str) -> None:
-    settings = load_settings()
-    settings[setting_key] = time.time()
-    save_settings(settings)
+    set_setting(setting_key, time.time())
 
 
 def tag_from_redirect(repo: str) -> str | None:

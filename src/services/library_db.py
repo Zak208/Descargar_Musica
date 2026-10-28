@@ -150,15 +150,6 @@ def play_stats() -> dict:
         return {}
 
 
-def top_played(limit: int = 30) -> list:
-    try:
-        with connect() as con:
-            return [r["path"] for r in con.execute(
-                "SELECT path FROM plays WHERE count>0 ORDER BY count DESC, last_ts DESC LIMIT ?", (limit,))]
-    except Exception:
-        return []
-
-
 def get_loudness(path: str, mtime: float):
     """Volumen (LUFS) ya medido de una canción, o None si no se midió o el archivo cambió."""
     try:

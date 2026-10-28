@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QProgressBar
 )
 
-from config import load_settings, save_settings
+from config import load_settings, set_setting
 
 from services import diagnostics_service, storage_service
 from ui.dialogs import ask_confirm
@@ -144,9 +144,7 @@ class HelpDialog(InlineDialog):
 
     @staticmethod
     def _save(name: str, value):
-        settings = load_settings()
-        settings[name] = bool(value)
-        save_settings(settings)
+        set_setting(name, bool(value))
 
     def refresh_updates(self):
         """Pone al día los textos de la parte de actualizaciones."""

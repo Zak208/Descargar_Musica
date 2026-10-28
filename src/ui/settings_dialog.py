@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
 )
 
 from config import (
-    get_download_dir, get_audio_quality, get_organize_mode, load_settings, save_settings
+    get_download_dir, get_audio_quality, get_organize_mode, load_settings, set_setting
 )
 from services import backup_service, m3u_service, quality, storage_service
 from ui.dialogs import ask_confirm, show_message
@@ -169,7 +169,6 @@ class SettingsDialog(InlineDialog):
         self._meter_timer = QTimer(self)
         self._meter_timer.setInterval(2000)
         self._meter_timer.timeout.connect(self._update_meter)
-        self.perf_extra_lay = perf_lay
         root.addWidget(perf_box)
 
         # --- Reproducción ---
@@ -359,7 +358,6 @@ class SettingsDialog(InlineDialog):
         self.chk_dynamic.setChecked(bool(load_settings().get("dynamic_accent", False)))
         self.chk_dynamic.toggled.connect(self._dynamic_toggled)
         look_lay.addWidget(self.chk_dynamic)
-        self.look_extra_lay = look_lay
         root.addWidget(look_box)
         root.addStretch(1)
 
@@ -446,21 +444,15 @@ class SettingsDialog(InlineDialog):
 
     @staticmethod
     def _save_value(name: str, value):
-        settings = load_settings()
-        settings[name] = value
-        save_settings(settings)
+        set_setting(name, value)
 
     @staticmethod
     def _save_flag(name: str, value: bool):
-        settings = load_settings()
-        settings[name] = bool(value)
-        save_settings(settings)
+        set_setting(name, bool(value))
 
     # ------------------------------------------------------------- tamaño
     def _scale_changed(self, _index: int):
-        settings = load_settings()
-        settings["ui_scale"] = float(self.scale_combo.currentData())
-        save_settings(settings)
+        set_setting("ui_scale", float(self.scale_combo.currentData()))
         self.btn_restart.setVisible(abs(self.scale_combo.currentData() - self._scale_at_start) > 0.01)
 
     # ------------------------------------------------------------- tema

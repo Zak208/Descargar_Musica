@@ -43,7 +43,7 @@ check("«Suaves»: hay transiciones, sin movimiento continuo", motion.enabled() 
 motion.force_level("full")
 check("«Completas»: también lo continuo", motion.full())
 motion.force_level(None)
-check("la duración de salir es menor que la de entrar", motion.DUR_EXIT < motion.DUR_BASE < motion.DUR_SLOW)
+check("la duración de salir es menor que la de entrar", motion.DUR_EXIT < motion.DUR_BASE)
 from ui.calibrate import level_for
 check("la prueba elige el nivel según lo que gasta", level_for(5) == "full" and level_for(25) == "soft" and level_for(80) == "none")
 

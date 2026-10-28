@@ -72,6 +72,12 @@ check(f"final de unos 10-20 s (da {res['outro_ms'] / 1000:.1f} s)", 8000 <= res[
 check("duración de 190 s", res["duration_ms"] == 190_000)
 check("energía entre 0 y 1", 0 < res["energy"] <= 1)
 
+# Bordes limpios: 20 s de silencio, 260 s de música, 20 s de silencio (el suavizado no debe retrasar la intro ni adelantar el final)
+edge = bytes(b for i in range(3000) for b in ((0, 0, 0) if i < 200 or i >= 2800 else (200, 200, 50)))
+er = track_analysis.analyze_envelope(edge)
+check(f"intro con bordes limpios: 20 s ±0,6 (da {er['intro_ms'] / 1000:.1f})", abs(er["intro_ms"] - 20000) <= 600)
+check(f"final con bordes limpios: 20 s ±0,6 (da {er['outro_ms'] / 1000:.1f})", abs(er["outro_ms"] - 20000) <= 600)
+
 flat = track_analysis.analyze_envelope(bytes(random.randint(0, 255) for _ in range(3 * 1800)))
 check("ruido sin pulso: sin tempo y con poca confianza", flat["bpm"] is None and flat["confidence"] < tempo.MIN_CONFIDENCE)
 check("sin envolvente no se inventa nada", track_analysis.analyze_envelope(b"")["bpm"] is None
@@ -89,6 +95,19 @@ track_analysis.save(dummy, res)
 check("lo guardado se lee igual", track_analysis.stored(dummy) == {k: res[k] for k in track_analysis.stored(dummy)})
 os.utime(dummy, (time.time() + 100, time.time() + 100))
 check("si el archivo cambia, se vuelve a analizar", track_analysis.stored(dummy) is None)
+
+# Un fallo al leer el audio no se guarda para siempre: se reintenta
+from services import envelope
+good_path = os.path.join(folder, "falla.mp3")
+with open(good_path, "wb") as fh:
+    fh.write(b"x")
+real_compute, real_path = envelope.compute, FFmpegService.get_ffmpeg_path
+FFmpegService.get_ffmpeg_path = staticmethod(lambda: "ffmpeg")
+envelope.compute = lambda path, timeout=240: None
+check("si FFmpeg no consigue leer la canción, no hay análisis", track_analysis.analyze(good_path) is None)
+check("y no se guarda nada (se reintentará)", track_analysis.stored(good_path) is None)
+envelope.compute = real_compute
+FFmpegService.get_ffmpeg_path = real_path
 
 tempo.learn("x.mp3", 128.0)
 tempo.learn("x.mp3", 90.0)

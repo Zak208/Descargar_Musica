@@ -496,8 +496,6 @@ class GlowCover(QWidget):
 class TabStrip(QWidget):
     """Pestañas (Todas / Descargadas / Sin descargar): la píldora blanca se desliza de una a otra. Los botones son
     QPushButton comprobables (`buttons[clave]`), así que el resto del código los usa igual que antes."""
-    HEIGHT = 34
-
     def __init__(self, options, parent=None):
         super().__init__(parent)
         from PySide6.QtWidgets import QHBoxLayout

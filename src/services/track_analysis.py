@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 VERSION = 1
 SMOOTH_FRAMES = 20              # 2 s: la energía se suaviza para que un golpe suelto no cuente como «empieza la canción»
 BODY_SHARE = 0.6                # la intro termina cuando la energía llega al 60 % de la del cuerpo de la canción
+PAUSE_MS = 150                  # respiro entre canción y canción para las demás tareas pesadas
 MAX_INTRO_SHARE = 0.5           # una intro o un final de más de la mitad de la canción no son creíbles: se da 0
 
 
@@ -46,8 +47,10 @@ def analyze_envelope(data: bytes) -> dict:
     if body <= 0:
         return result
     threshold = body * BODY_SHARE
-    first = next((i for i, v in enumerate(energy) if v >= threshold), 0)
-    last = next((i for i in range(n - 1, -1, -1) if energy[i] >= threshold), n - 1)
+    # la media de los últimos 2 s va retrasada medio intervalo: se corrige para que intro y final caigan en su sitio
+    lag = SMOOTH_FRAMES // 2
+    first = max(0, next((i for i, v in enumerate(energy) if v >= threshold), 0) - lag)
+    last = max(first, next((i for i in range(n - 1, -1, -1) if energy[i] >= threshold), n - 1) - lag)
     if first <= n * MAX_INTRO_SHARE:
         result["intro_ms"] = first * envelope.STEP_MS
     if n - 1 - last <= n * MAX_INTRO_SHARE:
@@ -83,7 +86,7 @@ def save(path: str, result: dict) -> None:
 
 
 def analyze(path: str):
-    """Analiza una canción (usando la envolvente guardada si existe) y guarda el resultado. None si falta FFmpeg."""
+    """Analiza una canción (usando la envolvente guardada si existe) y guarda el resultado. None si no se pudo."""
     from services.ffmpeg_service import FFmpegService
     data = envelope.stored(path)
     if data is None:
@@ -92,7 +95,9 @@ def analyze(path: str):
         data = envelope.compute(path)
         if data:
             envelope.save(path, data)
-    result = analyze_envelope(data)           # si no se pudo leer, se guarda vacío para no insistir con ese archivo
+    if not data:
+        return None                           # no se pudo leer (archivo a medias, error de FFmpeg...): se reintentará
+    result = analyze_envelope(data)
     save(path, result)
     return result
 
@@ -133,3 +138,4 @@ class AnalysisWorker(QThread):
             if found is not None:
                 self.result.emit(path, found)
             self.progress.emit(done, total)
+            self.msleep(PAUSE_MS)              # cede el turno: si no, el visualizador o el tempo del fundido esperarían horas

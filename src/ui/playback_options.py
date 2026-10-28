@@ -9,7 +9,7 @@ from PySide6.QtGui import QAction, QActionGroup
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-from config import load_settings, save_settings
+from config import get_setting, set_setting
 from services import envelope, library_db, loudness_service, tempo
 from services.smtc_service import MediaControls
 from ui.icons import icon
@@ -67,23 +67,13 @@ class ActivePlayer:
         return self._w.player.playbackState()
 
 
-def _setting(name, default):
-    return load_settings().get(name, default)
-
-
-def _store(name, value):
-    settings = load_settings()
-    settings[name] = value
-    save_settings(settings)
-
-
 class PlaybackOptionsMixin:
     """Mezcla para MainWindow. Requiere: player, audio_output, volume_slider, btn_options, player_thumb, tray_icon,
     current_item_info, notify(), play_next(), play_previous(), toggle_play_pause()."""
 
     def init_playback_options(self):
-        self._fade_ms = int(_setting("fade_seconds", 0)) * 1000
-        self._normalize = bool(_setting("normalize_volume", True))
+        self._fade_ms = int(get_setting("fade_seconds", 0)) * 1000
+        self._normalize = bool(get_setting("normalize_volume", True))
         self._volume_master = 1.0
         self._fade_factor = 1.0
         self._gain_factor = 1.0
@@ -434,7 +424,7 @@ class PlaybackOptionsMixin:
 
     def set_normalize(self, enabled: bool):
         self._normalize = bool(enabled)
-        _store("normalize_volume", self._normalize)
+        set_setting("normalize_volume", self._normalize)
         if not enabled:
             self._gain_factor = 1.0
             self._apply_volume()
@@ -556,7 +546,7 @@ class PlaybackOptionsMixin:
 
     def set_fade_seconds(self, seconds: int):
         self._fade_ms = int(seconds) * 1000
-        _store("fade_seconds", int(seconds))
+        set_setting("fade_seconds", int(seconds))
 
     # ------------------------------------------------------------- menú
     def _refresh_options_icon(self):
@@ -725,14 +715,14 @@ class PlaybackOptionsMixin:
         QApplication.quit()
 
     def should_close_to_tray(self) -> bool:
-        return bool(_setting("close_to_tray", False)) and not self._quitting and self.tray_icon.isVisible() \
+        return bool(get_setting("close_to_tray", False)) and not self._quitting and self.tray_icon.isVisible() \
             and QSystemTrayIcon.isSystemTrayAvailable()
 
     def hide_to_tray(self):
         self.hide()
         self._set_background(True)
-        if not _setting("tray_hint_shown", False):
-            _store("tray_hint_shown", True)
+        if not get_setting("tray_hint_shown", False):
+            set_setting("tray_hint_shown", True)
             self.tray_icon.showMessage("Sigue sonando", "La aplicación sigue en la bandeja del sistema. "
                                        "Pulsa su icono para abrirla o elige «Salir» para cerrarla.",
                                        QSystemTrayIcon.Information, 6000)

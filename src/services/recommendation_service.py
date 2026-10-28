@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 import requests
 from services.artist_names import first_artist
 from services import http
+from services.timefmt import format_duration
 from PySide6.QtCore import QThread, Signal
 
 from config import RECOMMENDATIONS_FILE, atomic_write_json, read_json
@@ -60,7 +61,7 @@ def _track(item: dict) -> dict | None:
             "uploader": artist,
             "album": album.get("title", ""),
             "duration_secs": secs,
-            "duration_str": f"{secs // 60}:{secs % 60:02d}",
+            "duration_str": format_duration(secs, blank_zero=False),
             "thumbnail": album.get("cover_big") or album.get("cover_medium") or "",
             "url": f"ytsearch1:{artist} {title}",
             "id": f"dz{item['id']}",

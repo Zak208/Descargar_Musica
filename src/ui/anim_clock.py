@@ -7,7 +7,6 @@ import time
 
 from PySide6.QtCore import QObject, QTimer, Qt, Signal
 
-BASE_MS = 33                    # 30 fotogramas por segundo como máximo
 STEPS = (33, 66, 100)           # si el equipo va justo: 30 → 15 → 10 por segundo
 
 

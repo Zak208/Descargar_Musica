@@ -17,7 +17,6 @@ class _Ring(QWidget):
         super().__init__(host)
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.setAttribute(Qt.WA_NoSystemBackground)
-        self.rect_now = QRect()
         self.hide()
 
     def paintEvent(self, _event):

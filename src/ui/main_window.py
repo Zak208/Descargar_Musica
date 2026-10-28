@@ -24,6 +24,7 @@ from services.catalog_service import (
     ArtistDetailsWorker, AlbumDetailsWorker
 )
 from services.ffmpeg_service import FFmpegService
+from services.dj_service import DJ_EXTS
 from services.library_service import local_id
 from services.metadata_service import MetadataService
 from services.playlist_service import PlaylistService
@@ -1146,7 +1147,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         Con autoplay=False solo lo deja cargado y en pausa (en el punto start_ms)."""
         if not path or not os.path.isfile(path):
             return
-        if not path.lower().endswith(('.mp3', '.m4a', '.wav', '.flac', '.ogg', '.wma', '.mp4')):   # .mp4: modo DJ
+        if not path.lower().endswith(DJ_EXTS):      # incluye .mp4 (modo DJ)
             return
 
         self._remember_current({'local_path': path})
@@ -1447,7 +1448,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
     def handle_playback_state(self, state):
         self.update_system_status(state == QMediaPlayer.PlayingState)
         self.playing_changed.emit(state == QMediaPlayer.PlayingState)
-        self.dj_tick(self.player.position())          # «En pausa» o la cuenta atrás de la mezcla
+        self.dj_tick()                                # «En pausa» o la cuenta atrás de la mezcla
         if state == QMediaPlayer.PlayingState:
             self._resume_pending = False
             if not getattr(self, "_panel_first_play_done", False):

@@ -258,7 +258,7 @@ src/                       TODO el código de la aplicación
     main.py                  punto de entrada (y --selftest)
     config.py                rutas, ajustes y lectura/escritura segura de JSON
     version.py               número de versión y versión de yt-dlp incluida
-    assets/                  iconos SVG, logo, icono de la aplicación y tipografía Poppins
+    assets/                  iconos SVG, icono de la aplicación y tipografía Poppins
 empaquetado/               crear el .exe y el instalador
     Descargar_Musica.spec    configuración de PyInstaller
     Descargador.iss          asistente de instalación (Inno Setup) · imagen_*.bmp sus imágenes

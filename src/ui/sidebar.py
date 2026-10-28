@@ -184,7 +184,6 @@ def build_sidebar(self):
         self.library_chips[key] = chip
     chips.addStretch()
     lib_lay.addLayout(chips)
-    self._chips_layout = chips
 
     scroll = QScrollArea()
     scroll.setWidgetResizable(True)
@@ -241,12 +240,10 @@ class SidebarMixin:
         self.set_sidebar_compact(not self._sidebar_compact)
 
     def set_sidebar_compact(self, compact: bool, animate: bool = True):
-        from config import load_settings, save_settings
+        from config import set_setting
         from ui import motion
         self._sidebar_compact = compact
-        settings = load_settings()
-        settings["sidebar_compact"] = compact
-        save_settings(settings)
+        set_setting("sidebar_compact", compact)
         target = SIDEBAR_COMPACT_WIDTH if compact else SIDEBAR_WIDTH
         self._sidebar_anim.stop()
         if compact:

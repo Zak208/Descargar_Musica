@@ -148,7 +148,7 @@ class Toast(QFrame):
         clone._effect.setOpacity(1.0)
         clone.show()
         clone.raise_()
-        clone._start_countdown(1800, clone_mode=True)
+        clone._start_countdown(1800)
         self._clones.insert(0, clone)
         while len(self._clones) > MAX_STACK - 1:
             old = self._clones.pop()
@@ -197,7 +197,7 @@ class Toast(QFrame):
         self.deleteLater()
 
     # ------------------------------------------------- cuenta atrás y barra
-    def _start_countdown(self, msec: int, clone_mode: bool = False):
+    def _start_countdown(self, msec: int):
         self._total = max(1, msec)
         self._left = float(msec)
         self._timer.start(msec)

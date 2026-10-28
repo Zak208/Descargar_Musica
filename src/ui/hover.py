@@ -62,7 +62,6 @@ class NowPlayingBars(QWidget):
 
     def __init__(self, window, parent=None, size: int = 16):
         super().__init__(parent)
-        self._window = window
         self._phase = 0.0
         self._token = None
         self._playing = False

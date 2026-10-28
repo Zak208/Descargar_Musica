@@ -140,7 +140,7 @@ class ArtistProfilePage(QWidget):
 
         scroll.setWidget(content)
         main.addWidget(scroll, stretch=1)
-        self.back_top = BackToTop(scroll, self)
+        BackToTop(scroll, self)
 
     # --------------------------------------------------------------- datos
     def start_loading(self, name: str):

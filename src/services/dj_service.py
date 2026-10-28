@@ -7,7 +7,7 @@ import os
 
 from PySide6.QtCore import QThread, Signal
 
-from config import get_download_dir, load_settings, save_settings
+from config import get_download_dir, load_settings, update_settings
 from services.library_service import AUDIO_EXTS
 
 DJ_EXTS = AUDIO_EXTS + ('.mp4',)
@@ -32,9 +32,7 @@ def get_source() -> str:
 
 
 def _store(**values):
-    settings = load_settings()
-    settings.update(values)
-    save_settings(settings)
+    update_settings(**values)
 
 
 def set_root(root: str):

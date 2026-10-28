@@ -196,10 +196,15 @@ class DjPage(QWidget):
             self.list_title.setText(f"Lo que queda · {remaining} canciones (se ven las {UPCOMING_SHOWN} primeras)")
         elif remaining:
             self.list_title.setText(f"Lo que queda · {remaining} " + ("canción" if remaining == 1 else "canciones"))
-        self.upcoming.clear()
+        lines = []
         for i, info in enumerate(list(upcoming)[:UPCOMING_SHOWN], 1):
             extra = describe(info)
-            self.upcoming.addItem(f"{i}.  {info.get('title', '')}" + (f"  ·  {extra}" if extra else ""))
+            lines.append(f"{i}.  {info.get('title', '')}" + (f"  ·  {extra}" if extra else ""))
+        if lines != [self.upcoming.item(i).text() for i in range(self.upcoming.count())]:   # solo si algo cambió
+            scroll = self.upcoming.verticalScrollBar().value()
+            self.upcoming.clear()
+            self.upcoming.addItems(lines)
+            self.upcoming.verticalScrollBar().setValue(scroll)          # y sin perder por dónde ibas
 
     # ------------------------------------------------------------ ancho
     def _needed_width(self) -> int:

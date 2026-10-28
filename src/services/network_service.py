@@ -9,7 +9,7 @@ import socket
 
 from PySide6.QtCore import QMetaObject, QObject, QThread, QTimer, Qt, Signal
 
-from config import load_settings, save_settings
+from config import load_settings, set_setting
 
 logger = logging.getLogger(__name__)
 
@@ -118,9 +118,7 @@ class NetworkMonitor(QObject):
     # --------------------------------------------------- modo manual y fallos
     def set_forced_offline(self, forced: bool):
         self._forced_offline = bool(forced)
-        settings = load_settings()
-        settings["offline_mode"] = self._forced_offline
-        save_settings(settings)
+        set_setting("offline_mode", self._forced_offline)
         if not forced:
             self._probe_online = True
             self.check_now()

@@ -5,13 +5,13 @@ import subprocess
 
 from ui.animations import fade_in, flash, pop_icon, press_feedback, ripple_feedback
 from ui.controls import CoverLabel
-from ui.covers import placeholder_cover
+from ui.covers import placeholder_cover, rounded_cover
 from ui.downloadfx import SmoothProgress
 from ui.hover import HoverFader
 from ui.textfx import DotsLabel
 
-from PySide6.QtCore import Qt, QUrl, QSize, QRectF
-from PySide6.QtGui import QPixmap, QDesktopServices, QPainter, QPainterPath
+from PySide6.QtCore import Qt, QUrl, QSize
+from PySide6.QtGui import QPixmap, QDesktopServices
 from PySide6.QtWidgets import (
     QSizePolicy,
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QMenu
@@ -40,23 +40,7 @@ DOWNLOAD_COL = 164
 
 def square_cover(pixmap: QPixmap, size: int, radius: int = 6) -> QPixmap:
     """Recorta al centro la imagen en formato cuadrado y le redondea las esquinas."""
-    dpr = 2
-    px = size * dpr
-    scaled = pixmap.scaled(px, px, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
-    x = (scaled.width() - px) // 2
-    y = (scaled.height() - px) // 2
-    scaled = scaled.copy(x, y, px, px)
-    result = QPixmap(px, px)
-    result.fill(Qt.transparent)
-    painter = QPainter(result)
-    painter.setRenderHint(QPainter.Antialiasing)
-    path = QPainterPath()
-    path.addRoundedRect(QRectF(0, 0, px, px), radius * dpr, radius * dpr)
-    painter.setClipPath(path)
-    painter.drawPixmap(0, 0, scaled)
-    painter.end()
-    result.setDevicePixelRatio(dpr)
-    return result
+    return rounded_cover(pixmap, size, radius)
 
 
 ACTION_IDLE = "#8A8A8A"  # color de los botones secundarios en reposo (siempre visibles)
