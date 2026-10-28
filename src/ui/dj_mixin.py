@@ -13,6 +13,7 @@ from PySide6.QtWidgets import QFileDialog, QMenu
 from services import dj_service, tempo
 from services.dj_service import SOURCE_ALL, SOURCE_ROOT, DjScanWorker
 from services.track_analysis import AnalysisWorker
+from ui.dialogs import ask_text
 from ui.dj_page import DjPage, UPCOMING_SHOWN
 from ui.icons import icon
 from ui.pages import Page
@@ -61,6 +62,7 @@ class DjMixin:
         self.page_dj.block_requested.connect(self.dj_block_current)
         self.page_dj.reshuffle_requested.connect(self.dj_reshuffle)
         self.page_dj.unblock_all_requested.connect(self.dj_unblock_all)
+        self.page_dj.bpm_requested.connect(self.dj_bpm)
         self.stacked_widget.addWidget(self.page_dj)
         assert self.stacked_widget.indexOf(self.page_dj) == Page.DJ
 
@@ -123,6 +125,7 @@ class DjMixin:
         self._dj_an_restart = False
         self._dj_an_progress = (0, 0)
         paths = dj_service.without_blocked(dj_service.tracks_for(self._dj_summary, self._dj_source()))
+        self._dj_reapply_overrides(paths)
         worker = AnalysisWorker(paths, self)
         worker.result.connect(self._on_dj_analysis)
         worker.progress.connect(self._on_dj_analysis_progress)
@@ -132,7 +135,7 @@ class DjMixin:
 
     def _on_dj_analysis(self, path: str, result: dict):
         self._dj_analysis[path] = result
-        tempo.learn(path, result.get("bpm"))       # el fundido ya no tiene que calcularlo
+        self._dj_apply_bpm(path)                   # el fundido ya no tiene que calcularlo
         if not self._dj_refresh_timer.isActive():
             self._dj_refresh_timer.start()
 
@@ -158,12 +161,84 @@ class DjMixin:
             return ""
         return f"Analizando canciones (ritmo, intro y final): {done} de {total}…"
 
+    # ------------------------------------------------------------ corregir el BPM
+    def _dj_effective_bpm(self, path: str) -> tuple:
+        """(BPM, corregido_a_mano): el que se puso a mano si lo hay y, si no, el del análisis (o None)."""
+        manual = dj_service.get_bpm_override(path)
+        if manual:
+            return manual, True
+        return (self._dj_analysis.get(path) or {}).get("bpm"), False
+
+    def _dj_apply_bpm(self, path: str):
+        """El fundido usa el mismo tempo que se ve en la página."""
+        bpm, _manual = self._dj_effective_bpm(path)
+        if bpm is None and path not in self._dj_analysis:
+            tempo.forget(path)                      # aún no hay nada decidido: que lo calcule el fundido, como siempre
+        else:
+            tempo.set_bpm(path, bpm)
+
+    def _dj_reapply_overrides(self, paths: list):
+        """Al abrir el programa, las correcciones a mano ya valen para el fundido (sin esperar al análisis)."""
+        for path, bpm in dj_service.overrides_for(paths).items():
+            tempo.set_bpm(path, bpm)
+
+    @staticmethod
+    def _bpm_text(bpm) -> str:
+        """«95» o «92,5»: un decimal solo si hace falta (así «Guardar» sin tocar nada no cambia el valor)."""
+        return f"{bpm:.1f}".rstrip("0").rstrip(".") if bpm else ""
+
+    def _dj_title(self, path: str) -> str:
+        for info in self._dj_context or []:
+            if info.get("local_path") == path:
+                return info.get("title") or os.path.basename(path)
+        return os.path.splitext(os.path.basename(path))[0]
+
+    def dj_bpm(self, path: str, action: str):
+        """Corrige el tempo de una canción: «half» (÷2), «double» (×2), «set» (escribirlo) o «auto» (el calculado)."""
+        if not path:
+            return
+        title = self._dj_title(path)
+        current, _manual = self._dj_effective_bpm(path)
+        if action == "auto":
+            had_manual = dj_service.get_bpm_override(path) is not None
+            dj_service.clear_bpm_override(path)
+            message = (f"«{title}»: vuelve al ritmo automático." if had_manual
+                       else f"«{title}»: ya usa el ritmo automático.")
+        else:
+            if action == "set":
+                text, ok = ask_text(self, "BPM de la canción", f"Pulsos por minuto de «{title}»:",
+                                    text=self._bpm_text(current), ok="Guardar", placeholder="Por ejemplo, 95")
+                if not ok:
+                    return
+                bpm = dj_service.parse_bpm(text)
+                if bpm is None:
+                    self.notify(f"Escribe un número entre {int(dj_service.MIN_BPM_MANUAL)} y {int(dj_service.MAX_BPM_MANUAL)}.")
+                    return
+            elif not current:
+                self.notify("Esta canción no tiene un ritmo claro: usa «Escribir BPM…».")
+                return
+            else:
+                candidate = current / 2 if action == "half" else current * 2
+                bpm = dj_service.parse_bpm(candidate)
+                if bpm is None:
+                    self.notify(f"«{title}»: {round(candidate)} BPM queda fuera de lo razonable "
+                                f"(de {int(dj_service.MIN_BPM_MANUAL)} a {int(dj_service.MAX_BPM_MANUAL)}).")
+                    return
+            dj_service.set_bpm_override(path, bpm)
+            message = f"«{title}»: {round(bpm)} BPM."
+        self._dj_apply_bpm(path)
+        self.refresh_dj_page()
+        self.notify(message)
+
     def dj_describe(self, info: dict) -> str:
         """Texto corto con el análisis de una canción, o "" si aún no está."""
-        found = self._dj_analysis.get((info or {}).get("local_path"))
-        if not found:
+        path = (info or {}).get("local_path")
+        found = self._dj_analysis.get(path)
+        bpm, manual = self._dj_effective_bpm(path) if path else (None, False)
+        if not found and not manual:
             return ""
-        parts = [f"{round(found['bpm'])} BPM" if found.get("bpm") else "sin pulso claro"]
+        found = found or {}
+        parts = [f"{round(bpm)} BPM" + (" (a mano)" if manual else "") if bpm else "sin pulso claro"]
         if found.get("intro_ms"):
             parts.append(f"intro {self.format_time(found['intro_ms'])}")
         if found.get("outro_ms"):

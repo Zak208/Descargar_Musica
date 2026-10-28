@@ -3,7 +3,7 @@
 La página solo enseña y avisa (señales); la lógica está en ui/dj_mixin.py."""
 from PySide6.QtCore import Qt, Signal, QSize
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QListWidget, QAbstractItemView
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QListWidget, QAbstractItemView, QMenu
 )
 
 from ui.icons import icon
@@ -14,6 +14,13 @@ UPCOMING_SHOWN = 30
 
 COMPACT_MIN_W = 52             # ancho de un botón que se ha quedado solo con el icono
 BUTTON_EXTRA_W = 16 + 44       # icono + relleno de los lados (lo que ocupa un botón además de su texto)
+
+
+def _tight(btn: QPushButton, extra: int = 14) -> QPushButton:
+    """El estilo de Qt pide al menos 80 px a un botón de texto, aunque sea «÷2»: se ajusta al ancho de su texto."""
+    btn.ensurePolished()
+    btn.setMinimumWidth(btn.fontMetrics().horizontalAdvance(btn.text()) + extra)
+    return btn
 
 
 def _action_button(text: str, icon_name: str, tip: str) -> QPushButton:
@@ -35,6 +42,7 @@ class DjPage(QWidget):
     block_requested = Signal()
     reshuffle_requested = Signal()
     unblock_all_requested = Signal()
+    bpm_requested = Signal(str, str)         # (ruta de la canción, «half», «double», «set» o «auto»)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -116,6 +124,22 @@ class DjPage(QWidget):
         self.now_detail.setObjectName("SectionSubtitle")
         self.now_detail.setWordWrap(True)
         now_lay.addWidget(self.now_detail)
+        bpm_row = QHBoxLayout()
+        bpm_row.setSpacing(6)
+        self.bpm_buttons = []              # si el ritmo está mal medido (95 visto como 190, por ejemplo)
+        for text, action, tip in (("BPM ÷2", "half", "El ritmo está mal medido: es la mitad de lo que se ve"),
+                                  ("BPM ×2", "double", "El ritmo está mal medido: es el doble de lo que se ve"),
+                                  ("Escribir BPM…", "set", "Escribir el ritmo a mano"),
+                                  ("Automático", "auto", "Volver al ritmo calculado solo")):
+            btn = QPushButton(text)
+            btn.setObjectName("LinkBtn")
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setToolTip(tip)
+            btn.clicked.connect(lambda _=False, a=action: self._emit_bpm(self._now_path, a))
+            bpm_row.addWidget(_tight(btn))
+            self.bpm_buttons.append(btn)
+        bpm_row.addStretch()
+        now_lay.addLayout(bpm_row)
         self.countdown = QLabel("")
         self.countdown.setStyleSheet("font-size: 14px; font-weight: 700; color: #1ED760; background: transparent;")
         self.countdown.setWordWrap(True)
@@ -139,6 +163,8 @@ class DjPage(QWidget):
             buttons.addWidget(btn)
         self._labels = {btn: btn.text() for btn in (self.btn_start, *self._actions)}   # textos completos
         self._compact = False
+        self._now_path = ""                   # canción que suena (para los botones de BPM)
+        self._upcoming_paths = []             # ruta de cada fila de «Lo que queda»
         buttons.addStretch()
         sess.addLayout(buttons)
 
@@ -157,6 +183,8 @@ class DjPage(QWidget):
         self.upcoming = QListWidget()
         self.upcoming.setSelectionMode(QAbstractItemView.NoSelection)
         self.upcoming.setFocusPolicy(Qt.NoFocus)
+        self.upcoming.setContextMenuPolicy(Qt.CustomContextMenu)       # botón derecho: corregir el BPM de esa canción
+        self.upcoming.customContextMenuRequested.connect(self._upcoming_menu)
         self.upcoming.setStyleSheet("QListWidget { background: transparent; border: none; font-size: 13px; }"
                                     "QListWidget::item { padding: 6px 4px; color: #B3B3B3; }")
         sess.addWidget(self.upcoming, 1)
@@ -181,6 +209,9 @@ class DjPage(QWidget):
         if not active:
             return
         now = now or {}
+        self._now_path = now.get("local_path", "")
+        for btn in self.bpm_buttons:
+            btn.setEnabled(bool(self._now_path))
         self.now_title.setText(now.get("title", ""))
         self.now_artist.setText(now.get("uploader", ""))
         self.now_detail.setText(describe(now))
@@ -196,15 +227,39 @@ class DjPage(QWidget):
             self.list_title.setText(f"Lo que queda · {remaining} canciones (se ven las {UPCOMING_SHOWN} primeras)")
         elif remaining:
             self.list_title.setText(f"Lo que queda · {remaining} " + ("canción" if remaining == 1 else "canciones"))
-        lines = []
+        lines, paths = [], []
         for i, info in enumerate(list(upcoming)[:UPCOMING_SHOWN], 1):
             extra = describe(info)
             lines.append(f"{i}.  {info.get('title', '')}" + (f"  ·  {extra}" if extra else ""))
-        if lines != [self.upcoming.item(i).text() for i in range(self.upcoming.count())]:   # solo si algo cambió
-            scroll = self.upcoming.verticalScrollBar().value()
+            paths.append(info.get("local_path", ""))
+        if lines != [self.upcoming.item(i).text() for i in range(self.upcoming.count())] or paths != self._upcoming_paths:
+            scroll = self.upcoming.verticalScrollBar().value()           # solo si algo cambió, y sin perder por dónde ibas
             self.upcoming.clear()
             self.upcoming.addItems(lines)
-            self.upcoming.verticalScrollBar().setValue(scroll)          # y sin perder por dónde ibas
+            self._upcoming_paths = paths
+            self.upcoming.verticalScrollBar().setValue(scroll)
+
+    # ------------------------------------------------------------ corregir el BPM
+    def _emit_bpm(self, path: str, action: str):
+        if path:
+            self.bpm_requested.emit(path, action)
+
+    def _upcoming_menu(self, pos):
+        row = self.upcoming.row(self.upcoming.itemAt(pos)) if self.upcoming.itemAt(pos) else -1
+        if not 0 <= row < len(self._upcoming_paths):
+            return
+        path = self._upcoming_paths[row]
+        menu = QMenu(self)
+        for text, action in (("El tempo es la mitad (÷2)", "half"), ("El tempo es el doble (×2)", "double"),
+                             ("Escribir el BPM…", "set"), ("Volver al BPM automático", "auto")):
+            menu.addAction(text).triggered.connect(lambda _=False, a=action: self._emit_bpm(path, a))
+        menu.exec(self.upcoming.viewport().mapToGlobal(pos))
+        menu.deleteLater()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        for btn in self.bpm_buttons:           # al mostrarse ya tiene el estilo de la ventana (al construirla, no)
+            _tight(btn)
 
     # ------------------------------------------------------------ ancho
     def _needed_width(self) -> int:

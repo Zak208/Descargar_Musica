@@ -5,6 +5,8 @@ visualizador (una lectura cada 0,1 s). Se prueban todos los tempos entre 70 y 18
 golpes de la música (un «peine» de pulsos); con una canción entera la precisión es de un par de por ciento, suficiente para
 acercar el ritmo de una canción al de la otra. Si no está claro (música sin pulso), no se da ningún tempo y no se toca nada."""
 import math
+import re
+import unicodedata
 
 from services import envelope
 
@@ -106,7 +108,45 @@ def match_rate(bpm_out, bpm_in):
     return best
 
 
-def learn(path: str, bpm) -> None:
-    """Apunta un tempo ya calculado en otro sitio (el análisis del modo DJ), para no volver a calcularlo al mezclar."""
-    if path not in _cache:
-        _cache[path] = bpm
+def set_bpm(path: str, bpm) -> None:
+    """Apunta el tempo de una canción decidido en otro sitio (el análisis del modo DJ o una corrección a mano). Pisa lo
+    que hubiera: ese tempo es mejor que el calculado solo para el fundido, y así el fundido no lo calcula otra vez."""
+    _cache[path] = bpm
+
+
+def forget(path: str) -> None:
+    """Olvida el tempo apuntado de una canción: el fundido lo calculará él cuando haga falta."""
+    _cache.pop(path, None)
+
+
+# Los tempos se confunden por octavas (95 medido como 190 o 47). Para los géneros que se conocen, el tempo se lleva a la
+# ventana en que se cuenta en la práctica (hasta 2x de ancho, así que cada tempo tiene un solo sitio posible). Los
+# géneros que no están aquí no se tocan. Es una convención de pinchar, no una medida: se puede corregir a mano.
+GENRE_WINDOWS = (
+    (re.compile(r"reggaet|reguet|dembow|perreo|urban[oa]\b"), (80.0, 160.0)),
+    (re.compile(r"\b(?:trap|drill)\b"), (100.0, 200.0)),
+)
+
+
+def fold_bpm(bpm, low: float, high: float):
+    """Lleva `bpm` a la ventana [low, high) doblándolo o partiéndolo por la mitad (high debe ser al menos 2 × low)."""
+    if not bpm or not math.isfinite(bpm) or bpm <= 0 or high < 2 * low:
+        return bpm
+    while bpm < low:
+        bpm *= 2.0
+    while bpm >= high:
+        bpm /= 2.0
+    return bpm
+
+
+def fold_for_genre(bpm, genre: str):
+    """`bpm` llevado a la ventana de su género (tal cual si el género no se conoce o no hay tempo)."""
+    # sin tildes ni mayúsculas («Reggaetón» y «reggaeton» son lo mismo), y las palabras cortas solo enteras («trap» no
+    # es «contrapunto»)
+    name = unicodedata.normalize("NFKD", str(genre or "")).encode("ascii", "ignore").decode().lower()
+    if not bpm or not name:
+        return bpm
+    for pattern, (low, high) in GENRE_WINDOWS:
+        if pattern.search(name):
+            return fold_bpm(bpm, low, high)
+    return bpm

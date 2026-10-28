@@ -58,10 +58,16 @@ grande del proyecto.
 - **Puerta**: el BPM es correcto en al menos 90 de 100 canciones (compruébalo con la página DJ con unas cuantas).
   Prueba `pruebas/prueba_analisis.py` en verde.
 
-### Fase 5 · Corregir BPM a mano (4 a 6 h)
-- En reguetón, drill y trap el BPM sale a veces a la mitad o al doble (95 frente a 190).
-- Regla de rango plausible por género y, en la página DJ, botones «×2» y «÷2» y escribir el BPM.
-- **Puerta**: ninguna canción de tu carpeta con BPM claramente mal.
+### Fase 5 · Corregir BPM a mano ✅ hecho (pendiente de que lo pruebes)
+- Regla automática por género (`tempo.GENRE_WINDOWS`): reguetón y urbano llevan el tempo a la ventana 80 a 160, trap y
+  drill a 100 a 200 (doblándolo o partiéndolo por la mitad). Los demás géneros no se tocan. Es una convención de pinchar,
+  no una medida: si no te cuadra, se corrige a mano.
+- Botones en la página DJ para la canción que suena: **BPM ÷2**, **BPM ×2**, **Escribir BPM…** y **Automático**. Con el
+  botón derecho sobre cualquier canción de «Lo que queda» salen las mismas opciones.
+- Lo corregido se guarda (ajustes) y gana sobre el análisis; se ve «128 BPM (a mano)» y el fundido usa ese tempo.
+  Se aceptan tempos de 40 a 300.
+- **Puerta**: ninguna canción de tu carpeta con BPM claramente mal. Prueba `pruebas/prueba_dj_pagina.py` y
+  `pruebas/prueba_analisis.py` en verde.
 
 ### Fase 6 · Tonalidad (8 a 14 h)
 - Detectar la tonalidad y pasarla a la rueda Camelot (8A, 9B...).

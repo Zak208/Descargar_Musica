@@ -12,7 +12,7 @@ from services import envelope, library_db, tempo
 
 logger = logging.getLogger(__name__)
 
-VERSION = 1
+VERSION = 2                     # 2: el tempo se lleva a la ventana de su género (tempo.fold_for_genre)
 SMOOTH_FRAMES = 20              # 2 s: la energía se suaviza para que un golpe suelto no cuente como «empieza la canción»
 BODY_SHARE = 0.6                # la intro termina cuando la energía llega al 60 % de la del cuerpo de la canción
 PAUSE_MS = 150                  # respiro entre canción y canción para las demás tareas pesadas
@@ -32,8 +32,9 @@ def _smoothed_energy(data: bytes) -> list:
     return out
 
 
-def analyze_envelope(data: bytes) -> dict:
-    """{bpm (o None), confidence, energy (0..1), intro_ms, outro_ms, duration_ms} a partir de la envolvente."""
+def analyze_envelope(data: bytes, genre: str = "") -> dict:
+    """{bpm (o None), confidence, energy (0..1), intro_ms, outro_ms, duration_ms} a partir de la envolvente. Con el
+    género de la canción, el tempo se lleva a la ventana habitual de ese género."""
     result = {"bpm": None, "confidence": 0.0, "energy": 0.0, "intro_ms": 0, "outro_ms": 0, "duration_ms": 0}
     if not data:
         return result
@@ -41,6 +42,7 @@ def analyze_envelope(data: bytes) -> dict:
     n = len(energy)
     result["duration_ms"] = n * envelope.STEP_MS
     result["bpm"], result["confidence"] = tempo.estimate_bpm_with_confidence(data)
+    result["bpm"] = tempo.fold_for_genre(result["bpm"], genre)
     core = sorted(energy[int(n * 0.15):int(n * 0.85)] or energy)
     body = core[len(core) // 2] if core else 0.0
     result["energy"] = round(body / 255.0, 3)
@@ -97,7 +99,8 @@ def analyze(path: str):
             envelope.save(path, data)
     if not data:
         return None                           # no se pudo leer (archivo a medias, error de FFmpeg...): se reintentará
-    result = analyze_envelope(data)
+    from services.library_service import read_basic_tags
+    result = analyze_envelope(data, read_basic_tags(path).get("genre", ""))
     save(path, result)
     return result
 

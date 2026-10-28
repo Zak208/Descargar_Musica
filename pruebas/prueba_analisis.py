@@ -109,9 +109,44 @@ check("y no se guarda nada (se reintentará)", track_analysis.stored(good_path) 
 envelope.compute = real_compute
 FFmpegService.get_ffmpeg_path = real_path
 
-tempo.learn("x.mp3", 128.0)
-tempo.learn("x.mp3", 90.0)
-check("el tempo del análisis se aprovecha para el fundido (y no se pisa)", tempo.get("x.mp3") == 128.0)
+tempo.set_bpm("x.mp3", 128.0)
+check("el tempo del análisis se aprovecha para el fundido", tempo.get("x.mp3") == 128.0 and tempo.known("x.mp3"))
+tempo.remember("x.mp3", synth(100))
+check("lo calculado después no pisa lo que ya se decidió", tempo.get("x.mp3") == 128.0)
+tempo.set_bpm("x.mp3", 90.0)
+check("una corrección a mano sí pisa lo anterior", tempo.get("x.mp3") == 90.0)
+
+# Regla de ventana por género: los tempos se confunden por octavas
+check("ventana de reguetón: 180 pasa a 90", tempo.fold_for_genre(180.0, "Reggaeton") == 90.0)
+check("ventana de reguetón: 70 pasa a 140 y 95 se queda", tempo.fold_for_genre(70.0, "Urbano latino") == 140.0
+      and tempo.fold_for_genre(95.0, "Reguetón") == 95.0)
+check("ventana de trap y drill: 75 pasa a 150", tempo.fold_for_genre(75.0, "Trap") == 150.0
+      and tempo.fold_for_genre(72.0, "UK Drill") == 144.0 and tempo.fold_for_genre(140.0, "Drill") == 140.0)
+check("un género que no se conoce no se toca", tempo.fold_for_genre(75.0, "Pop") == 75.0 and tempo.fold_for_genre(75.0, "") == 75.0)
+check("sin tempo no se inventa nada", tempo.fold_for_genre(None, "Trap") is None)
+check("«Reggaetón» con tilde y doble g también cuenta", tempo.fold_for_genre(180.0, "Reggaetón") == 90.0
+      and tempo.fold_for_genre(70.0, "REGGAETON") == 140.0)
+check("«Música urbana» y «Urbano latino» cuentan, «Urban» (inglés) no", tempo.fold_for_genre(70.0, "Música urbana") == 140.0
+      and tempo.fold_for_genre(70.0, "Urbano latino") == 140.0 and tempo.fold_for_genre(70.0, "Urban") == 70.0)
+check("«trap» solo como palabra entera: «Contrapunto» o «Strap» no", tempo.fold_for_genre(75.0, "Contrapunto") == 75.0
+      and tempo.fold_for_genre(75.0, "Strap") == 75.0 and tempo.fold_for_genre(75.0, "Hip-Hop/Trap") == 150.0)
+check("un género que no es texto no da error", tempo.fold_for_genre(75.0, 123) == 75.0 and tempo.fold_for_genre(75.0, None) == 75.0)
+check("tempos que no son números finitos vuelven tal cual (y no se cuelga)", tempo.fold_bpm(float("inf"), 80, 160) == float("inf")
+      and tempo.fold_bpm(float("nan"), 80, 160) != tempo.fold_bpm(float("nan"), 80, 160) and tempo.fold_bpm(-5.0, 80, 160) == -5.0)
+tempo.set_bpm("olvidar.mp3", 100.0)
+tempo.forget("olvidar.mp3")
+tempo.forget("olvidar.mp3")
+check("olvidar un tempo (también si ya no estaba): el fundido lo calculará", not tempo.known("olvidar.mp3"))
+check("una ventana de menos del doble no se aplica (no habría un solo sitio)", tempo.fold_bpm(70.0, 100.0, 150.0) == 70.0)
+check("toda la gama de 70 a 180 cae dentro de cada ventana", all(
+    80 <= tempo.fold_for_genre(b / 2, "reggaeton") < 160 and 100 <= tempo.fold_for_genre(b / 2, "trap") < 200
+    for b in range(140, 361)))
+fast = synth(bpm=180)
+slow = track_analysis.analyze_envelope(fast)
+check(f"sin género, un tempo de 180 se queda como está (da {slow['bpm']})", slow["bpm"] is not None and abs(slow["bpm"] - 180) / 180 < 0.03)
+reg = track_analysis.analyze_envelope(fast, "Reggaeton")
+check(f"con género reguetón, el 180 pasa a 90 (da {reg['bpm']})", reg["bpm"] is not None and abs(reg["bpm"] - 90) / 90 < 0.03)
+check("el género no cambia la confianza", reg["confidence"] == slow["confidence"])
 
 
 # Con un audio de verdad: golpes secos a 120 BPM durante 75 s, con 8 s de silencio al principio

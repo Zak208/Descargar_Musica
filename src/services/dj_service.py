@@ -44,7 +44,7 @@ def set_source(source: str):
     _store(dj_source=source)
 
 
-def _blocked_key(path: str) -> str:
+def _path_key(path: str) -> str:
     return os.path.normcase(os.path.abspath(path))
 
 
@@ -55,7 +55,7 @@ def get_blocked() -> set:
 
 def block(path: str):
     blocked = get_blocked()
-    blocked.add(_blocked_key(path))
+    blocked.add(_path_key(path))
     _store(dj_blocked=sorted(blocked))
 
 
@@ -67,7 +67,58 @@ def without_blocked(paths: list) -> list:
     blocked = get_blocked()
     if not blocked:
         return list(paths)
-    return [p for p in paths if _blocked_key(p) not in blocked]
+    return [p for p in paths if _path_key(p) not in blocked]
+
+
+MIN_BPM_MANUAL, MAX_BPM_MANUAL = 40.0, 300.0     # lo que se acepta al corregir un tempo a mano
+
+
+def parse_bpm(value):
+    """Un BPM escrito a mano («95», «95,5») o un número, o None si no es un tempo razonable."""
+    try:
+        bpm = float(str(value).strip().replace(",", "."))
+    except ValueError:
+        return None
+    return bpm if MIN_BPM_MANUAL <= bpm <= MAX_BPM_MANUAL else None
+
+
+def get_bpm_overrides() -> dict:
+    """Tempos corregidos a mano: {ruta normalizada: BPM}. Valen sobre lo que calcula el análisis."""
+    raw = load_settings().get("dj_bpm_overrides", {})
+    if not isinstance(raw, dict):
+        return {}
+    return {key: bpm for key, value in raw.items() if (bpm := parse_bpm(value)) is not None}
+
+
+def get_bpm_override(path: str):
+    """El BPM puesto a mano para esa canción, o None. Se mira solo esa entrada y se valida (esto se llama por cada fila)."""
+    raw = load_settings().get("dj_bpm_overrides")
+    return parse_bpm(raw.get(_path_key(path))) if isinstance(raw, dict) else None
+
+
+def overrides_for(paths) -> dict:
+    """{ruta: BPM a mano} de las canciones de `paths` que tienen corrección."""
+    raw = load_settings().get("dj_bpm_overrides")
+    if not isinstance(raw, dict) or not raw:
+        return {}
+    found = {}
+    for path in paths:
+        bpm = parse_bpm(raw.get(_path_key(path)))
+        if bpm:
+            found[path] = bpm
+    return found
+
+
+def set_bpm_override(path: str, bpm: float):
+    overrides = get_bpm_overrides()
+    overrides[_path_key(path)] = round(float(bpm), 2)
+    _store(dj_bpm_overrides=overrides)
+
+
+def clear_bpm_override(path: str):
+    overrides = get_bpm_overrides()
+    if overrides.pop(_path_key(path), None) is not None:
+        _store(dj_bpm_overrides=overrides)
 
 
 def _is_folder(entry) -> bool:

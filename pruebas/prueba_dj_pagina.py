@@ -55,7 +55,7 @@ def make_wav(rel, freq, seconds=40):
 paths = [make_wav(os.path.join(sub, f"tono{i}.wav"), 330 + 55 * i)
          for i, sub in enumerate(["Reguetón", "Reguetón", "Drill", "Drill", "Pop", "Pop"])]
 
-from services import dj_service
+from services import dj_service, tempo
 from ui.main_window import MainWindow
 from ui.pages import Page
 
@@ -105,6 +105,62 @@ w.refresh_dj_page()
 check("la página enseña el análisis (estos tonos no tienen pulso)", "sin pulso claro" in page.now_detail.text()
       and "sin pulso claro" in page.upcoming.item(0).text())
 check("al terminar el análisis se quita el aviso de progreso", wait(lambda: page.progress.isHidden(), 10))
+
+# Corregir el BPM (los tonos de prueba no tienen pulso: no hay tempo calculado)
+import ui.dj_mixin as dj_mixin_module
+cur = w.current_item_info["local_path"]
+check("al empezar, los botones de BPM están activos", all(b.isEnabled() for b in page.bpm_buttons))
+check("sin tempo calculado, ÷2 avisa y no inventa nada", (w.dj_bpm(cur, "half"), dj_service.get_bpm_override(cur))[1] is None)
+dj_mixin_module.ask_text = lambda *a, **k: ("95", True)
+page.bpm_buttons[2].click()                                            # Escribir BPM…
+check("escribir 95 a mano se guarda y se ve «(a mano)»", dj_service.get_bpm_override(cur) == 95.0
+      and "95 BPM (a mano)" in page.now_detail.text())
+check("el fundido usa ese tempo", tempo.get(cur) == 95.0)
+page.bpm_buttons[1].click()                                            # ×2
+check("×2: 190", dj_service.get_bpm_override(cur) == 190.0 and "190 BPM (a mano)" in page.now_detail.text()
+      and tempo.get(cur) == 190.0)
+w.dj_bpm(cur, "double")
+check("×2 otra vez se sale de lo razonable (380) y no cambia", dj_service.get_bpm_override(cur) == 190.0)
+page.bpm_buttons[0].click()                                            # ÷2
+page.bpm_buttons[0].click()
+check("÷2 dos veces: 47,5", dj_service.get_bpm_override(cur) == 47.5)
+w.dj_bpm(cur, "half")
+check("÷2 por debajo de 40 no se acepta", dj_service.get_bpm_override(cur) == 47.5)
+dj_mixin_module.ask_text = lambda *a, **k: ("rápido", True)
+w.dj_bpm(cur, "set")
+check("un texto que no es un número no cambia nada", dj_service.get_bpm_override(cur) == 47.5)
+dj_mixin_module.ask_text = lambda *a, **k: ("", False)
+w.dj_bpm(cur, "set")
+check("cancelar el diálogo no cambia nada", dj_service.get_bpm_override(cur) == 47.5)
+page.bpm_buttons[3].click()                                            # Automático
+check("«Automático» quita la corrección", dj_service.get_bpm_override(cur) is None
+      and "sin pulso claro" in page.now_detail.text() and tempo.get(cur) is None)
+
+# lo mismo desde la lista (botón derecho) con la siguiente canción
+nxt_path = w.peek_next()["local_path"]
+page.bpm_requested.emit(nxt_path, "set")
+check("desde la lista también: la siguiente cambia", dj_service.get_bpm_override(nxt_path) is None)   # el diálogo estaba cancelado
+dj_mixin_module.ask_text = lambda *a, **k: ("120", True)
+page.bpm_requested.emit(nxt_path, "set")
+check("se ve en «A continuación» y en la lista", "120 BPM (a mano)" in page.next_title.text()
+      and "120 BPM (a mano)" in page.upcoming.item(0).text())
+check("la ruta de cada fila se guarda para el menú", page._upcoming_paths[0] == nxt_path)
+dj_service.clear_bpm_override(nxt_path)
+w.dj_bpm(nxt_path, "auto")
+check("«auto» sin corrección no da error", dj_service.get_bpm_override(nxt_path) is None)
+
+# Detalles de las correcciones
+check("el valor que se enseña al editar conserva el decimal", w._bpm_text(92.5) == "92.5" and w._bpm_text(95.0) == "95"
+      and w._bpm_text(None) == "")
+tempo.remember("sin_decidir.mp3", b"")
+w._dj_apply_bpm("sin_decidir.mp3")
+check("sin análisis ni corrección, el fundido calcula el tempo él (no se queda en «sin pulso»)", not tempo.known("sin_decidir.mp3"))
+dj_service.set_bpm_override(paths[0], 100)
+tempo.forget(paths[0])
+w._dj_reapply_overrides(paths)
+check("al abrir, las correcciones ya valen para el fundido sin esperar al análisis", tempo.get(paths[0]) == 100.0)
+dj_service.clear_bpm_override(paths[0])
+w._dj_apply_bpm(paths[0])
 
 # Saltar
 before = w.current_item_info["local_path"]

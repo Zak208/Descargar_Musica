@@ -86,6 +86,39 @@ check("aunque la ruta se escriba con otras mayúsculas", len(dj_service.without_
 dj_service.unblock_all()
 check("desbloquear todas", not dj_service.get_blocked())
 
+# Tempos corregidos a mano
+song = everything[1]
+check("sin corrección no hay BPM a mano", dj_service.get_bpm_override(song) is None)
+dj_service.set_bpm_override(song, 95)
+check("se guarda y se lee", dj_service.get_bpm_override(song) == 95.0)
+check("la ruta se reconoce aunque cambien las mayúsculas (Windows)",
+      dj_service.get_bpm_override(song.upper()) == 95.0 if os.name == "nt" else True)
+dj_service.set_bpm_override(song, 95.456)
+check("se redondea a dos decimales", dj_service.get_bpm_override(song) == 95.46)
+dj_service.clear_bpm_override(song)
+dj_service.clear_bpm_override(song)
+check("quitar la corrección (también si ya no estaba)", dj_service.get_bpm_override(song) is None and not dj_service.get_bpm_overrides())
+check("parse_bpm acepta «95» y «95,5»", dj_service.parse_bpm("95") == 95.0 and dj_service.parse_bpm(" 95,5 ") == 95.5
+      and dj_service.parse_bpm(128) == 128.0)
+check("parse_bpm rechaza texto y tempos absurdos", all(dj_service.parse_bpm(v) is None for v in ("", "abc", "5", "39.9", "300.1", "-90", "nan")))
+
+# Correcciones: se rechazan los valores estropeados y se buscan por lotes
+from config import update_settings
+update_settings(dj_bpm_overrides={dj_service._path_key(everything[0]): 100, dj_service._path_key(everything[1]): "abc",
+                                  dj_service._path_key(everything[2]): 9999, dj_service._path_key(everything[3]): "128,5"})
+check("un valor estropeado en los ajustes se ignora", dj_service.get_bpm_override(everything[1]) is None
+      and dj_service.get_bpm_override(everything[2]) is None)
+check("los valores buenos se leen (también «128,5» escrito como texto)", dj_service.get_bpm_override(everything[0]) == 100.0
+      and dj_service.get_bpm_override(everything[3]) == 128.5)
+check("get_bpm_overrides solo devuelve las válidas", len(dj_service.get_bpm_overrides()) == 2)
+check("overrides_for devuelve la ruta original de cada canción con corrección",
+      dj_service.overrides_for(everything) == {everything[0]: 100.0, everything[3]: 128.5})
+update_settings(dj_bpm_overrides="no soy un diccionario")
+check("si los ajustes tienen otra cosa, no hay correcciones ni error",
+      dj_service.get_bpm_override(everything[0]) is None and dj_service.overrides_for(everything) == {}
+      and dj_service.get_bpm_overrides() == {})
+update_settings(dj_bpm_overrides={})
+
 # Lectura en segundo plano
 worker = dj_service.DjScanWorker(root)
 got = []
