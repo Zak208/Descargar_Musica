@@ -70,7 +70,7 @@ check(f"con buena confianza ({res['confidence']:.2f})", res["confidence"] >= tem
 check(f"intro de unos 10 s (da {res['intro_ms'] / 1000:.1f} s)", 8000 <= res["intro_ms"] <= 13000)
 check(f"final de unos 10-20 s (da {res['outro_ms'] / 1000:.1f} s)", 8000 <= res["outro_ms"] <= 23000)
 check("duración de 190 s", res["duration_ms"] == 190_000)
-check("energía entre 0 y 1", 0 < res["energy"] <= 1)
+check("la envolvente no da energía (está normalizada canción a canción y no se podría comparar)", res["energy"] is None)
 
 # Bordes limpios: 20 s de silencio, 260 s de música, 20 s de silencio (el suavizado no debe retrasar la intro ni adelantar el final)
 edge = bytes(b for i in range(3000) for b in ((0, 0, 0) if i < 200 or i >= 2800 else (200, 200, 50)))

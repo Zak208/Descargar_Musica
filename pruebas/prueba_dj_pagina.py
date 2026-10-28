@@ -163,6 +163,19 @@ for sin_tono in ("", None):
     check(f"sin tono ({sin_tono!r}) no se escribe nada de tono", w.dj_describe({"local_path": ejemplo}) == "128 BPM · intro 00:12 · final 00:20")
 del w._dj_analysis[ejemplo]
 
+# La energía junto al resto (del 1 al 10) y solo si se midió el volumen (las antiguas medían la envolvente, no comparable)
+w._dj_analysis[ejemplo] = dict(base_analisis, tone="8A", tone_conf=0.8, energy=0.78, loudness_db=-7.0, brightness_hz=1500.0, flux=0.3)
+check("se enseña la energía de 1 a 10", w.dj_describe({"local_path": ejemplo}) == "128 BPM · 8A · energía 8 · intro 00:12 · final 00:20")
+w._dj_analysis[ejemplo] = dict(base_analisis, tone="8A", tone_conf=0.8, energy=0.0, loudness_db=-7.0, brightness_hz=1500.0, flux=0.3)
+check("la energía mínima es 1", "energía 1 ·" in w.dj_describe({"local_path": ejemplo}))
+w._dj_analysis[ejemplo] = dict(base_analisis, tone="8A", tone_conf=0.8, energy=1.0, loudness_db=-7.0, brightness_hz=1500.0, flux=0.3)
+check("y la máxima es 10", "energía 10 ·" in w.dj_describe({"local_path": ejemplo}))
+w._dj_analysis[ejemplo] = dict(base_analisis, tone="8A", tone_conf=0.8, energy=0.78, loudness_db=None)
+check("sin las medidas de volumen no se enseña energía", "energía" not in w.dj_describe({"local_path": ejemplo}))
+w._dj_analysis[ejemplo] = dict(base_analisis, tone="8A", tone_conf=0.8, energy=None, loudness_db=-99.0, brightness_hz=0.0, flux=0.0)
+check("lo que no se pudo medir tampoco", "energía" not in w.dj_describe({"local_path": ejemplo}))
+del w._dj_analysis[ejemplo]
+
 # Detalles de las correcciones
 check("el valor que se enseña al editar conserva el decimal", w._bpm_text(92.5) == "92.5" and w._bpm_text(95.0) == "95"
       and w._bpm_text(None) == "")
@@ -205,6 +218,83 @@ page.btn_shuffle.click()
 check("volver a barajar no quita ni añade canciones", sorted(t["local_path"] for t in w._dj_context) == order)
 check("lo que ya sonó y la que suena se quedan donde estaban",
       [t["local_path"] for t in w._dj_context[:pos + 1]] == played and w._context_position() == pos)
+
+# Orden inteligente (por defecto) o aleatorio
+check("por defecto el orden es inteligente y la página lo dice", dj_service.get_order() == "smart"
+      and "orden inteligente" in page.source.text())
+con_analisis = {}
+for n, ruta in enumerate(paths):                                  # análisis de mentira, con energías, tonos y tempos repartidos
+    con_analisis[ruta] = {"bpm": 90.0 + 10 * n, "confidence": 2.0, "energy": 0.1 + 0.15 * n, "intro_ms": 0, "outro_ms": 0,
+                          "duration_ms": 40000, "tone": f"{1 + n}A", "tone_conf": 0.9, "genre": "Pop", "artist": f"Artista {n % 3}",
+                          "loudness_db": -8.0, "brightness_hz": 1500.0, "flux": 0.25}
+w._dj_analysis.update(con_analisis)
+cuenta_antes = [t["local_path"] for t in w._dj_context]
+pos = w._context_position()
+played = cuenta_antes[:pos + 1]
+w.dj_replan()
+despues = [t["local_path"] for t in w._dj_context]
+check("reordenar con el planificador no quita ni añade canciones", sorted(despues) == sorted(cuenta_antes))
+check("y lo que ya sonó y lo que suena se queda donde estaba", despues[:pos + 1] == played)
+w._dj_replan_pending = True
+w._on_dj_analysis_done()
+check("si la sesión empezó con canciones sin analizar, al terminar el análisis se reordena una vez",
+      w._dj_replan_pending is False and sorted(t["local_path"] for t in w._dj_context) == sorted(cuenta_antes))
+w.set_dj_order("random")
+check("el orden aleatorio se guarda, la página lo dice y la sesión sigue", dj_service.get_order() == "random"
+      and "orden aleatorio" in page.source.text() and w.dj_session_active())
+despues_azar = [t["local_path"] for t in w._dj_context]
+check("al pasar a aleatorio no se pierde ni se añade ninguna", sorted(despues_azar) == sorted(cuenta_antes)
+      and despues_azar[:pos + 1] == played)
+w.dj_replan()
+check("con orden aleatorio, replanificar no hace nada", [t["local_path"] for t in w._dj_context] == despues_azar)
+w.set_dj_order("smart")
+check("y se puede volver al inteligente", dj_service.get_order() == "smart" and "orden inteligente" in page.source.text())
+dj_service.set_order("loquesea")
+check("un valor raro del ajuste vale inteligente", dj_service.get_order() == "smart")
+
+# El aviso de «se afinará al terminar el análisis» y la bandera del reordenado final
+class AnalisisFalso:
+    """Un análisis «en marcha» para probar la bandera."""
+
+
+w._dj_replan_pending = False
+w._dj_an_worker = AnalisisFalso()
+check("reordenar a mano con el análisis a medias lo deja anotado para afinar al terminar", w.dj_replan() is True
+      and w._dj_replan_pending is True)
+w._dj_an_worker = None
+w._dj_replan_pending = False
+check("sin análisis en marcha no queda ninguna bandera pendiente", w.dj_replan() is True and w._dj_replan_pending is False)
+pos = w._context_position()
+guardado = list(w._dj_context)
+w._dj_context[:] = w._dj_context[:pos + 2]                                   # solo queda una canción detrás de la que suena
+check("con menos de dos canciones detrás no reordena y lo dice (devuelve False)", w.dj_replan() is False)
+w._dj_context[:] = guardado
+w._dj_replan_pending = True
+w._on_dj_analysis_done()
+check("al terminar el análisis, la bandera se gasta una vez", w._dj_replan_pending is False)
+w.set_dj_order("smart")
+check("elegir el orden que ya está activo no hace nada (no reordena ni avisa otra vez)", w._dj_context == guardado or sorted(
+    t["local_path"] for t in w._dj_context) == sorted(t["local_path"] for t in guardado))
+w.toggle_shuffle()
+check("si se activa el aleatorio del reproductor a mitad de sesión, la página dice que anula el orden inteligente",
+      "anulado" in page.source.text())
+w.toggle_shuffle()
+check("y al quitarlo, lo deja de decir", "anulado" not in page.source.text() and "orden inteligente" in page.source.text())
+
+# El orden inteligente desactiva el aleatorio del reproductor (lo desharía)
+w.toggle_shuffle()
+check("el aleatorio del reproductor está activado", w.is_shuffle_enabled)
+page.btn_start.click()
+check("al empezar con orden inteligente se desactiva el aleatorio del reproductor",
+      wait(lambda: w.dj_session_active()) and not w.is_shuffle_enabled)
+w.toggle_shuffle()
+dj_service.set_order("random")
+page.btn_start.click()
+check("con orden aleatorio no se toca el del reproductor", wait(lambda: w.dj_session_active()) and w.is_shuffle_enabled)
+w.toggle_shuffle()
+dj_service.set_order("smart")
+for ruta in paths:
+    w._dj_analysis.pop(ruta, None)
 
 # Volver a empezar: la bloqueada ya no entra
 page.btn_start.click()

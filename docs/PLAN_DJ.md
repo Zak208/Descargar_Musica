@@ -90,13 +90,34 @@ grande del proyecto.
   página DJ unas 20 o 30 canciones con una web de tonos (Tunebat, Mixed In Key...) y cuenta cuántas coinciden (basta con
   70 de 100; ojo, mayor frente a su relativo menor, por ejemplo `8B` y `8A`, mezclan igual de bien).
 - Limitaciones: música sin armonía clara (solo ritmo o bajo) da un tono poco fiable; el modo (mayor o menor) cambia a
-  veces según el tramo analizado; la energía sigue sin medirse en absoluto (pendiente antes de la fase 7).
+  veces según el tramo analizado. (La energía en absoluto, que estaba pendiente, se hizo en la fase 7.)
 - Posible mejora si el acierto no llega: corregir el tono a mano (como el BPM) y probar otros perfiles de tonalidad.
 
-### Fase 7 · Orden inteligente (10 a 16 h)
-- La siguiente canción se elige por compatibilidad: BPM cercano, tonalidad compatible, energía y género.
-- Curva de energía de fiesta: calentar, subir, picos, bajar y volver a subir.
-- **Puerta**: a ciegas, prefieres el orden inteligente al aleatorio en 7 de 10 sesiones cortas.
+### Fase 7 · Orden inteligente ✅ hecho (pendiente de que lo pruebes)
+- **«Empezar a pinchar» ya no baraja al azar:** el orden lo decide `services/dj_planner.py`. En el menú DJ, «Orden de las
+  canciones» deja elegir entre **Inteligente** (por defecto) y **Aleatorio**; la página dice cuál está activo. Con el
+  inteligente se apaga el aleatorio del reproductor (lo desharía) y «Barajar» pasa a reordenar lo que queda con el mismo criterio.
+- **Cómo elige** (un DJ lo hace así): primero decide **qué nivel de energía toca** (curva de fiesta: calentar, subir, pico,
+  respiro y volver a subir, una vuelta cada 80 canciones) y solo mira las de ese nivel (±0,2); entre ellas elige por **ritmo**
+  (BPM parecido, la mitad o el doble cuentan igual), **tono** compatible en la rueda Camelot (menos peso si el tono es dudoso),
+  **género** y que no sea el mismo **artista** que la anterior (si en ese nivel solo quedan de ese artista, se repite). Un poco
+  de azar hace que cada sesión salga distinta.
+- **La energía se compara por posición** (percentil entre las canciones de la sesión) y las posiciones se recalculan en cada
+  paso con lo que queda; sin eso, los picos agotaban las canciones fuertes y la sesión terminaba con las sobras.
+- **Energía en absoluto** (`services/audio_features.py`, la pendiente de la fase 6): mezcla de volumen (45 %), brillo del espectro
+  (25 %) y actividad del espectro (30 %), medidas con el mismo audio que ya se decodifica para el tono (0,06 s por canción). Se
+  guarda en el índice junto al género y al artista de las etiquetas, y se ve en la página DJ como «energía 7» (de 1 a 10).
+- Si al empezar hay canciones sin analizar, la sesión arranca ya y se **reordena una vez al terminar el análisis**.
+- Va muy rápido: 20.000 canciones se ordenan en 0,1 s (solo se ordenan las 400 primeras, el resto detrás).
+- **Medido con datos sintéticos** (100 canciones al azar): el encaje de ritmo pasa de 0,28 al azar a 0,78 y el de tono de 0,23 a
+  0,52, y la energía sigue la curva con correlación 0,88. **Con tus 22 canciones**: ritmo 0,25 → 0,42, tono 0,25 → 0,37, curva
+  0,87; mejora menos porque con 22 canciones y una ventana de energía quedan pocas opciones por paso.
+- **Lo que NO está comprobado:** que el resultado suene mejor a un oído humano. La puerta es subjetiva: a ciegas, prefieres el
+  orden inteligente al aleatorio en 7 de 10 sesiones cortas. Los pesos de la energía (volumen, brillo, actividad) y los de la
+  puntuación son una elección razonable, no un dato medido.
+- Limitaciones: el género y el tono dudosos pesan poco a propósito; el voraz no encuentra el mejor orden posible, solo uno bueno;
+  una sesión con muy pocas canciones apenas deja margen; la energía mezcla tres medidas y puede no coincidir con tu idea de
+  «energía» en algún género (si pasa, ajustar `audio_features.WEIGHTS`).
 
 ### Fase 8 · Punto de mezcla (12 a 20 h)
 - Detectar dónde acaba la intro y dónde empieza el final de cada canción.

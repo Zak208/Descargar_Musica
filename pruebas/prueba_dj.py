@@ -102,6 +102,15 @@ check("parse_bpm acepta «95» y «95,5»", dj_service.parse_bpm("95") == 95.0 a
       and dj_service.parse_bpm(128) == 128.0)
 check("parse_bpm rechaza texto y tempos absurdos", all(dj_service.parse_bpm(v) is None for v in ("", "abc", "5", "39.9", "300.1", "-90", "nan")))
 
+# Orden de la sesión
+check("por defecto el orden es inteligente", dj_service.get_order() == "smart")
+dj_service.set_order("random")
+check("se guarda el aleatorio", dj_service.get_order() == "random")
+dj_service.set_order("smart")
+check("y el inteligente", dj_service.get_order() == "smart")
+dj_service.set_order("otra cosa")
+check("un valor raro vale inteligente", dj_service.get_order() == "smart")
+
 # Correcciones: se rechazan los valores estropeados y se buscan por lotes
 from config import update_settings
 update_settings(dj_bpm_overrides={dj_service._path_key(everything[0]): 100, dj_service._path_key(everything[1]): "abc",

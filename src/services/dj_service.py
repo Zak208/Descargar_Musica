@@ -11,6 +11,8 @@ from config import get_download_dir, load_settings, update_settings
 from services.library_service import AUDIO_EXTS
 
 DJ_EXTS = AUDIO_EXTS + ('.mp4',)
+ORDER_SMART = "smart"      # el orden lo decide el planificador (ritmo, tono, energía y género)
+ORDER_RANDOM = "random"    # aleatorio
 SOURCE_ALL = "*"           # toda la carpeta general, con sus subcarpetas
 SOURCE_ROOT = ""           # solo los archivos sueltos de la carpeta general
 MAX_FILES = 20000          # por si se elige una carpeta enorme (un disco entero): se deja de buscar
@@ -25,6 +27,15 @@ def get_root() -> str:
 def used_before() -> bool:
     settings = load_settings()
     return "dj_root" in settings or "dj_source" in settings
+
+
+def get_order() -> str:
+    """Cómo se ordenan las canciones de la sesión: ORDER_SMART (por defecto) u ORDER_RANDOM."""
+    return ORDER_RANDOM if load_settings().get("dj_order") == ORDER_RANDOM else ORDER_SMART
+
+
+def set_order(order: str):
+    _store(dj_order=ORDER_RANDOM if order == ORDER_RANDOM else ORDER_SMART)
 
 
 def get_source() -> str:

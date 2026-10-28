@@ -124,7 +124,8 @@ def selftest() -> int:
         for name in ("ui.nowplaying_full", "ui.calibrate", "ui.keep_change", "ui.celebrate", "ui.winext", "ui.emptystate",
                      "ui.continue_card", "ui.focusring", "ui.tooltips", "services.envelope", "services.app_updater", "services.word_timing", "ui.single_instance",
                      "services.tempo", "ui.panel_grip", "ui.dj_mixin", "ui.dj_page", "services.dj_service",
-                     "services.track_analysis"):
+                     "services.track_analysis", "services.dj_planner", "services.audio_features", "services.key_detect",
+                     "services.camelot"):
             importlib.import_module(name)
         check("módulos de las animaciones y de la pantalla completa", True)
     except Exception as e:
@@ -141,8 +142,13 @@ def selftest() -> int:
         audio = np.concatenate([chord(root) for root in (48, 53, 55, 48)])          # do - fa - sol - do
         found = key_detect.detect_from_samples((audio / np.abs(audio).max() * 0.5).astype("float32"))
         check(f"tono con numpy (do - fa - sol - do, da «{found['tone']}»)", bool(found["tone"]) and camelot.compatible(found["tone"], "8B"))
+        from services import audio_features, dj_planner
+        energy = audio_features.energy_score(audio_features.compute((audio / np.abs(audio).max() * 0.5).astype("float32")))
+        check(f"energía con numpy (da {energy})", energy is not None and 0.0 <= energy <= 1.0)
+        songs = [dj_planner.Track(i, 90.0 + i, f"{1 + i % 12}A", 0.9, i / 11, "pop", f"a{i % 3}") for i in range(12)]
+        check("orden inteligente (12 canciones)", sorted(t.ref for t in dj_planner.plan(songs)) == list(range(12)))
     except Exception as e:
-        check(f"tono con numpy: {e}", False)
+        check(f"tono, energía y orden con numpy: {e}", False)
     from services.ffmpeg_service import FFmpegService
     if os.environ.get("SELFTEST_SIN_FFMPEG"):      # la compilación automática no incluye FFmpeg (se descarga al usarlo)
         check("ffmpeg: se descarga al primer uso", True)

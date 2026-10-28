@@ -191,21 +191,63 @@ else:
     result = track_analysis.analyze(analizada)
     check(f"analyze() incluye el tono (sol menor = 6A; da {result and result.get('tone')})", result is not None
           and result["tone"] == "6A" and result["tone_conf"] > 0.8)
-    again = track_analysis.stored(analizada, need_tone=True)
+    again = track_analysis.stored(analizada, need_audio=True)
     check("se lee del índice con el tono", again is not None and again["tone"] == "6A")
+    check("el análisis trae las medidas de energía y el género", result["loudness_db"] is not None and result["loudness_db"] > -60
+          and result["energy"] is not None and 0 <= result["energy"] <= 1 and result["flux"] > 0)
+
+    # un análisis anterior sin las medidas de energía: se enseña ya y no se vuelve a calcular el tono (lo más caro)
+    parcial = dict(result, tone="3B", tone_conf=0.7, loudness_db=None, brightness_hz=None, flux=None, energy=None)
+    track_analysis.save(analizada, parcial)
+    check("la fila sin medidas de energía vale sin pedirlas y se descarta si se piden",
+          track_analysis.stored(analizada) is not None and track_analysis.stored(analizada, need_audio=True) is None)
+    reutiliza = track_analysis.analyze(analizada, previous=track_analysis.stored(analizada))
+    check("al completarlo se reutiliza el tono que ya había (no se recalcula) y se añaden las medidas",
+          reutiliza["tone"] == "3B" and reutiliza["tone_conf"] == 0.7 and reutiliza["loudness_db"] is not None)
+    track_analysis.save(analizada, parcial)
+    emitidas, pasos = [], []
+    trabajador = track_analysis.AnalysisWorker([analizada])
+    trabajador.result.connect(lambda p, r: emitidas.append(dict(r)))
+    trabajador.progress.connect(lambda d, t: pasos.append((d, t)))
+    trabajador.start()
+    deadline = time.time() + 60
+    while not trabajador.isFinished() and time.time() < deadline:
+        app.processEvents()
+        time.sleep(0.03)
+    app.processEvents()
+    check("el trabajador enseña primero el análisis parcial y luego el completo (con el tono que ya tenía)",
+          len(emitidas) == 2 and emitidas[0]["loudness_db"] is None and emitidas[0]["tone"] == "3B"
+          and emitidas[1]["loudness_db"] is not None and emitidas[1]["tone"] == "3B")
+    check("y avisa del progreso de una sola canción", pasos == [(0, 1), (1, 1)])
+
+    # un fallo al medir no se reintenta eternamente
+    from services import audio_features
+    real_compute = audio_features.compute
+    audio_features.compute = lambda samples: (_ for _ in ()).throw(RuntimeError("fallo de prueba"))
+    try:
+        fallida = track_analysis.analyze(analizada)
+    finally:
+        audio_features.compute = real_compute
+    check("si falla la medida, queda marcada como no medible (no se reintenta) y no revienta",
+          fallida is not None and fallida["loudness_db"] == audio_features.NOT_MEASURED and fallida["energy"] is None
+          and track_analysis.stored(analizada, need_audio=True) is not None)
 
 # ------------------------------------------------------------------ guardado en el índice
 fake = os.path.join(carpeta, "guardada.mp3")
 with open(fake, "wb") as fh:
     fh.write(b"x")
-base = {"bpm": 120.0, "confidence": 2.0, "energy": 0.5, "intro_ms": 1000, "outro_ms": 2000, "duration_ms": 180000}
+base = {"bpm": 120.0, "confidence": 2.0, "energy": 0.5, "intro_ms": 1000, "outro_ms": 2000, "duration_ms": 180000,
+        "genre": "Reggaeton", "artist": "Artista", "loudness_db": -7.0, "brightness_hz": 1500.0, "flux": 0.3}
 track_analysis.save(fake, dict(base, tone=None, tone_conf=0.0))
 check("sin tono intentado: se da por hecho si no se pide el tono", track_analysis.stored(fake)["tone"] is None)
-check("y por no hecho si se puede calcular el tono (para reintentar)", track_analysis.stored(fake, need_tone=True) is None)
+check("y por no hecho si se puede calcular el tono (para reintentar)", track_analysis.stored(fake, need_audio=True) is None)
+track_analysis.save(fake, dict(base, tone="8A", tone_conf=0.71, loudness_db=None))
+check("sin las medidas de energía (análisis anterior a ellas): se reintenta si se pueden calcular",
+      track_analysis.stored(fake) is not None and track_analysis.stored(fake, need_audio=True) is None)
 track_analysis.save(fake, dict(base, tone="", tone_conf=0.0))
-check("tono «» (se intentó y no hay armonía clara): no se reintenta", track_analysis.stored(fake, need_tone=True)["tone"] == "")
+check("tono «» (se intentó y no hay armonía clara): no se reintenta", track_analysis.stored(fake, need_audio=True)["tone"] == "")
 track_analysis.save(fake, dict(base, tone="8A", tone_conf=0.71))
-check("ida y vuelta del tono y su confianza", track_analysis.stored(fake, need_tone=True)["tone"] == "8A"
+check("ida y vuelta del tono y su confianza", track_analysis.stored(fake, need_audio=True)["tone"] == "8A"
       and track_analysis.stored(fake)["tone_conf"] == 0.71)
 check("el resultado del análisis lleva los dos campos nuevos", {"tone", "tone_conf"} <= set(track_analysis.analyze_envelope(b"")))
 
@@ -237,7 +279,7 @@ check("una base de la versión anterior gana las columnas del tono", {"tone", "t
 check("y no pierde lo que tenía (BPM 128, tono sin intentar)", fila["bpm"] == 128.0 and fila["tone"] is None)
 check("una fila válida de la versión anterior sigue valiendo (no se reanaliza todo al actualizar)",
       track_analysis.stored(vieja) is not None and track_analysis.stored(vieja)["bpm"] == 128.0)
-check("y solo se vuelve a analizar si se puede calcular el tono", track_analysis.stored(vieja, need_tone=True) is None)
+check("y solo se vuelve a analizar si se puede calcular el tono", track_analysis.stored(vieja, need_audio=True) is None)
 library_db._ready = False
 with library_db.connect() as con:
     check("repetirlo no da error (columnas ya creadas)", len({row[1] for row in con.execute("PRAGMA table_info(analysis)")}) == len(columnas))

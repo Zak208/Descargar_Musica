@@ -10,8 +10,8 @@ from PySide6.QtGui import QActionGroup, QDesktopServices
 from PySide6.QtMultimedia import QMediaPlayer
 from PySide6.QtWidgets import QFileDialog, QMenu
 
-from services import dj_service, key_detect, tempo
-from services.dj_service import SOURCE_ALL, SOURCE_ROOT, DjScanWorker
+from services import dj_planner, dj_service, key_detect, tempo
+from services.dj_service import ORDER_RANDOM, ORDER_SMART, SOURCE_ALL, SOURCE_ROOT, DjScanWorker
 from services.track_analysis import AnalysisWorker
 from ui.dialogs import ask_text
 from ui.dj_page import DjPage, UPCOMING_SHOWN
@@ -42,7 +42,8 @@ class DjMixin:
         self._dj_last_key = None       # la última canción de la sesión que sonó
         self._dj_has_next = False
         self.page_dj = None
-        self._dj_analysis = {}         # ruta → análisis (tempo, energía, intro y final)
+        self._dj_analysis = {}         # ruta → análisis (tempo, tono, energía, intro y final)
+        self._dj_replan_pending = False  # la sesión empezó con canciones sin analizar: se reordena al terminar el análisis
         self._dj_an_worker = None
         self._dj_an_restart = False
         self._dj_an_progress = (0, 0)  # (analizadas, por analizar) en la tanda en marcha
@@ -154,6 +155,9 @@ class DjMixin:
             self._dj_an_progress = (0, 0)
             if self.page_dj is not None:
                 self.page_dj.set_progress("")
+            if self._dj_replan_pending:
+                self._dj_replan_pending = False
+                self.dj_replan(auto=True)
 
     def _dj_progress_text(self) -> str:
         done, total = self._dj_an_progress
@@ -241,6 +245,8 @@ class DjMixin:
         parts = [f"{round(bpm)} BPM" + (" (a mano)" if manual else "") if bpm else "sin pulso claro"]
         if found.get("tone"):                    # tono en la rueda Camelot; con «?» si no está claro (las etiquetas valen 1,0)
             parts.append(found["tone"] + ("" if (found.get("tone_conf") or 0) >= key_detect.CONFIDENT else "?"))
+        if found.get("energy") is not None and found.get("loudness_db") is not None:
+            parts.append(f"energía {1 + round(found['energy'] * 9)}")      # del 1 al 10
         if found.get("intro_ms"):
             parts.append(f"intro {self.format_time(found['intro_ms'])}")
         if found.get("outro_ms"):
@@ -294,6 +300,15 @@ class DjMixin:
                 menu.addAction(f"Solo se han leído las primeras {dj_service.MAX_FILES} canciones").setEnabled(False)
 
         menu.addSeparator()
+        order_menu = menu.addMenu(icon("shuffle.svg"), "Orden de las canciones")
+        order_group = QActionGroup(order_menu)
+        for key, text in ((ORDER_SMART, "Inteligente (ritmo, tono, energía y género)"), (ORDER_RANDOM, "Aleatorio")):
+            act = order_menu.addAction(text)
+            act.setCheckable(True)
+            act.setChecked(key == self._dj_order())
+            order_group.addAction(act)
+            act.triggered.connect(lambda _=False, k=key: self.set_dj_order(k))
+        menu.addSeparator()
         start = menu.addAction(icon("play.svg"), "Empezar a pinchar")
         start.triggered.connect(self.start_dj_session)
         start.setEnabled(summary is None or bool(dj_service.tracks_for(summary, source)))
@@ -322,26 +337,37 @@ class DjMixin:
         source = self._dj_source()
         paths = dj_service.without_blocked(dj_service.tracks_for(self._dj_summary, source))
         random.shuffle(paths)
+        tracks = [self._local_track_info(p, {}) for p in paths]   # sin leer etiquetas aquí: se leen al sonar cada una
+        smart = self._dj_order() == ORDER_SMART
+        if smart:
+            tracks = self._dj_plan(tracks, None, 0, len(tracks))
         skipped = 0
-        while paths and skipped < MAX_MISSING_SKIPS and not os.path.isfile(paths[0]):   # borradas desde que se leyó
-            paths.pop(0)
+        while tracks and skipped < MAX_MISSING_SKIPS and not os.path.isfile(tracks[0]["local_path"]):   # borradas desde que se leyó
+            tracks.pop(0)
             skipped += 1
-        if not paths or not os.path.isfile(paths[0]):
+        if not tracks or not os.path.isfile(tracks[0]["local_path"]):
             self.notify("No hay canciones en esa carpeta (mp3, mp4, m4a, wav, flac, ogg o wma)."
                         if not skipped else "Las canciones de esa carpeta han cambiado: pulsa «Volver a leer la carpeta».")
             return
-        tracks = [self._local_track_info(p, {}) for p in paths]   # sin leer etiquetas aquí: se leen al sonar cada una
         self.set_context(tracks)
         self._dj_context = self._context
         self._dj_in_session = True
         self._dj_last_key = None
-        fade_note = ""
+        notes = ""
+        if smart:
+            # solo se promete afinarlo si hay un análisis en marcha que pueda traer lo que falta
+            self._dj_replan_pending = (self._dj_an_worker is not None
+                                       and any(info["local_path"] not in self._dj_analysis for info in tracks))
+            notes += " Orden inteligente" + (" (se afinará al terminar el análisis)." if self._dj_replan_pending else ".")
+            if getattr(self, "is_shuffle_enabled", False):       # el aleatorio del reproductor desharía el orden
+                self.toggle_shuffle()
+                notes += " Se ha desactivado el aleatorio del reproductor."
         if self._fade_ms <= 0:
             self.set_fade_seconds(DJ_FADE_SECONDS)
-            fade_note = f" Se ha activado el fundido de {DJ_FADE_SECONDS} s."
+            notes += f" Se ha activado el fundido de {DJ_FADE_SECONDS} s."
         self._play_entry(tracks[0], crossfade_ms=self.crossfade_ms())
         self.open_dj_page()
-        self.notify(f"Modo DJ: {len(tracks)} canciones de {self._dj_source_label(source)}.{fade_note}")
+        self.notify(f"Modo DJ: {len(tracks)} canciones de {self._dj_source_label(source)}.{notes}")
 
     def dj_track_changed(self):
         """Cambió la canción que suena: ¿sigue siendo de la sesión DJ?, la siguiente existe todavía y la página al día."""
@@ -418,17 +444,68 @@ class DjMixin:
         return bool(a and b) and track_key(a) == track_key(b)
 
     def dj_reshuffle(self):
+        """Orden nuevo para lo que queda por sonar (lo que ya sonó y lo que suena se quedan como están)."""
         if not self.dj_session_active():
             return
         pos = self._context_position()
         if pos < 0:
             return
-        rest = self._dj_context[pos + 1:]       # solo lo que queda: lo que ya sonó se queda donde estaba
+        if self._dj_order() == ORDER_SMART:
+            self.dj_replan()
+            return
+        rest = self._dj_context[pos + 1:]
         random.shuffle(rest)
         self._dj_context[pos + 1:] = rest
         self.reset_shuffle()
         self.dj_queue_changed()
         self.notify("Orden nuevo para lo que queda.")
+
+    # ------------------------------------------------------------ orden inteligente
+    def _dj_order(self) -> str:
+        return dj_service.get_order()
+
+    def set_dj_order(self, order: str):
+        if order == self._dj_order():
+            return
+        dj_service.set_order(order)
+        if self.dj_session_active():
+            self.dj_reshuffle()                 # con el modo nuevo: inteligente o aleatorio
+        else:
+            self.refresh_dj_page()
+
+    def _dj_track(self, info: dict):
+        """Los datos de una canción con los que decide el planificador (lo que se sepa de su análisis)."""
+        path = info.get("local_path")
+        found = self._dj_analysis.get(path) or {}
+        bpm, _manual = self._dj_effective_bpm(path) if path else (None, False)
+        energy = found.get("energy") if found.get("loudness_db") is not None else None
+        return dj_planner.Track(info, bpm, found.get("tone") or None, found.get("tone_conf") or 0.0, energy,
+                                found.get("genre") or "", found.get("artist") or "")
+
+    def _dj_plan(self, infos: list, previous, start_index: int, total: int) -> list:
+        """`infos` en el orden en que conviene que suenen (ver `dj_planner`)."""
+        ordered = dj_planner.plan([self._dj_track(i) for i in infos], self._dj_track(previous) if previous else None,
+                                  start_index, total)
+        return [track.ref for track in ordered]
+
+    def dj_replan(self, auto: bool = False) -> bool:
+        """Vuelve a ordenar lo que queda por sonar con lo que se sabe ahora de las canciones. `auto`: lo hace el programa al
+        terminar el análisis, no el usuario. Devuelve si reordenó algo."""
+        if not self.dj_session_active() or self._dj_order() != ORDER_SMART:
+            return False
+        pos = self._context_position()
+        context = self._dj_context
+        if pos < 0 or len(context) - pos - 1 < 2:
+            if not auto:
+                self.notify("No quedan canciones suficientes para reordenar.")
+            return False
+        context[pos + 1:] = self._dj_plan(context[pos + 1:], context[pos], pos + 1, len(context))
+        self.reset_shuffle()
+        if not auto and self._dj_an_worker is not None:      # con el análisis a medias: se afina otra vez cuando termine
+            self._dj_replan_pending = True
+        self.dj_queue_changed()
+        self.notify("Orden inteligente listo con el análisis completo." if auto else "Orden nuevo para lo que queda.")
+        return True
 
     def dj_unblock_all(self):
         dj_service.unblock_all()
@@ -461,7 +538,11 @@ class DjMixin:
             return
         root = dj_service.get_root()
         source = self._dj_source()
-        where = f"Carpeta: {os.path.basename(root) or root} · suena {self._dj_source_label(source)}"
+        order = "aleatorio"
+        if self._dj_order() == ORDER_SMART:
+            order = ("inteligente (anulado: el aleatorio del reproductor está activado)"
+                     if getattr(self, "is_shuffle_enabled", False) else "inteligente")
+        where = f"Carpeta: {os.path.basename(root) or root} · suena {self._dj_source_label(source)} · orden {order}"
         if self._dj_summary is None:
             where += " · leyendo la carpeta…"
         elif self._dj_summary.get("missing"):
