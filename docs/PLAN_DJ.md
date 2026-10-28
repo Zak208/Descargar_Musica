@@ -40,10 +40,11 @@ grande del proyecto.
 - «Empezar a pinchar»: orden aleatorio y fundido que iguala el ritmo (si estaba apagado se pone a 8 s).
 - **Puerta**: una hora seguida sonando sin cortes ni errores con tu carpeta real. *(Pendiente de probar por ti.)*
 
-### Fase 3 · Página DJ (6 a 10 h)
+### Fase 3 · Página DJ ✅ hecho (pendiente de que la pruebes)
 - Una página propia: canción que suena, la siguiente, cuánto falta para la mezcla, lista de la sesión.
-- Botones: saltar, «esta no», bloquear canción para que no vuelva a salir, volver a barajar.
-- **Puerta**: se puede llevar una sesión entera solo desde esa página.
+- Botones: saltar, «esta no», bloquear canción para que no vuelva a salir, volver a barajar, desbloquear todas.
+- Si pones otra lista o un álbum, la sesión DJ se da por terminada y la página vuelve a «Empezar a pinchar».
+- **Puerta**: se puede llevar una sesión entera solo desde esa página. Prueba `pruebas/prueba_dj_pagina.py` en verde.
 
 ### Fase 4 · Análisis de cada canción (12 a 20 h)
 - Guardar en el índice: BPM, confianza del BPM, energía media, duración de intro y de final.

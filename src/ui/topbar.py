@@ -175,6 +175,7 @@ class TopBar(QWidget):
         super().resizeEvent(event)
         narrow = self.width() < self.NARROW
         self.info.setVisible(not narrow)
+        self.btn_dj.setText("" if narrow else " DJ")          # estrecha: el botón DJ se queda solo con el icono
         self._brand_hidden_by_width = narrow
         self.brand.setVisible(not narrow and not self.btn_update.isVisible())
 

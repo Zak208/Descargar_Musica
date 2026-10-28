@@ -963,6 +963,7 @@ class ListPage(QWidget):
             for info in infos:
                 w.playback_queue.append(info)
             w.notify(f"{len(infos)} canciones sonarán a continuación")
+            w.dj_queue_changed()
         elif key == "download":
             w.start_batch_download([i for i in infos if not i.get("local_path")])
         elif key == "add":

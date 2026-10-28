@@ -14,11 +14,17 @@ DJ_EXTS = AUDIO_EXTS + ('.mp4',)
 SOURCE_ALL = "*"           # toda la carpeta general, con sus subcarpetas
 SOURCE_ROOT = ""           # solo los archivos sueltos de la carpeta general
 MAX_FILES = 20000          # por si se elige una carpeta enorme (un disco entero): se deja de buscar
+MAX_FOLDERS = 20000        # y lo mismo con las carpetas (aunque no tengan música)
 
 
 def get_root() -> str:
-    root = load_settings().get("dj_root") or ""
-    return root if root and os.path.isdir(root) else str(get_download_dir())
+    """Sin mirar el disco (se llama desde la interfaz): si la carpeta ya no existe, la lectura lo dice."""
+    return load_settings().get("dj_root") or str(get_download_dir())
+
+
+def used_before() -> bool:
+    settings = load_settings()
+    return "dj_root" in settings or "dj_source" in settings
 
 
 def get_source() -> str:
@@ -40,10 +46,43 @@ def set_source(source: str):
     _store(dj_source=source)
 
 
+def _blocked_key(path: str) -> str:
+    return os.path.normcase(os.path.abspath(path))
+
+
+def get_blocked() -> set:
+    """Canciones que no deben volver a salir en el modo DJ."""
+    return set(load_settings().get("dj_blocked", []))
+
+
+def block(path: str):
+    blocked = get_blocked()
+    blocked.add(_blocked_key(path))
+    _store(dj_blocked=sorted(blocked))
+
+
+def unblock_all():
+    _store(dj_blocked=[])
+
+
+def without_blocked(paths: list) -> list:
+    blocked = get_blocked()
+    if not blocked:
+        return list(paths)
+    return [p for p in paths if _blocked_key(p) not in blocked]
+
+
+def _is_folder(entry) -> bool:
+    """Carpeta de verdad (no un acceso directo de Windows a otra carpeta, que puede dar vueltas sin fin)."""
+    return entry.is_dir(follow_symlinks=False) and not entry.is_junction()
+
+
 def _walk(folder: str, found: list, limit: int):
     stack = [folder]
-    while stack and len(found) < limit:
+    visited = 0
+    while stack and len(found) < limit and visited < MAX_FOLDERS:
         current = stack.pop()
+        visited += 1
         try:
             with os.scandir(current) as it:
                 entries = sorted(it, key=lambda e: e.name.lower())
@@ -51,7 +90,7 @@ def _walk(folder: str, found: list, limit: int):
             continue
         for entry in entries:
             try:
-                if entry.is_dir(follow_symlinks=False):
+                if _is_folder(entry):
                     stack.append(entry.path)
                 elif entry.name.lower().endswith(DJ_EXTS):
                     found.append(entry.path)
@@ -66,7 +105,7 @@ def scan(root: str) -> dict:
         with os.scandir(root) as it:
             for entry in sorted(it, key=lambda e: e.name.lower()):
                 try:
-                    if entry.is_dir(follow_symlinks=False):
+                    if _is_folder(entry):
                         subdirs.append(entry)
                     elif entry.name.lower().endswith(DJ_EXTS):
                         loose.append(entry.path)
@@ -84,13 +123,25 @@ def scan(root: str) -> dict:
             folders[entry.name] = found
         if total >= MAX_FILES:
             break
-    return {"root": root, "loose": loose, "folders": folders, "truncated": total >= MAX_FILES}
+    return {"root": root, "loose": loose, "folders": folders, "truncated": total >= MAX_FILES,
+            "missing": not os.path.isdir(root)}
+
+
+def effective_source(summary: dict, source: str) -> str:
+    """La fuente que de verdad suena: si la subcarpeta elegida ya no existe (o la carpeta general ya no tiene archivos
+    sueltos), suena toda la carpeta. Así el menú, la página y la sesión dicen y hacen lo mismo."""
+    if not summary or source == SOURCE_ALL:
+        return SOURCE_ALL
+    if source == SOURCE_ROOT:
+        return SOURCE_ROOT if summary["loose"] else SOURCE_ALL
+    return source if source in summary["folders"] else SOURCE_ALL
 
 
 def tracks_for(summary: dict, source: str) -> list:
-    """Las canciones que suenan con la fuente elegida (si la subcarpeta ya no existe, suena todo)."""
+    """Las canciones que suenan con la fuente elegida (ver `effective_source`)."""
     if not summary:
         return []
+    source = effective_source(summary, source)
     if source == SOURCE_ROOT:
         return list(summary["loose"])
     if source in summary["folders"]:

@@ -88,8 +88,12 @@ class PlaybackMixin:
         """Con el aleatorio, el orden de las canciones que vienen se decide de antemano, una sola vez. Así lo que
         muestran «A continuación» y la cola es exactamente lo que va a sonar (y no se repite hasta agotar la lista)."""
         cur = self.current_item_info
+        # qué está en la lista, por clave y por id (lo mismo que `_same_track`, sin comparar cada una con todas: con
+        # miles de canciones, como en el modo DJ, comparar todas con todas congelaba la ventana varios segundos)
+        keys = {track_key(c) for c in self._context}
+        ids = {str(c.get("id")) for c in self._context if c.get("id")}
         plan = [t for t in self._shuffle_plan
-                if not self._same_track(t, cur) and any(self._same_track(t, c) for c in self._context)]
+                if not self._same_track(t, cur) and (track_key(t) in keys or (t.get("id") and str(t.get("id")) in ids))]
         if not any(self.playable(t) for t in plan):
             pool = [t for t in self._context if not self._same_track(t, cur) and self.playable(t)]
             random.shuffle(pool)

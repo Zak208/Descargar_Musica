@@ -50,6 +50,11 @@ check("solo la carpeta general: las 2 sueltas", len(dj_service.tracks_for(summar
 check("una subcarpeta: solo lo suyo", sorted(os.path.basename(p) for p in dj_service.tracks_for(summary, "Drill")) == ["d.wav"])
 check("una subcarpeta que ya no existe: suena todo", len(dj_service.tracks_for(summary, "Borrada")) == 6)
 check("sin resumen no hay canciones", dj_service.tracks_for(None, SOURCE_ALL) == [])
+no_loose = dict(summary, loose=[])
+check("«solo la carpeta general» sin archivos sueltos pasa a toda la carpeta",
+      dj_service.effective_source(no_loose, SOURCE_ROOT) == SOURCE_ALL and len(dj_service.tracks_for(no_loose, SOURCE_ROOT)) == 4)
+check("una subcarpeta borrada pasa a toda la carpeta", dj_service.effective_source(summary, "Borrada") == SOURCE_ALL)
+check("una carpeta general que ya no existe se avisa", dj_service.scan(os.path.join(root, "no_existe"))["missing"])
 check("una carpeta que no existe no da error", dj_service.count_all(dj_service.scan(os.path.join(root, "no_existe"))) == 0)
 
 old_max = dj_service.MAX_FILES
@@ -67,6 +72,19 @@ check("se recuerda la carpeta general", dj_service.get_root() == root)
 check("se recuerda qué suena", dj_service.get_source() == "Drill")
 dj_service.set_root(root)
 check("al cambiar de carpeta general vuelve a sonar todo", dj_service.get_source() == SOURCE_ALL)
+
+# Canciones bloqueadas
+everything = dj_service.tracks_for(summary, SOURCE_ALL)
+check("sin bloqueadas no se quita nada", dj_service.without_blocked(everything) == everything)
+dj_service.block(everything[0])
+dj_service.block(everything[0])
+check("bloquear la misma dos veces cuenta una", len(dj_service.get_blocked()) == 1)
+check("la bloqueada no entra", everything[0] not in dj_service.without_blocked(everything)
+      and len(dj_service.without_blocked(everything)) == 5)
+check("aunque la ruta se escriba con otras mayúsculas", len(dj_service.without_blocked([everything[0].upper()])) == 0
+      if os.name == "nt" else True)
+dj_service.unblock_all()
+check("desbloquear todas", not dj_service.get_blocked())
 
 # Lectura en segundo plano
 worker = dj_service.DjScanWorker(root)
@@ -94,10 +112,15 @@ class FakeWindow(DjMixin):
     def __init__(self):
         self.init_dj_state()
         self._fade_ms = 0
+        self._context, self.current_item_info = [], None
         self.context, self.played, self.notes = None, [], []
 
     def set_context(self, tracks):
-        self.context = tracks
+        self._context = list(tracks)
+        self.context = self._context
+
+    def switch_to_page(self, index):
+        pass
 
     def _local_track_info(self, path, meta=None):
         return {"local_path": path, "title": os.path.basename(path)}

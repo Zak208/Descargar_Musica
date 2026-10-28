@@ -350,6 +350,9 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self.page_library.delete_requested.connect(self.delete_playlist)
         self.stacked_widget.addWidget(self.page_library)
 
+        # === PAGE 6: MODO DJ ===
+        self.build_dj_page()
+
         build_player_bar(self)
         install_ripples(self)           # onda al pulsar en los botones principales
         tooltips.install()              # ayudas propias (con el atajo de teclado)
@@ -769,7 +772,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             "Solo tienen sentido si vas a editar el audio.</p>",
             ok="Entendido")
 
-    _PAGE_DEPTH = {0: 0, 5: 0, 1: 1, 4: 1, 2: 2, 3: 3}      # inicio y biblioteca arriba; el detalle, más hondo
+    _PAGE_DEPTH = {0: 0, 5: 0, 6: 0, 1: 1, 4: 1, 2: 2, 3: 3}      # inicio, biblioteca y DJ arriba; el detalle, más hondo
 
     def switch_to_page(self, target_index: int):
         """Cambia de página con un cruce suave: se hace una foto de la página que se va y esa foto se desvanece (y se
@@ -824,6 +827,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self.reset_shuffle()                      # el orden de lo que viene se decide de nuevo
         if hasattr(self, "now_panel") and self.now_panel.isVisible():
             self.now_panel.refresh_next()         # y el panel «A continuación» enseña lo que de verdad sonará
+        self.dj_queue_changed()                   # y la página DJ también
 
     def check_ffmpeg_and_update(self):
         if os.environ.get("SELFTEST_SIN_FFMPEG"):
@@ -960,12 +964,14 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self.notify("Sonará a continuación")
         if self.now_panel.isVisible():
             self.now_panel.refresh_next()
+        self.dj_queue_changed()
 
     def open_queue_dialog(self):
         cur = self.current_item_info or {}
         dialog = QueueDialog(cur, self.playback_queue, self.upcoming_tracks(), self)
         dialog.play_item_requested.connect(lambda item: self._play_entry(item))
         dialog.queue_updated.connect(lambda: self.now_panel.isVisible() and self.now_panel.refresh_next())
+        dialog.queue_updated.connect(self.dj_queue_changed)
         dialog.exec()
 
     def notify_track_changed(self, title: str, artist: str):
@@ -1305,6 +1311,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
                 except RuntimeError:
                     pass
         self.on_track_started()
+        self.dj_track_changed()
         if load_settings().get("dynamic_accent", False):
             QTimer.singleShot(900, self._update_live_accent)         # cuando ya llegó la portada
         if self._full_player_visible() and self.current_item_info:
@@ -1369,6 +1376,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
                 self.lyrics_dialog.update_position(position_ms)
             if self.now_panel.isVisible():
                 self.now_panel.update_position(position_ms)
+            self.dj_tick(position_ms)
 
         finally:
             self.is_updating_seek = False
@@ -1439,6 +1447,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
     def handle_playback_state(self, state):
         self.update_system_status(state == QMediaPlayer.PlayingState)
         self.playing_changed.emit(state == QMediaPlayer.PlayingState)
+        self.dj_tick(self.player.position())          # «En pausa» o la cuenta atrás de la mezcla
         if state == QMediaPlayer.PlayingState:
             self._resume_pending = False
             if not getattr(self, "_panel_first_play_done", False):
