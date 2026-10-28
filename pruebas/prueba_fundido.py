@@ -118,7 +118,7 @@ w.play_local_file(paths[0])
 w.player.play()
 check("empieza la primera canción", wait(lambda: w.player.playbackState() == QMediaPlayer.PlayingState and w.player.duration() > 10000, 15))
 first = w.player
-w.audio_output.setVolume(0)
+w._set_output_volume(w.audio_output, 0)          # por el mismo camino que la aplicación (así no se desincroniza su recuerdo)
 w.volume_slider.setValue(100)
 w.player.setPosition(w.player.duration() - 5000)        # faltan 5 s: al llegar a 4 s empieza el fundido
 check("antes del fundido solo hay un reproductor sonando", w._out_deck is None and not w._xf_active)

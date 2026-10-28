@@ -1,10 +1,11 @@
 """Más opciones de reproducción: temporizador para dormir, velocidad, repetir un tramo, fundido entre canciones,
 igualar el volumen entre canciones, control multimedia de Windows y controles en la bandeja del sistema."""
+import logging
 import math
 import os
 import time
 
-from PySide6.QtCore import QBuffer, QIODevice, QEasingCurve, QTimer, QUrl, QVariantAnimation, Qt
+from PySide6.QtCore import Q_ARG, QBuffer, QIODevice, QEasingCurve, QMetaObject, QTimer, QUrl, QVariantAnimation, Qt
 from PySide6.QtGui import QAction, QActionGroup
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
@@ -153,11 +154,28 @@ class PlaybackOptionsMixin:
     def show_seek_osd(self, seconds: int):
         self.osd.show_osd("forward.svg" if seconds > 0 else "rewind.svg", f"{'+' if seconds > 0 else '−'}{abs(seconds)} s")
 
+    @staticmethod
+    def _set_output_volume(output, volume: float):
+        """Cambia el volumen de una salida de audio, solo si es distinto del último que se le puso.
+
+        Se llama a `setVolume` con `QMetaObject.invokeMethod(..., DirectConnection)` y no con `output.setVolume(...)`.
+        Esta última se hace desde Python con el GIL cogido y, si a la vez el hilo de audio de Qt está tocando las
+        conexiones de esa salida (justo al parar o cambiar de canción) y necesita el GIL para un evento, cada uno espera
+        lo del otro y la aplicación se queda colgada (se veía en prueba_listas, también en main). `invokeMethod` suelta
+        el GIL durante la llamada, que sigue siendo inmediata, y no puede formarse ese bloqueo."""
+        volume = max(0.0, min(1.0, volume))
+        if getattr(output, "_volumen_aplicado", None) == volume:
+            return
+        output._volumen_aplicado = volume
+        if not QMetaObject.invokeMethod(output, "setVolume", Qt.DirectConnection, Q_ARG("float", volume)):
+            logging.getLogger(__name__).warning("No se pudo cambiar el volumen sin el GIL: se hace directo (puede colgarse)")
+            output.setVolume(volume)
+
     def _apply_volume(self):
         master = self._volume_master * self._sleep_factor
-        self.audio_output.setVolume(max(0.0, min(1.0, master * self._fade_factor * self._gain_factor)))
+        self._set_output_volume(self.audio_output, master * self._fade_factor * self._gain_factor)
         if self._out_deck is not None:
-            self._out_deck[1].setVolume(max(0.0, min(1.0, master * self._out_factor * self._out_gain)))
+            self._set_output_volume(self._out_deck[1], master * self._out_factor * self._out_gain)
 
     def _set_fade(self, value: float):
         self._fade_factor = max(0.0, min(1.0, value))

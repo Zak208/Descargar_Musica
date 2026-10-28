@@ -1191,8 +1191,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self.player_status.setText("Reproduciendo" if autoplay else "Pausado")
         self.btn_play_pause.setEnabled(True)
 
-        self._current_audio_device = QMediaDevices.defaultAudioOutput()
-        self.audio_output.setDevice(self._current_audio_device)
+        self._use_default_audio_device()
         # Ecualizador: si la versión ajustada ya está lista se usa directamente; si no, se empieza con el original
         source, render = self._eq_source(path)
         self.player.setSource(QUrl.fromLocalFile(source))
@@ -1206,6 +1205,14 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self._eq_source_path = path
         self._eq_active_render = render
         self._apply_eq_if_needed()
+
+    def _use_default_audio_device(self):
+        """Usa la salida de audio por defecto del equipo. Solo se llama a Qt si es otra (Qt ya ignora el cambio al mismo
+        dispositivo, pero así se evita una llamada más desde Python con el GIL cogido)."""
+        device = QMediaDevices.defaultAudioOutput()
+        self._current_audio_device = device
+        if self.audio_output.device() != device:
+            self.audio_output.setDevice(device)
 
     def _show_player_bar(self):
         """La barra de reproducción aparece subiendo un poco la primera vez que suena algo."""
@@ -1408,8 +1415,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         if self.player.playbackState() != QMediaPlayer.StoppedState:
             self.player.stop()
 
-        self._current_audio_device = QMediaDevices.defaultAudioOutput()
-        self.audio_output.setDevice(self._current_audio_device)
+        self._use_default_audio_device()
 
         self.player.setSource(QUrl(stream_url))
         self.player.play()

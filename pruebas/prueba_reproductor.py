@@ -51,6 +51,7 @@ w.resize(1360, 860)
 w.show()
 pump(2.5)
 w.volume_slider.setValue(50)
+pump(0.1)          # el volumen se aplica encolado: lo hace Qt en su siguiente vuelta de eventos
 check("volumen: el control manda", abs(w.audio_output.volume() - 0.5) < 0.01)
 items = w.library_items()
 
@@ -65,6 +66,7 @@ pump(1.4)          # el ajuste de volumen llega poco a poco (no de golpe, para q
 expected = 0.5 * loudness_service.gain_for(loudness_service.stored(path))
 check("al sonar, el volumen se ajusta a la medida", abs(w.audio_output.volume() - expected) < 0.01)
 w.set_normalize(False)
+pump(0.1)
 check("sin igualar el volumen, vuelve al del control", abs(w.audio_output.volume() - 0.5) < 0.01)
 w.set_normalize(True)
 
@@ -74,6 +76,7 @@ w.set_sleep_timer(1)
 check("temporizador: se activa", w._sleep_deadline and w._sleep_timer.isActive() and w.btn_options.toolTip().count("detendrá"))
 w._sleep_deadline = time.time() + 5
 w._sleep_tick()
+pump(0.1)
 check("temporizador: el volumen baja al final", 0.2 < w._sleep_factor < 0.3 and w.audio_output.volume() < expected)
 w._sleep_deadline = time.time() - 1
 w._sleep_tick()
@@ -134,4 +137,35 @@ check("los botones del sistema controlan la reproducción", calls == ["next", "p
 actions = [a.text() for a in w.tray_icon.contextMenu().actions() if a.text()]
 check("bandeja: menú con controles", "Siguiente" in actions and "Anterior" in actions and "Salir" in actions)
 check("bandeja: por defecto cerrar la ventana cierra la aplicación", w.should_close_to_tray() is False)
+
+# ---- volumen y dispositivo de salida: la llamada a Qt suelta el GIL y no se repite (evita un bloqueo entre el GIL y Qt)
+from types import SimpleNamespace
+
+from PySide6.QtMultimedia import QAudioOutput, QMediaDevices
+
+salida = QAudioOutput()
+salida.setVolume(1.0)
+w._set_output_volume(salida, 0.3)
+check("el volumen se aplica al momento (la canción nueva no suena un instante al volumen anterior)",
+      abs(salida.volume() - 0.3) < 0.01)
+salida.setVolume(0.9)
+w._set_output_volume(salida, 0.3)
+check("el mismo volumen no se vuelve a mandar", abs(salida.volume() - 0.9) < 0.01)
+w._set_output_volume(salida, 0.5)
+w._set_output_volume(salida, 0.7)
+check("varios cambios seguidos: vale el último", abs(salida.volume() - 0.7) < 0.01)
+w._set_output_volume(salida, 5.0)
+check("el volumen se limita a 1", abs(salida.volume() - 1.0) < 0.01)
+w._set_output_volume(salida, -2.0)
+check("y nunca baja de 0", abs(salida.volume()) < 0.01)
+
+dispositivo = QMediaDevices.defaultAudioOutput()
+veces = []
+falsa = SimpleNamespace(audio_output=SimpleNamespace(device=lambda: dispositivo, setDevice=lambda d: veces.append(d)))
+MainWindow._use_default_audio_device(falsa)
+check("si el dispositivo de salida es el mismo, no se cambia", veces == [] and falsa._current_audio_device == dispositivo)
+falsa.audio_output = SimpleNamespace(device=lambda: None, setDevice=lambda d: veces.append(d))
+MainWindow._use_default_audio_device(falsa)
+check("si es otro, sí se cambia", veces == [dispositivo])
+
 print("FIN")
