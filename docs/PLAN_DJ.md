@@ -46,11 +46,14 @@ grande del proyecto.
 - Si pones otra lista o un álbum, la sesión DJ se da por terminada y la página vuelve a «Empezar a pinchar».
 - **Puerta**: se puede llevar una sesión entera solo desde esa página. Prueba `pruebas/prueba_dj_pagina.py` en verde.
 
-### Fase 4 · Análisis de cada canción (12 a 20 h)
-- Guardar en el índice: BPM, confianza del BPM, energía media, duración de intro y de final.
-- Se analiza una vez en segundo plano (con `heavy_task`) y se guarda; solo se repite si cambia el archivo.
-- Barra de progreso «Analizando 34 de 100».
-- **Puerta**: el BPM es correcto en al menos 90 de 100 canciones (comprobado a mano con unas cuantas).
+### Fase 4 · Análisis de cada canción ✅ hecho (pendiente de que lo pruebes)
+- Se guarda en el índice (tabla `analysis`): BPM, confianza del BPM, energía, duración de la intro y del final.
+- Sale de la envolvente que ya se guardaba para el visualizador (`services/track_analysis.py`): si la canción ya sonó,
+  no se vuelve a escuchar el audio. Se analiza una vez en segundo plano y solo se repite si cambia el archivo.
+- La página DJ enseña «Analizando canciones: 34 de 100…» y el BPM, la intro y el final de cada canción.
+- El fundido aprovecha el BPM ya calculado.
+- **Puerta**: el BPM es correcto en al menos 90 de 100 canciones (compruébalo con la página DJ con unas cuantas).
+  Prueba `pruebas/prueba_analisis.py` en verde.
 
 ### Fase 5 · Corregir BPM a mano (4 a 6 h)
 - En reguetón, drill y trap el BPM sale a veces a la mitad o al doble (95 frente a 190).

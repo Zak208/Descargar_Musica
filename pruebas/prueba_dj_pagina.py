@@ -100,6 +100,11 @@ check("se ve lo que suena", page.now_title.text() != "")
 check("se ve lo que viene", page.next_title.text() != "" and page.upcoming.count() == 5)
 check("la cuenta atrás de la mezcla aparece", wait(lambda: page.countdown.text().startswith("La mezcla empieza en"), 10))
 check("el fundido está encendido", w._fade_ms > 0)
+check("las canciones de la carpeta se analizan solas", wait(lambda: len(w._dj_analysis) >= 6, 120))
+w.refresh_dj_page()
+check("la página enseña el análisis (estos tonos no tienen pulso)", "sin pulso claro" in page.now_detail.text()
+      and "sin pulso claro" in page.upcoming.item(0).text())
+check("al terminar el análisis se quita el aviso de progreso", wait(lambda: page.progress.isHidden(), 10))
 
 # Saltar
 before = w.current_item_info["local_path"]

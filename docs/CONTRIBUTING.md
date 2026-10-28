@@ -26,5 +26,7 @@ pip install ruff pytest                   # herramientas de calidad
   (`network_service.private_mode()`) y el modo sin conexión.
 - **Actualizaciones**: las versiones se buscan en la web de GitHub (`releases/latest`), no en la API (tiene límite de peticiones).
 - `src/ui/main_window.py` solo coordina; la lógica nueva va en un mixin (`src/ui/*_mixin.py`) o en `src/services/`.
-- **Un solo `.bat` en la carpeta principal** (`lanzador.bat`): todo lo demás vive en su carpeta (`src`, `empaquetado`, `docs`, `pruebas`).
+- **Dos `.bat` en la carpeta principal y ninguno más**: `lanzador.bat` (compila y crea el instalador) e `iniciar.bat`
+  (abre el programa desde el código para probarlo, con los datos de desarrollo). Todo lo demás vive en su carpeta
+  (`src`, `empaquetado`, `docs`, `pruebas`).
 - Probar el empaquetado de verdad: `lanzador.bat /sin-abrir` (compila, comprueba y crea el instalador).

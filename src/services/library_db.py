@@ -40,6 +40,17 @@ CREATE TABLE IF NOT EXISTS loudness (
     mtime REAL NOT NULL,
     lufs REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS analysis (
+    path TEXT PRIMARY KEY,
+    mtime REAL NOT NULL,
+    version INTEGER NOT NULL,
+    bpm REAL,
+    confidence REAL DEFAULT 0,
+    energy REAL DEFAULT 0,
+    intro_ms INTEGER DEFAULT 0,
+    outro_ms INTEGER DEFAULT 0,
+    duration_ms INTEGER DEFAULT 0
+);
 CREATE INDEX IF NOT EXISTS idx_tracks_artist ON tracks(artist);
 CREATE INDEX IF NOT EXISTS idx_tracks_album ON tracks(album);
 """

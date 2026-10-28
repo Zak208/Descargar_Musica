@@ -42,9 +42,15 @@ def _interp(signal: list, pos: float) -> float:
 
 def estimate_bpm(data: bytes):
     """Tempo estimado (float) o None si la música no tiene un pulso claro."""
+    return estimate_bpm_with_confidence(data)[0]
+
+
+def estimate_bpm_with_confidence(data: bytes) -> tuple:
+    """(tempo o None, confianza): la confianza es lo que destaca el mejor tempo sobre la media (1,0 = nada; con
+    MIN_CONFIDENCE o más se da el tempo por bueno)."""
     signal = onset_signal(data)
     if len(signal) < 600 or max(signal, default=0) <= 0:          # menos de un minuto: no se fía
-        return None
+        return None, 0.0
     # se usa la parte central de la canción (introducciones y finales suelen tener otro ritmo)
     n = len(signal)
     lo, hi = int(n * 0.15), int(n * 0.85)
@@ -67,9 +73,8 @@ def estimate_bpm(data: bytes):
         bpm += 0.5
     top_bpm, top = max(scores, key=lambda s: s[1])
     mean = sum(s for _b, s in scores) / len(scores)
-    if mean <= 0 or top / mean < MIN_CONFIDENCE:
-        return None
-    return top_bpm
+    confidence = top / mean if mean > 0 else 0.0
+    return (top_bpm if confidence >= MIN_CONFIDENCE else None), confidence
 
 
 def remember(path: str, data: bytes):
@@ -99,3 +104,9 @@ def match_rate(bpm_out, bpm_in):
     if abs(best - 1.0) > MAX_MATCH or abs(best - 1.0) < MIN_MATCH:
         return None
     return best
+
+
+def learn(path: str, bpm) -> None:
+    """Apunta un tempo ya calculado en otro sitio (el análisis del modo DJ), para no volver a calcularlo al mezclar."""
+    if path not in _cache:
+        _cache[path] = bpm

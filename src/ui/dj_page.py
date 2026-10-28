@@ -77,6 +77,11 @@ class DjPage(QWidget):
         self.btn_unblock.hide()
         source_row.addWidget(self.btn_unblock)
         main.addLayout(source_row)
+        self.progress = QLabel("")
+        self.progress.setObjectName("SectionSubtitle")
+        self.progress.setWordWrap(True)
+        self.progress.hide()
+        main.addWidget(self.progress)
 
         # --- sin sesión: qué hacer ---
         self.empty = QLabel("Elige la carpeta con «Cambiar carpeta» o con el botón DJ de arriba, y pulsa «Empezar a pinchar».")
@@ -107,6 +112,10 @@ class DjPage(QWidget):
         self.now_artist = ElidedLabel("")
         self.now_artist.setObjectName("SectionSubtitle")
         now_lay.addWidget(self.now_artist)
+        self.now_detail = QLabel("")
+        self.now_detail.setObjectName("SectionSubtitle")
+        self.now_detail.setWordWrap(True)
+        now_lay.addWidget(self.now_detail)
         self.countdown = QLabel("")
         self.countdown.setStyleSheet("font-size: 14px; font-weight: 700; color: #1ED760; background: transparent;")
         self.countdown.setWordWrap(True)
@@ -160,7 +169,10 @@ class DjPage(QWidget):
         self.btn_unblock.setText(f"Desbloquear ({blocked})")
         self.btn_unblock.setVisible(blocked > 0)
 
-    def set_session(self, active: bool, now: dict = None, nxt: dict = None, upcoming: list = (), remaining: int = 0):
+    def set_session(self, active: bool, now: dict = None, nxt: dict = None, upcoming: list = (), remaining: int = 0,
+                    describe=None):
+        """`describe(info)`: texto corto con el análisis de una canción («128 BPM · intro 0:12…»), o "" si no hay."""
+        describe = describe or (lambda _info: "")
         self.empty.setVisible(not active)
         self.session.setVisible(active)
         self._labels[self.btn_start] = " Empezar de nuevo" if active else " Empezar a pinchar"
@@ -171,7 +183,12 @@ class DjPage(QWidget):
         now = now or {}
         self.now_title.setText(now.get("title", ""))
         self.now_artist.setText(now.get("uploader", ""))
-        self.next_title.setText(nxt.get("title", "") if nxt else "Nada más: la sesión termina con esta canción")
+        self.now_detail.setText(describe(now))
+        if nxt:
+            extra = describe(nxt)
+            self.next_title.setText(nxt.get("title", "") + (f"  ·  {extra}" if extra else ""))
+        else:
+            self.next_title.setText("Nada más: la sesión termina con esta canción")
         self.btn_drop.setEnabled(bool(nxt))
         self.btn_skip.setEnabled(bool(nxt))
         self.list_title.setText("Lo que queda" if remaining else "No queda nada más")
@@ -181,7 +198,8 @@ class DjPage(QWidget):
             self.list_title.setText(f"Lo que queda · {remaining} " + ("canción" if remaining == 1 else "canciones"))
         self.upcoming.clear()
         for i, info in enumerate(list(upcoming)[:UPCOMING_SHOWN], 1):
-            self.upcoming.addItem(f"{i}.  {info.get('title', '')}")
+            extra = describe(info)
+            self.upcoming.addItem(f"{i}.  {info.get('title', '')}" + (f"  ·  {extra}" if extra else ""))
 
     # ------------------------------------------------------------ ancho
     def _needed_width(self) -> int:
@@ -204,6 +222,11 @@ class DjPage(QWidget):
         if compact != self._compact:
             self._compact = compact
             self._apply_labels()
+
+    def set_progress(self, text: str):
+        """Cómo va el análisis de las canciones («Analizando 34 de 100…»); vacío = oculto."""
+        self.progress.setText(text)
+        self.progress.setVisible(bool(text))
 
     def set_countdown(self, text: str):
         if self.countdown.text() != text:

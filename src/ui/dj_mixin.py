@@ -10,8 +10,9 @@ from PySide6.QtGui import QActionGroup, QDesktopServices
 from PySide6.QtMultimedia import QMediaPlayer
 from PySide6.QtWidgets import QFileDialog, QMenu
 
-from services import dj_service
+from services import dj_service, tempo
 from services.dj_service import SOURCE_ALL, SOURCE_ROOT, DjScanWorker
+from services.track_analysis import AnalysisWorker
 from ui.dj_page import DjPage, UPCOMING_SHOWN
 from ui.icons import icon
 from ui.pages import Page
@@ -20,6 +21,7 @@ from ui.playback_mixin import track_key
 DJ_FADE_SECONDS = 8          # si el fundido está apagado, la sesión DJ lo enciende con esta duración
 FIRST_SCAN_MS = 6000         # la carpeta se lee un poco después de abrir (así el menú ya la tiene)
 MAX_MISSING_SKIPS = 50       # canciones borradas seguidas que se saltan antes de rendirse
+REFRESH_DELAY_MS = 400       # mientras llegan muchos análisis seguidos, la página se pone al día como mucho así de a menudo
 
 
 class DjMixin:
@@ -39,6 +41,14 @@ class DjMixin:
         self._dj_last_key = None       # la última canción de la sesión que sonó
         self._dj_has_next = False
         self.page_dj = None
+        self._dj_analysis = {}         # ruta → análisis (tempo, energía, intro y final)
+        self._dj_an_worker = None
+        self._dj_an_restart = False
+        self._dj_an_progress = (0, 0)  # (analizadas, por analizar) en la tanda en marcha
+        self._dj_refresh_timer = QTimer()
+        self._dj_refresh_timer.setSingleShot(True)
+        self._dj_refresh_timer.setInterval(REFRESH_DELAY_MS)
+        self._dj_refresh_timer.timeout.connect(self.refresh_dj_page)
         if dj_service.used_before():       # solo si ya se ha usado el DJ: si no, la carpeta se lee al abrir el menú
             QTimer.singleShot(FIRST_SCAN_MS, self.refresh_dj_folder)
 
@@ -72,6 +82,7 @@ class DjMixin:
             return
         self._dj_summary = summary
         self.refresh_dj_page()
+        self._dj_start_analysis()
         if self._dj_start_when_ready:
             self._dj_start_when_ready = False
             self.start_dj_session()
@@ -98,6 +109,65 @@ class DjMixin:
     def set_dj_source(self, source: str):
         dj_service.set_source(source)
         self.refresh_dj_page()
+        self._dj_start_analysis()
+
+    # ------------------------------------------------------------ análisis de las canciones
+    def _dj_start_analysis(self):
+        """Analiza (una vez por canción, en segundo plano) las canciones que van a sonar."""
+        if self._dj_summary is None:
+            return
+        if self._dj_an_worker is not None:          # hay una tanda en marcha: para y empieza la nueva al terminar
+            self._dj_an_restart = True
+            self._dj_an_worker.cancel()
+            return
+        self._dj_an_restart = False
+        paths = dj_service.without_blocked(dj_service.tracks_for(self._dj_summary, self._dj_source()))
+        worker = AnalysisWorker(paths, self)
+        worker.result.connect(self._on_dj_analysis)
+        worker.progress.connect(self._on_dj_analysis_progress)
+        worker.finished.connect(self._on_dj_analysis_done)
+        self._dj_an_worker = worker
+        worker.start()
+
+    def _on_dj_analysis(self, path: str, result: dict):
+        self._dj_analysis[path] = result
+        tempo.learn(path, result.get("bpm"))       # el fundido ya no tiene que calcularlo
+        if not self._dj_refresh_timer.isActive():
+            self._dj_refresh_timer.start()
+
+    def _on_dj_analysis_progress(self, done: int, total: int):
+        self._dj_an_progress = (done, total)
+        if self.page_dj is not None:
+            self.page_dj.set_progress(self._dj_progress_text())
+
+    def _on_dj_analysis_done(self):
+        worker, self._dj_an_worker = self._dj_an_worker, None
+        if worker is not None:
+            worker.deleteLater()
+        if self._dj_an_restart:
+            self._dj_start_analysis()
+        else:
+            self._dj_an_progress = (0, 0)
+            if self.page_dj is not None:
+                self.page_dj.set_progress("")
+
+    def _dj_progress_text(self) -> str:
+        done, total = self._dj_an_progress
+        if not total or done >= total:
+            return ""
+        return f"Analizando canciones (ritmo, intro y final): {done} de {total}…"
+
+    def dj_describe(self, info: dict) -> str:
+        """Texto corto con el análisis de una canción, o "" si aún no está."""
+        found = self._dj_analysis.get((info or {}).get("local_path"))
+        if not found:
+            return ""
+        parts = [f"{round(found['bpm'])} BPM" if found.get("bpm") else "sin pulso claro"]
+        if found.get("intro_ms"):
+            parts.append(f"intro {self.format_time(found['intro_ms'])}")
+        if found.get("outro_ms"):
+            parts.append(f"final {self.format_time(found['outro_ms'])}")
+        return " · ".join(parts)
 
     def _dj_source(self) -> str:
         return dj_service.effective_source(self._dj_summary, dj_service.get_source())
@@ -321,11 +391,12 @@ class DjMixin:
             total = len(dj_service.without_blocked(dj_service.tracks_for(self._dj_summary, source)))
             where += f" · {total} " + ("canción" if total == 1 else "canciones")
         page.set_source(where, len(dj_service.get_blocked()))
+        page.set_progress(self._dj_progress_text())
         if not self.dj_session_active():
             page.set_session(False)
             return
         upcoming = self.upcoming_tracks(UPCOMING_SHOWN)
-        page.set_session(True, self.current_item_info, self.peek_next(), upcoming, self._dj_remaining())
+        page.set_session(True, self.current_item_info, self.peek_next(), upcoming, self._dj_remaining(), self.dj_describe)
         self.dj_tick(self.player.position())
 
     def dj_tick(self, position_ms: int):
