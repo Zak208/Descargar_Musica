@@ -590,4 +590,13 @@ else:
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
+# ---- 14. la misma ruta escrita de dos formas (Qt da «/», la ventana usa «\\») es la misma canción ----------------------------------
+sess = Rig(SONGS, {"A": None}).sess
+with sess._lock:
+    sess._pending_adopt = r"C:\musica/Reggaeton\B.mp3"
+check("adopt reconoce la misma ruta con otras barras y otras mayúsculas", sess.adopt(r"c:/MUSICA\reggaeton/b.mp3")
+      and not sess.adopt(r"c:/musica/reggaeton/b.mp3"))
+sess.stop(wait=False)
+check("stop(wait=False) no espera al hilo y deja la sesión parada", sess.current_path is None)
+
 print("FIN", flush=True)

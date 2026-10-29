@@ -10,7 +10,7 @@ import logging
 import math
 import os
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QTimer, QUrl
 
 from config import get_setting, update_settings
 from services import audio_engine, dj_engine, pcm_loader, track_analysis
@@ -19,6 +19,7 @@ from ui.engine_player import EnginePlayer
 logger = logging.getLogger(__name__)
 
 SETTING = "dj_engine"
+WATCH_MS = 700                  # cada cuánto se comprueba que la mezcla preparada sigue siendo hacia la canción que toca
 BPM_DISAGREE = 0.03             # si el BPM puesto a mano se aparta más de esto del de la rejilla (mitad y doble aparte), se descarta la rejilla
 
 
@@ -31,6 +32,10 @@ class DjEngineMixin:
         self._dj_engine_session = None         # EngineSession
         self._dj_engine_player = None          # EnginePlayer (el que hace de self.player mientras el motor está activo)
         self._dj_real_deck = None              # (QMediaPlayer, QAudioOutput) de siempre, a salvo mientras tanto
+        self._dj_engine_replanned = None       # la siguiente por la que ya se pidió rehacer la mezcla (para no insistir)
+        self._dj_engine_watch = QTimer()
+        self._dj_engine_watch.setInterval(WATCH_MS)
+        self._dj_engine_watch.timeout.connect(self._dj_engine_check_next)
 
     # ---- ajustes y estado -------------------------------------------------------------------------------------------
     def dj_engine_wanted(self) -> bool:
@@ -65,27 +70,34 @@ class DjEngineMixin:
             logger.info(f"Motor DJ no disponible: {reason}")
             self.notify(f"Se usa el fundido de siempre: {reason}.")
             return False
+        engine = None
         try:
+            audio_engine.refresh_devices()      # el dispositivo por defecto de ahora (auriculares conectados después de abrir)
             engine = audio_engine.MixEngine()
             if not engine.start():
                 self.notify(f"Se usa el fundido de siempre: no se pudo abrir la salida de audio ({engine.last_error}).")
                 return False
             session = dj_engine.EngineSession(engine, self._dj_engine_info, self._dj_engine_next)
-        except Exception as e:                  # el DJ nunca debe quedarse sin sonido por esto
+            engine.on_stream_finished = lambda why: QTimer.singleShot(0, lambda: self._dj_engine_lost(why))
+            self._finish_crossfade()
+            real_player, real_output = self.player, self.audio_output
+            real_player.stop()
+            real_player.setSource(QUrl())       # suelta el archivo de antes (Windows lo bloquearía para renombrar o borrar)
+            player = EnginePlayer(session, self)
+            player.foreign_source.connect(self._dj_engine_foreign)
+            self._wire_player(player)
+        except Exception as e:                  # el DJ nunca debe quedarse sin sonido por esto (ni dejar el flujo abierto)
             logger.warning(f"No se pudo iniciar el motor DJ: {e}")
+            if engine is not None:
+                engine.stop(fade=False)
             self.notify("Se usa el fundido de siempre: no se pudo iniciar el motor de mezcla.")
             return False
-        engine.on_stream_finished = lambda why: QTimer.singleShot(0, lambda: self._dj_engine_lost(why))
-        self._finish_crossfade()
-        real_player, real_output = self.player, self.audio_output
-        real_player.stop()
-        player = EnginePlayer(session, self)
-        player.foreign_source.connect(self._dj_engine_foreign)
-        self._wire_player(player)
         self._dj_engine, self._dj_engine_session, self._dj_engine_player = engine, session, player
         self._dj_real_deck = (real_player, real_output)
         self.player, self.audio_output = player, player.audio_output
         self._apply_volume()
+        self._dj_engine_replanned = None
+        self._dj_engine_watch.start()
         return True
 
     def dj_engine_leave(self):
@@ -94,6 +106,7 @@ class DjEngineMixin:
         if player is None:
             return
         engine = self._dj_engine
+        self._dj_engine_watch.stop()
         self._dj_engine = self._dj_engine_session = self._dj_engine_player = None
         real_player, real_output = self._dj_real_deck
         self._dj_real_deck = None
@@ -115,12 +128,18 @@ class DjEngineMixin:
         """El dispositivo de salida se perdió (auriculares desconectados...): se vuelve al reproductor de siempre."""
         if not self.dj_engine_on():
             return
+        path, position = (self.current_item_info or {}).get("local_path"), self.player.position()
         self.notify(f"Se perdió la salida de audio del motor de mezcla ({reason}). Pulsa reproducir para seguir.")
         self.dj_engine_leave()
+        if path and os.path.isfile(path):       # el reproductor de siempre se queda con esa canción, en pausa, en el mismo punto
+            self.player.setSource(QUrl.fromLocalFile(path))
+            self.player.pause()
+            self._seek_when_loaded(position)
 
     # ---- lo que el motor pregunta a la aplicación -------------------------------------------------------------------
     def _dj_engine_info(self, path: str) -> dict:
         """La ficha de una canción para el planificador de mezclas: su análisis, con el BPM puesto a mano si lo hay."""
+        path = next((p for p in (path, *self._dj_analysis) if _same_path(p, path)), path)     # la clave con la que se guardó
         info = dict(self._dj_analysis.get(path) or {})
         grid = track_analysis.grid_from(info)
         bpm, manual = self._dj_effective_bpm(path)
@@ -136,9 +155,38 @@ class DjEngineMixin:
         if not self.dj_session_active() or self.is_loop_enabled or self._sleep_end_of_track:
             return None
         if not _same_path((self.current_item_info or {}).get("local_path"), path):
-            return self._dj_engine_after_in_list(path)         # el motor salta una canción que no se pudo cargar
+            return self._dj_engine_skip_failed(path)         # el motor salta una canción que no se pudo cargar
         nxt = (self.peek_next() or {}).get("local_path")
         return nxt if nxt and os.path.isfile(nxt) else None
+
+    def _dj_engine_skip_failed(self, path: str):
+        """El motor no pudo cargar `path` (archivo roto): se quita de la sesión y se da la que sigue, que es la que mezclará."""
+        after = self._dj_engine_after_in_list(path)
+        failed = next((t for t in (self._dj_context or []) if _same_path(t.get("local_path"), path)), None)
+        if failed is not None:
+            self._dj_remove(failed)
+            self.notify(f"No se pudo cargar «{failed.get('title', '')}»: se salta.")
+        return after
+
+    def _dj_engine_check_next(self):
+        """Si la canción que toca después cambió (quitar, barajar, cola, repetir, temporizador...) y el motor ya había preparado
+        la mezcla hacia otra, se le pide que la rehaga. Se mira en un solo sitio en vez de en cada cambio de la cola."""
+        player, session = self._dj_engine_player, self._dj_engine_session
+        if player is None or session is None or not self.dj_session_active():
+            return
+        info = player.last_info
+        current = info.get("path")
+        if info.get("state") != "playing" or not _same_path(current, (self.current_item_info or {}).get("local_path")):
+            return                              # la ventana aún no ha puesto al día la canción actual
+        want = self._dj_engine_next(current)
+        have = info.get("next_path")
+        if (want is None and have is None) or (want and have and _same_path(want, have)):
+            self._dj_engine_replanned = None
+            return
+        if _same_path(want, self._dj_engine_replanned):
+            return                              # ya se pidió por esta (si no se pudo cargar, no se insiste cada vez)
+        self._dj_engine_replanned = want
+        session.replan()
 
     def _dj_engine_after_in_list(self, path: str):
         """La canción de la lista de la sesión que sigue a `path` (existente), o None."""

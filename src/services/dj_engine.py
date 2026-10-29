@@ -53,6 +53,7 @@ Mediciones (pruebas/prueba_motor_dj.py, Windows 11, CPU compartida; cargador rea
 import itertools
 import logging
 import math
+import os
 import queue as _queue
 import threading
 import time
@@ -70,6 +71,11 @@ MAX_TRIES = 5                   # canciones seguidas que se intentan cargar como
 INSTALL_TRIES = 8               # reintentos de cambiar la cola si la llamada de audio avanza a la vez
 
 _track_ids = itertools.count(1)
+
+
+def _key(path):
+    """La misma ruta escrita de dos formas (barras `/` de Qt o `\\` de la ventana, mayúsculas) es la misma canción."""
+    return os.path.normcase(os.path.normpath(path)) if path else path
 
 
 class _Track:
@@ -196,10 +202,10 @@ class EngineSession:
             self._pending_adopt = None
             self._want_play = bool(autoplay)
             start_s = max(0.0, float(start_s or 0.0))
-            if self._loading is not None and self._loading == path:
+            if self._loading is not None and _key(self._loading) == _key(path):
                 self._load_start = start_s
                 return
-            if self._loading is None and self._a is not None and self._a.path == path:
+            if self._loading is None and self._a is not None and _key(self._a.path) == _key(path):
                 self._seek_locked(start_s)
                 return
             self._gen += 1
@@ -222,7 +228,7 @@ class EngineSession:
     def adopt(self, path) -> bool:
         """True si `path` es la canción a la que la sesión acaba de avanzar sola (y entonces no hay que hacer nada más)."""
         with self._lock:
-            if path is not None and path == self._pending_adopt:
+            if path is not None and self._pending_adopt is not None and _key(path) == _key(self._pending_adopt):
                 self._pending_adopt = None
                 return True
             return False
@@ -239,8 +245,9 @@ class EngineSession:
             if self._loading is None and self._a is not None:
                 self._engine.play()
 
-    def stop(self):
-        """Para, vacía el motor, suelta los arrays y termina el hilo de trabajo."""
+    def stop(self, wait=True):
+        """Para, vacía el motor, suelta los arrays y termina el hilo de trabajo (con `wait=False` no se espera a que acabe
+        lo que estuviera haciendo: la interfaz no debe quedarse parada hasta 2 s; su resultado se tira)."""
         with self._lock:
             self._gen += 1
             self._pgen += 1
@@ -262,7 +269,8 @@ class EngineSession:
             self._tasks = None
         if worker is not None:
             tasks.put(None)
-            worker.join(timeout=2.0)
+            if wait:
+                worker.join(timeout=2.0)
 
     def seek(self, seconds):
         """Salta dentro de la canción actual. Si cae en la mezcla o después, salta al principio del cuerpo de B."""
@@ -616,8 +624,8 @@ class EngineSession:
             log.warning("info_for falló con %s: %s", path, e)
             info = None
         info = dict(info) if isinstance(info, dict) else {}
-        if info.get("duration_s") is None and info.get("duration_ms") is None:
-            info["duration_s"] = frames / SAMPLE_RATE       # sin análisis: la duración real
+        info["duration_s"] = frames / SAMPLE_RATE           # la duración de lo decodificado, no la del análisis (podría pasarse por una muestra)
+        info.pop("duration_ms", None)
         return info
 
     def _build_pair(self, a, b_path):

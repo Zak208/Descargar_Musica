@@ -59,6 +59,7 @@ class EnginePlayer(QObject):
         self._duration_ms = 0
         self._last_emitted_pos = -10_000
         self._announced_loaded = False
+        self._last_path = None                  # la última canción cargada (para volver a tocarla tras un fin o un error)
         self._stop_token = 0
         self.last_info = {}                     # el último estado de la sesión (para enseñar la mezcla planificada)
         self._timer = QTimer(self)
@@ -103,6 +104,7 @@ class EnginePlayer(QObject):
                 self.foreign_source.emit(url)
             return
         self._announced_loaded = False
+        self._last_path = path
         self._status = QMediaPlayer.LoadingMedia
         if self.session.adopt(path):
             self._set_state(QMediaPlayer.PlayingState if self._state != QMediaPlayer.PausedState else self._state)
@@ -113,6 +115,9 @@ class EnginePlayer(QObject):
         self._timer.start()
 
     def play(self):
+        if self.session.current_path is None and self._last_path and os.path.isfile(self._last_path):
+            self._announced_loaded = False                  # tras «Fin de la lista» o un error: vuelve a empezar la última
+            self.session.play(self._last_path, 0.0, autoplay=True)
         self.session.resume()
         self._timer.start()
         self._set_state(QMediaPlayer.PlayingState)
@@ -127,7 +132,11 @@ class EnginePlayer(QObject):
 
     def setPosition(self, ms: int):
         ms = max(0, int(ms))
-        self.session.seek(ms / 1000.0)
+        if self.session.current_path is None and self._last_path and os.path.isfile(self._last_path):
+            self._announced_loaded = False                  # repetir una canción que acabó (la sesión ya la había soltado)
+            self.session.play(self._last_path, ms / 1000.0, autoplay=self._state == QMediaPlayer.PlayingState)
+        else:
+            self.session.seek(ms / 1000.0)
         self._position_ms = ms
         self._last_emitted_pos = ms
         self.positionChanged.emit(ms)
@@ -135,7 +144,7 @@ class EnginePlayer(QObject):
     def close(self):
         self._stop_token += 1                   # un stop() aplazado ya no vale
         self._timer.stop()
-        self.session.stop()
+        self.session.stop(wait=False)
 
     # ---- por dentro -------------------------------------------------------------------------------------------------
     def _set_state(self, state):
@@ -144,7 +153,7 @@ class EnginePlayer(QObject):
             self.playbackStateChanged.emit(state)
 
     def _stop_now(self):
-        self.session.stop()
+        self.session.stop(wait=False)
         self._timer.stop()
         self._status = QMediaPlayer.NoMedia
         self._position_ms = 0

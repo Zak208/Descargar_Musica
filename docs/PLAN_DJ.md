@@ -119,7 +119,11 @@ grande del proyecto.
   una sesión con muy pocas canciones apenas deja margen; la energía mezcla tres medidas y puede no coincidir con tu idea de
   «energía» en algún género (si pasa, ajustar `audio_features.WEIGHTS`).
 
-### Fase 8 · Punto de mezcla (12 a 20 h)
+### Fase 8 · Punto de mezcla ✅ hecho (pendiente de que lo oigas)
+- **Hecho:** `services/mix_points.py` decide dónde empieza la mezcla (principio del final de la que suena) y desde dónde entra la
+  siguiente (por su intro, no por el segundo 0). Si no hay análisis o la canción es corta, corte limpio con su motivo. En el
+  reproductor de siempre se usa para el fundido; con el motor propio lo usa el planificador de mezclas (fase 13).
+- **Lo que NO está comprobado:** la puerta es de oído (6 de 10 transiciones aceptables). Solo hay pruebas con datos sintéticos.
 - Detectar dónde acaba la intro y dónde empieza el final de cada canción.
 - La mezcla empieza al principio del final de la que suena y la nueva entra por su intro (no por el segundo 0 si tiene silencio).
 - **Puerta**: escuchas 10 transiciones y al menos 6 suenan aceptables. **Si no se cumple, se para aquí y se revisa el análisis**: la IA no lo arreglará.
@@ -128,35 +132,74 @@ grande del proyecto.
 
 ## Bloque B · Motor de audio propio (mezcla de verdad)
 
-### Fase 9 · Decidir el motor (4 a 8 h de pruebas)
+### Fase 9 · Decidir el motor ✅ hecho (pendiente de la puerta de 30 minutos a oído)
+- **Elegido: híbrido** (ni la opción 1 ni la 2 puras): las canciones se decodifican a arrays estéreo, las transiciones se preparan con
+  numpy en un hilo y un flujo continuo de `sounddevice` toca los segmentos sin huecos. Razones y tablas en `docs/MOTOR_DJ.md`.
+- **Medido en tu equipo, en silencio:** 10 minutos con la interfaz sosteniendo el GIL: 25.852 llamadas de audio, 0 subdesbordamientos,
+  la más lenta 0,46 ms (presupuesto 23 ms). Preparar una transición cuesta menos de 1,5 s, así que se hace en cuanto suena A.
+- **Lo que NO está comprobado:** que suene sin cortes ni chasquidos 30 minutos con música real y altavoces (la puerta). Dispositivo
+  desconectado a mitad de sesión: el motor avisa y la ventana vuelve al reproductor de siempre, pero no se ha probado con auriculares.
 - Opción 1: motor en tiempo real con numpy y sounddevice (dos platos, mezcla muestra a muestra).
 - Opción 2: preparar cada transición por adelantado con ffmpeg (más simple, menos flexible).
 - Prueba pequeña con las dos y elegir.
 - **Puerta**: el motor elegido suena sin cortes ni chasquidos durante 30 minutos en tu equipo.
 
-### Fase 10 · Motor de dos platos (30 a 50 h)
+### Fase 10 · Motor de dos platos ✅ hecho (pendiente de que lo pruebes)
+- **Hecho:** `services/audio_engine.py` (`MixEngine`) y `services/dj_engine.py` (`EngineSession`: carga, planifica, prepara y encola la
+  siguiente). Dentro de la ventana, `ui/engine_player.py` hace de `QMediaPlayer` durante la sesión DJ (misma barra, letra, control de
+  Windows y lista) y `ui/dj_engine_mixin.py` lo activa y desactiva. Interruptor en el menú DJ («Mezclar con el motor propio»), activado
+  por defecto; si falta numpy, sounddevice, rubberband o la salida de audio, se sigue con el fundido de siempre y se avisa.
+- **Con el motor no valen:** el ecualizador de sonido, la velocidad de reproducción suelta y el volumen igualado de la ventana (lo hace
+  `deck_gain`). El temporizador «al terminar la canción» para el motor sin mezclar la siguiente.
+- **Pruebas:** `prueba_motor_audio` (47), `prueba_motor_dj` (72) y `prueba_motor_dj_ventana` (la ventana de verdad, en silencio:
+  empezar, pausa, buscar, «siguiente», paso solo con mezcla, salir de la sesión).
+- **Lo que NO está comprobado:** que se oiga bien, la latencia de salida real al buscar o pausar (unos 186 ms con el dispositivo por
+  defecto), y canciones de más de 8 minutos (tope del cargador).
 - Reproducir dos canciones a la vez con volumen, posición y pausa propios.
 - Que el resto de la aplicación (barra de reproducción, letra, control de Windows) siga funcionando.
 - **Puerta**: todas las pruebas de reproducción en verde con el motor nuevo.
 
-### Fase 11 · Rejilla de golpes (beatgrid) (12 a 20 h)
+### Fase 11 · Rejilla de golpes (beatgrid) ✅ hecho (la puerta, a oído)
+- **Hecho:** `services/beatgrid.py` da tempo exacto, primer golpe y golpe fuerte del compás (siempre 4 golpes por compás). Se calcula
+  con el análisis (misma decodificación que el tono) y se guarda en el índice (`beat_*`); por debajo de confianza 0,4 se ignora.
+- **Medido con audio sintético** (17 casos, de 80 a 160 BPM, con decimales): error de tempo máximo 0,001 %, primer golpe a menos de
+  1,3 ms, golpe fuerte del compás 17 de 17.
+- **Con tus 22 canciones reales** no hay verdad de referencia: alineación media 0,73 (5 dudosas, ver el informe en el vault). Lo que
+  más falla es el golpe fuerte del compás, que en música real es una estimación (acento de graves y cambios de bajo).
+- **Límites:** tempo fijo (sin deriva), la octava (mitad o doble) la decide el BPM del análisis, y el primer golpe puede salir tarde en
+  intros flojas pero con ritmo. **Puerta: 85 de 100 con el primer golpe bien, solo se comprueba a oído.**
 - Saber dónde cae cada golpe y cada compás, no solo el BPM.
 - **Puerta**: el primer golpe de cada compás está bien en 85 de 100 canciones.
 
-### Fase 12 · Sincronía de golpes (12 a 20 h)
+### Fase 12 · Sincronía de golpes ✅ hecho (pendiente de que lo oigas)
+- **Hecho:** `services/pcm_loader.py` decodifica a 44.100 Hz estéreo y estira el tempo con el filtro `rubberband` del FFmpeg del programa
+  (0,37 s para 20 s de audio, 4 s una canción entera). El planificador iguala el tempo de la que entra al de la que suena; más allá
+  de ±8 % hace corte limpio. Si el FFmpeg no trae rubberband, el motor propio no se activa.
+- **Lo que NO está comprobado:** la puerta («galope» en 10 transiciones) es de oído.
 - Cambiar el tempo sin cambiar el tono (rubberband) para que los golpes de las dos canciones caigan juntos.
 - Límite de ±8 %: más allá suena artificial; entonces corte limpio en vez de mezcla larga.
 - **Puerta**: en 10 transiciones no se oye «galope» (golpes desfasados).
 
-### Fase 13 · Mezcla por frases (10 a 16 h)
+### Fase 13 · Mezcla por frases ✅ hecho (pendiente de que lo oigas)
+- **Hecho:** `services/mix_planner.py`: con rejilla en las dos canciones, la mezcla dura 16 compases (si pasan de 32 s, la mitad hasta
+  caber), empieza en un comienzo de frase de A (16 u 8 compases), B entra en un comienzo de frase suyo (8 compases) y el cambio de
+  graves cae en un golpe hacia la mitad. Sin rejilla se usa la fase 8 sin cuadrar compases.
+- **Lo que NO está comprobado:** que «suene en su sitio» (8 de 10), y depende de que el golpe fuerte de la fase 11 esté bien.
 - Las mezclas empiezan y acaban en frases de 16 o 32 compases.
 - **Puerta**: las entradas suenan «en su sitio» en 8 de 10 transiciones.
 
-### Fase 14 · Cambio de graves y ecualizador de 3 bandas (10 a 16 h)
+### Fase 14 · Cambio de graves y ecualizador de 3 bandas ✅ hecho (pendiente de que lo oigas)
+- **Hecho:** `services/dj_dsp.py`: tres bandas por FFT de fase cero con reconstrucción perfecta; durante la mezcla los graves de la que
+  entra no suenan hasta el golpe del cambio, y ahí se pasan de una a otra en 40 ms con ganancias que suman 1 (60 pruebas, entre ellas
+  que nunca suenen los graves de las dos a la vez fuera de ese paso).
+- **Lo que NO está comprobado:** la puerta («nunca dos bombos y dos bajos») a oído, con canciones reales.
 - Durante la mezcla se quitan los graves de la que entra y, en un golpe, se pasan de una a otra (swap de graves).
 - **Puerta**: nunca suenan dos bombos y dos bajos a la vez.
 
-### Fase 15 · Volumen igualado (4 a 6 h)
+### Fase 15 · Volumen igualado ✅ hecho (pendiente de que lo oigas)
+- **Hecho:** `services/deck_gain.py` lleva cada canción a -14 LUFS (baja hasta 12 dB, sube hasta 6 dB y sin pasar del pico). La que
+  suena usa el LUFS ya guardado (si no hay, ganancia 1,0, para no retrasar el sonido) y la siguiente se mide al prepararla.
+- **Lo que NO está comprobado:** que no haya saltos de volumen en una hora (la puerta).
 - Usar el LUFS que ya se mide para que ninguna canción suene más alta o más baja.
 - **Puerta**: sin saltos de volumen en una sesión de una hora.
 

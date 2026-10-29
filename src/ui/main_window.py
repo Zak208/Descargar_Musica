@@ -1320,8 +1320,8 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
                     row.set_playing(self.is_current(row.item_info))
                 except RuntimeError:
                     pass
+        self.dj_track_changed()           # antes que lo demás: si sale del motor DJ, la canción nueva se normaliza y entra con fundido
         self.on_track_started()
-        self.dj_track_changed()
         if load_settings().get("dynamic_accent", False):
             QTimer.singleShot(900, self._update_live_accent)         # cuando ya llegó la portada
         if self._full_player_visible() and self.current_item_info:

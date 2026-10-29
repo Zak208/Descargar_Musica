@@ -61,14 +61,14 @@ def make_wav(rel, freq, bpm=120):
     return path
 
 
-paths = [make_wav(f"cancion{i}.wav", 330 + 55 * i) for i in range(3)]
+paths = [make_wav(f"cancion{i}.wav", 330 + 55 * i) for i in range(4)]
 outside = make_wav(os.path.join("..", os.path.basename(root) + "_fuera", "fuera.wav"), 880)
 
 from services import dj_service
 from ui.engine_player import EnginePlayer
 from ui.main_window import MainWindow
 
-dj_service.set_root(root)
+dj_service.set_root(root.replace(os.sep, "/"))      # como la devuelve el diálogo de Qt: barras mezcladas con las del sistema
 w = MainWindow()
 w.resize(1360, 860)
 w.show()
@@ -127,6 +127,15 @@ nxt = w.peek_next()["local_path"]
 print(f"      plan: empieza en {plan.a_start_s:.1f} s, dura {plan.length_s:.1f} s, tempo B x{plan.tempo_ratio_b:.3f}, {plan.reason}")
 check("la página DJ dice cuándo empieza la mezcla", wait(lambda: "La mezcla empieza" in w.page_dj.countdown.text()
                                                         or "Mezclando" in w.page_dj.countdown.text(), 5))
+
+# Quitar la siguiente: el motor rehace la mezcla hacia la que toca ahora
+before = w.peek_next()["local_path"]
+w.dj_drop_next()
+after_drop = w.peek_next()["local_path"]
+check("quitar la siguiente cambia la que toca", after_drop != before)
+check("el motor rehace la mezcla hacia la nueva siguiente (sin que nadie lo pida)",
+      wait(lambda: os.path.normcase(os.path.normpath(w.player.last_info.get("next_path") or "")) == os.path.normcase(os.path.normpath(after_drop)), 10))
+nxt = after_drop
 
 # «Siguiente» a mano
 w.dj_skip()

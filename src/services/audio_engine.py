@@ -78,6 +78,19 @@ def _sounddevice():
     return _sd_module
 
 
+def refresh_devices() -> None:
+    """Vuelve a leer los dispositivos de audio de Windows (PortAudio los lista al cargarse y no se entera de unos auriculares
+    conectados después). Solo si no hay ningún flujo abierto. No hace nada si falla."""
+    sd = _sounddevice()
+    if sd is None:
+        return
+    try:
+        sd._terminate()
+        sd._initialize()
+    except Exception as e:
+        log.info("no se pudieron refrescar los dispositivos de audio: %s", e)
+
+
 def available() -> bool:
     """True si se puede abrir un flujo de audio de verdad (numpy, sounddevice y al menos un dispositivo de salida)."""
     return output_device_info() is not None

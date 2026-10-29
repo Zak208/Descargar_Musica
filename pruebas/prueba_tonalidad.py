@@ -237,12 +237,16 @@ fake = os.path.join(carpeta, "guardada.mp3")
 with open(fake, "wb") as fh:
     fh.write(b"x")
 base = {"bpm": 120.0, "confidence": 2.0, "energy": 0.5, "intro_ms": 1000, "outro_ms": 2000, "duration_ms": 180000,
-        "genre": "Reggaeton", "artist": "Artista", "loudness_db": -7.0, "brightness_hz": 1500.0, "flux": 0.3}
+        "genre": "Reggaeton", "artist": "Artista", "loudness_db": -7.0, "brightness_hz": 1500.0, "flux": 0.3,
+        "beat_conf": 0.0}
 track_analysis.save(fake, dict(base, tone=None, tone_conf=0.0))
 check("sin tono intentado: se da por hecho si no se pide el tono", track_analysis.stored(fake)["tone"] is None)
 check("y por no hecho si se puede calcular el tono (para reintentar)", track_analysis.stored(fake, need_audio=True) is None)
 track_analysis.save(fake, dict(base, tone="8A", tone_conf=0.71, loudness_db=None))
 check("sin las medidas de energía (análisis anterior a ellas): se reintenta si se pueden calcular",
+      track_analysis.stored(fake) is not None and track_analysis.stored(fake, need_audio=True) is None)
+track_analysis.save(fake, dict(base, tone="8A", tone_conf=0.71, beat_conf=None))
+check("sin la rejilla de golpes intentada (análisis anterior a ella): se reintenta si se puede calcular",
       track_analysis.stored(fake) is not None and track_analysis.stored(fake, need_audio=True) is None)
 track_analysis.save(fake, dict(base, tone="", tone_conf=0.0))
 check("tono «» (se intentó y no hay armonía clara): no se reintenta", track_analysis.stored(fake, need_audio=True)["tone"] == "")
