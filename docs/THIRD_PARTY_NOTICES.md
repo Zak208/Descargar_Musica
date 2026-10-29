@@ -9,6 +9,7 @@ El programa usa y/o descarga los siguientes componentes. Cada uno mantiene su pr
 | [mutagen](https://github.com/quodlibet/mutagen) | Etiquetas de los archivos | GPL v2+ | Incluido |
 | [requests](https://github.com/psf/requests) | Peticiones web | Apache 2.0 | Incluido |
 | [NumPy](https://numpy.org/) | Análisis de audio del modo DJ (tono de las canciones) | BSD 3-Clause | Incluido |
+| [python-sounddevice](https://github.com/spatialaudio/python-sounddevice) con [PortAudio](https://www.portaudio.com/) (y sus dependencias cffi, MIT, y pycparser, BSD 3-Clause) | Motor de audio propio del modo DJ | MIT (PortAudio: licencia propia de tipo MIT) | Incluido (PortAudio va dentro de la rueda de sounddevice) |
 | [FFmpeg](https://ffmpeg.org/) (builds de [BtbN](https://github.com/BtbN/FFmpeg-Builds)) | Convertir audio | GPL v3 | **No se incluye**: se descarga la primera vez (con SHA-256) |
 | [whisper.cpp](https://github.com/ggml-org/whisper.cpp) y modelo `ggml-base` de OpenAI Whisper | Generar y sincronizar letras sin internet | MIT | **No se incluye**: se descarga si el usuario lo acepta (con SHA-256) |
 | [Poppins](https://fonts.google.com/specimen/Poppins) | Tipografía | SIL Open Font License 1.1 | Incluido |
