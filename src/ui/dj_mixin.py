@@ -1,7 +1,8 @@
 """Modo DJ: menú de arriba a la izquierda (carpeta general y qué parte suena) y página DJ para llevar la sesión.
 
-De momento la sesión DJ pone las canciones elegidas en orden aleatorio y las mezcla con el fundido que ya existe (que
-iguala el ritmo). Las mezclas por frases, el cambio de graves y lo demás llegan por fases (ver docs/PLAN_DJ.md)."""
+La sesión DJ ordena las canciones (`dj_planner`) y las mezcla con el fundido cruzado que ya existe (que iguala el
+ritmo), empezando la mezcla donde dice el análisis de cada canción (`mix_points`, fase 8). Las mezclas por frases, el
+cambio de graves y lo demás llegan por fases (ver docs/PLAN_DJ.md)."""
 import os
 import random
 
@@ -10,8 +11,9 @@ from PySide6.QtGui import QActionGroup, QDesktopServices
 from PySide6.QtMultimedia import QMediaPlayer
 from PySide6.QtWidgets import QFileDialog, QMenu
 
-from services import dj_planner, dj_service, key_detect, tempo
+from services import dj_planner, dj_service, key_detect, mix_points, tempo
 from services.dj_service import ORDER_RANDOM, ORDER_SMART, SOURCE_ALL, SOURCE_ROOT, DjScanWorker
+from services.mix_types import KIND_CUT
 from services.track_analysis import AnalysisWorker
 from ui.dialogs import ask_text
 from ui.dj_page import DjPage, UPCOMING_SHOWN
@@ -47,6 +49,7 @@ class DjMixin:
         self._dj_an_worker = None
         self._dj_an_restart = False
         self._dj_an_progress = (0, 0)  # (analizadas, por analizar) en la tanda en marcha
+        self._dj_mix = None            # (ruta de la que suena, su duración, (ruta de la siguiente, plan)) de la próxima mezcla
         self._dj_refresh_timer = QTimer()
         self._dj_refresh_timer.setSingleShot(True)
         self._dj_refresh_timer.setInterval(REFRESH_DELAY_MS)
@@ -136,6 +139,9 @@ class DjMixin:
 
     def _on_dj_analysis(self, path: str, result: dict):
         self._dj_analysis[path] = result
+        mix = self._dj_mix
+        if mix is not None and (path == mix[0] or (mix[2] is not None and path == mix[2][0])):
+            self._dj_mix = None                    # llegó el análisis de una de las dos de la próxima mezcla
         self._dj_apply_bpm(path)                   # el fundido ya no tiene que calcularlo
         if not self._dj_refresh_timer.isActive():
             self._dj_refresh_timer.start()
@@ -383,6 +389,7 @@ class DjMixin:
                 self._dj_context.insert(at + 1, dict(self.current_item_info))
             self._dj_last_key = key
             self._dj_prune_next()
+        self._dj_mix = None
         self._dj_has_next = bool(self.dj_session_active() and self.peek_next())
         self.refresh_dj_page()
 
@@ -515,6 +522,7 @@ class DjMixin:
 
     def dj_queue_changed(self):
         """Cambió lo que viene (cola, aleatorio, botones del DJ): la siguiente y la página se ponen al día."""
+        self._dj_mix = None
         self._dj_has_next = bool(self.dj_session_active() and self.peek_next())
         self.refresh_dj_page()
 
@@ -559,6 +567,35 @@ class DjMixin:
         page.set_session(True, self.current_item_info, self.peek_next(), upcoming, self._dj_remaining(), self.dj_describe)
         self.dj_tick()
 
+    # ------------------------------------------------------------ punto de mezcla (fase 8)
+    def dj_mix_plan(self):
+        """(ruta de la siguiente, `TransitionPlan`) de la mezcla de la que suena con la siguiente, con el punto que sale
+        de su análisis (`mix_points`), o None si no hay sesión DJ, la que suena aún no está analizada o no hay siguiente
+        en el equipo: entonces vale el fundido fijo de los Ajustes, como fuera del modo DJ.
+
+        Se calcula una vez por canción (y otra si cambia lo que viene o llega el análisis de alguna de las dos), porque
+        se consulta con cada avance de la canción y `peek_next` recorre la sesión entera."""
+        if not self.dj_session_active():
+            return None
+        a_path = self.current_item_info.get("local_path")
+        duration = int(self.player.duration())
+        mix = self._dj_mix
+        if mix is not None and mix[0] == a_path and mix[1] == duration:
+            return mix[2]
+        result = None
+        found = self._dj_analysis.get(a_path) if a_path else None
+        if found:
+            b_path = (self.peek_next() or {}).get("local_path")
+            if b_path and os.path.isfile(b_path):
+                plan = mix_points.plan(found, self._dj_analysis.get(b_path), duration / 1000.0 if duration > 0 else None)
+                result = (b_path, plan)
+        self._dj_mix = (a_path, duration, result)
+        return result
+
+    def dj_forget_mix(self):
+        """La próxima mezcla se vuelve a planificar en la siguiente consulta."""
+        self._dj_mix = None
+
     def dj_tick(self, position_ms: int = None):
         """Con cada avance de la canción: cuánto falta para que empiece la mezcla (solo si la página está a la vista).
         Sin `position_ms` se lee del reproductor, pero solo cuando hace falta (no en cada cambio de estado)."""
@@ -580,6 +617,14 @@ class DjMixin:
             text = "Sin fundido: la siguiente empieza al terminar esta"
         elif duration <= 0:
             text = ""
+        elif (mix := self.dj_mix_plan()) is not None:          # punto de mezcla según el análisis (el mismo del fundido)
+            plan = mix[1]
+            if plan.kind == KIND_CUT:
+                text = "Canción corta: la siguiente entra al terminar, sin mezcla"
+            else:
+                left = int(plan.a_start_s * 1000) - position_ms
+                text = (f"La mezcla empieza en {self.format_time(left)} · dura {round(plan.length_s)} s" if left > 0
+                        else "Mezclando con la siguiente…")
         elif duration <= self._fade_ms * 3:
             text = "Canción corta: la siguiente entra al terminar, sin mezcla"
         else:
