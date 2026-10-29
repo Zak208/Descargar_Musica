@@ -60,6 +60,8 @@ from services.mix_types import KIND_BLEND
 from ui.main_window import MainWindow
 
 dj_service.set_root(root)
+from config import update_settings  # noqa: E402
+update_settings(dj_engine=False)       # estas pruebas son del reproductor de siempre (el motor propio tiene la suya)
 w = MainWindow()
 w._set_output_volume(w.audio_output, 0)
 w.change_volume(0)                  # el volumen general a cero: también el reproductor de la mezcla queda en silencio

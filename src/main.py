@@ -125,7 +125,9 @@ def selftest() -> int:
                      "ui.continue_card", "ui.focusring", "ui.tooltips", "services.envelope", "services.app_updater", "services.word_timing", "ui.single_instance",
                      "services.tempo", "ui.panel_grip", "ui.dj_mixin", "ui.dj_page", "services.dj_service",
                      "services.track_analysis", "services.dj_planner", "services.audio_features", "services.key_detect",
-                     "services.camelot"):
+                     "services.camelot", "services.mix_types", "services.mix_points", "services.mix_planner", "services.beatgrid",
+                     "services.dj_dsp", "services.pcm_loader", "services.deck_gain", "services.audio_engine", "services.dj_engine",
+                     "ui.engine_player", "ui.dj_engine_mixin"):
             importlib.import_module(name)
         check("módulos de las animaciones y de la pantalla completa", True)
     except Exception as e:
@@ -149,6 +151,28 @@ def selftest() -> int:
         check("orden inteligente (12 canciones)", sorted(t.ref for t in dj_planner.plan(songs)) == list(range(12)))
     except Exception as e:
         check(f"tono, energía y orden con numpy: {e}", False)
+    try:                       # el motor de mezcla del DJ: rejilla de golpes, mezcla con graves y motor de audio (sounddevice)
+        import numpy as np
+        from services import audio_engine, beatgrid, dj_dsp, key_detect
+        from services.mix_types import SAMPLE_RATE, TransitionPlan
+        rate = key_detect.SAMPLE_RATE
+        period = int(rate * 60 / 120)
+        clicks = np.zeros(rate * 40, dtype="float32")
+        for start in range(0, len(clicks) - 2000, period):
+            clicks[start:start + 2000] = np.sin(2 * np.pi * 60 * np.arange(2000) / rate) * np.exp(-np.arange(2000) / 400.0)
+        grid = beatgrid.compute(clicks, 120.0)
+        check(f"rejilla de golpes con numpy (da {grid and round(grid.bpm, 1)} BPM)", grid is not None and abs(grid.bpm - 120.0) < 1.0)
+        a = (np.random.default_rng(1).standard_normal((SAMPLE_RATE * 4, 2)) * 0.1).astype("float32")
+        mix = dj_dsp.render_transition(a, a, TransitionPlan(0.0, 0.0, 2.0))
+        check("mezcla con cambio de graves (2 s)", mix.shape == (SAMPLE_RATE * 2, 2) and bool(np.isfinite(mix).all()))
+        check("sounddevice dentro del programa", audio_engine._sounddevice() is not None)
+        engine = audio_engine.MixEngine()
+        engine.queue(a[:SAMPLE_RATE])
+        engine.play(fade=False)
+        out = engine.pull(1024)
+        check("motor de audio (sin abrir el dispositivo)", out.shape == (1024, 2) and float(abs(out).max()) > 0.0)
+    except Exception as e:
+        check(f"motor de mezcla del DJ: {e}", False)
     from services.ffmpeg_service import FFmpegService
     if os.environ.get("SELFTEST_SIN_FFMPEG"):      # la compilación automática no incluye FFmpeg (se descarga al usarlo)
         check("ffmpeg: se descarga al primer uso", True)

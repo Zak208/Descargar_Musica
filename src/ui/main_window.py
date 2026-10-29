@@ -47,6 +47,7 @@ from ui.lyrics_mixin import LyricsMixin
 from ui.session_mixin import SessionMixin
 from ui.theme_mixin import ThemeMixin
 from ui.equalizer_mixin import EqualizerMixin
+from ui.dj_engine_mixin import DjEngineMixin
 from ui.dj_mixin import DjMixin
 from ui.artist_page import ArtistProfilePage
 from ui.album_page import AlbumDetailsPage
@@ -113,7 +114,7 @@ class FFmpegDownloadWorker(QThread):
 
 class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin, DownloadsMixin, OfflineMixin,
                  UsabilityMixin, PlaybackOptionsMixin, UpdatesMixin, LyricsMixin, SessionMixin, ThemeMixin, EqualizerMixin,
-                 SidebarMixin, DjMixin):
+                 SidebarMixin, DjMixin, DjEngineMixin):
     playing_changed = Signal(bool)          # empieza o se detiene el sonido (los indicadores de «sonando» lo siguen)
 
     def __init__(self):
@@ -160,6 +161,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self.init_home_state()
         self.init_search_state()
         self.init_downloads_state()
+        self.init_dj_engine_state()
         self.init_dj_state()
 
         # Ecualizador (graves / voces / agudos) aplicado a la música local

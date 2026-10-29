@@ -60,6 +60,8 @@ from ui.main_window import MainWindow
 from ui.pages import Page
 
 dj_service.set_root(root)
+from config import update_settings  # noqa: E402
+update_settings(dj_engine=False)       # estas pruebas son del reproductor de siempre (el motor propio tiene la suya)
 w = MainWindow()
 w.audio_output.setVolume(0)
 w.resize(1360, 860)

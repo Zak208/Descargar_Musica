@@ -170,6 +170,9 @@ class PlaybackOptionsMixin:
         if getattr(output, "_volumen_aplicado", None) == volume:
             return
         output._volumen_aplicado = volume
+        if getattr(output, "direct_volume", False):         # la del motor DJ: no es de Qt, no puede formar ese bloqueo
+            output.setVolume(volume)
+            return
         if not QMetaObject.invokeMethod(output, "setVolume", Qt.DirectConnection, Q_ARG("float", volume)):
             logging.getLogger(__name__).warning("No se pudo cambiar el volumen sin el GIL: se hace directo (puede colgarse)")
             output.setVolume(volume)
@@ -203,7 +206,7 @@ class PlaybackOptionsMixin:
     def crossfade_ms(self, natural: bool = False) -> int:
         """Cuánto dura el fundido cruzado del salto que se va a hacer (0 = sin fundido: corte normal).
         `natural`: la canción se acerca a su final y empieza la siguiente; si no, lo pediste tú con «siguiente»."""
-        if self._fade_ms <= 0 or self._sleep_end_of_track:
+        if self._fade_ms <= 0 or self._sleep_end_of_track or self.dj_engine_on():     # con el motor DJ la mezcla ya viene hecha
             return 0
         if self.player.playbackState() != QMediaPlayer.PlayingState:
             return 0
@@ -321,7 +324,7 @@ class PlaybackOptionsMixin:
         self._fade_anim.stop()
         if self._xf_active:
             self._natural_advance = False       # el fundido cruzado ya lleva el volumen de la canción nueva
-        elif self._natural_advance and self._fade_ms > 0 and info:
+        elif self._natural_advance and self._fade_ms > 0 and info and not self.dj_engine_on():
             self._natural_advance = False
             self._fade_factor = 0.0
             self._fade_anim.setDuration(self._fade_ms)
@@ -336,7 +339,7 @@ class PlaybackOptionsMixin:
             self._gain_anim.stop()
         self._gain_factor = 1.0
         path = (info or {}).get("local_path")
-        if self._normalize and path:
+        if self._normalize and path and not self.dj_engine_on():     # el motor DJ iguala el volumen de cada plato
             lufs = loudness_service.stored(path)
             if lufs is not None:
                 self._gain_factor = loudness_service.gain_for(lufs)
@@ -492,6 +495,8 @@ class PlaybackOptionsMixin:
         a, b = self._ab
         if a is not None and b is not None and position_ms >= b:
             self.player.setPosition(a)
+            return
+        if self.dj_engine_on():                 # el motor DJ mezcla solo: aquí no hay fundidos que lanzar
             return
         duration = self.player.duration()
         if self._fade_ms > 0 and not self.is_loop_enabled and not self._xf_active and not self._sleep_end_of_track \
@@ -817,6 +822,7 @@ class PlaybackOptionsMixin:
                                        QSystemTrayIcon.Information, 6000)
 
     def shutdown_playback_options(self):
+        self.dj_engine_leave()
         self._drop_incoming_seek()
         self._finish_crossfade()
         if self._spare_deck is not None:

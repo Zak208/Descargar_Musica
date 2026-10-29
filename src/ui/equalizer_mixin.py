@@ -21,7 +21,9 @@ class EqualizerMixin:
         self.equalizer_dialog.exec()
 
     def _eq_source(self, path: str):
-        """(archivo que debe sonar, versión con ecualizador si ya existe)."""
+        """(archivo que debe sonar, versión con ecualizador si ya existe). Con el motor DJ, siempre el original."""
+        if self.dj_engine_on():
+            return path, None
         bands = active_bands(self.eq_settings)
         if bands is not None:
             out = rendered_path_for(path, bands)
@@ -63,7 +65,7 @@ class EqualizerMixin:
 
     def _swap_source(self, file_path: str):
         """Cambia el archivo que suena (original <-> con ecualizador) conservando el punto de la canción."""
-        if not os.path.isfile(file_path):
+        if not os.path.isfile(file_path) or self.dj_engine_on():        # el motor DJ no usa el ecualizador de sonido
             return
         pos = self.player.position()
         resume = self.player.playbackState() != QMediaPlayer.PausedState

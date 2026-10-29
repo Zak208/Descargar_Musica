@@ -314,6 +314,13 @@ class DjMixin:
             act.setChecked(key == self._dj_order())
             order_group.addAction(act)
             act.triggered.connect(lambda _=False, k=key: self.set_dj_order(k))
+        engine_act = menu.addAction("Mezclar con el motor propio (graves, frases y ritmo)")
+        engine_act.setCheckable(True)
+        engine_act.setChecked(self.dj_engine_wanted())
+        engine_act.toggled.connect(self.set_dj_engine_wanted)
+        why_not = self.dj_engine_unavailable_reason()
+        if why_not:
+            menu.addAction(f"No disponible: {why_not}").setEnabled(False)
         menu.addSeparator()
         start = menu.addAction(icon("play.svg"), "Empezar a pinchar")
         start.triggered.connect(self.start_dj_session)
@@ -371,6 +378,8 @@ class DjMixin:
         if self._fade_ms <= 0:
             self.set_fade_seconds(DJ_FADE_SECONDS)
             notes += f" Se ha activado el fundido de {DJ_FADE_SECONDS} s."
+        if self.dj_engine_enter():
+            notes += " Mezcla con el motor propio."
         self._play_entry(tracks[0], crossfade_ms=self.crossfade_ms())
         self.open_dj_page()
         self.notify(f"Modo DJ: {len(tracks)} canciones de {self._dj_source_label(source)}.{notes}")
@@ -379,6 +388,7 @@ class DjMixin:
         """Cambió la canción que suena: ¿sigue siendo de la sesión DJ?, la siguiente existe todavía y la página al día."""
         if self._dj_context is None or self._context is not self._dj_context or not self.current_item_info:
             self._dj_in_session = False
+            self.dj_engine_leave()                  # fuera de la sesión suena el reproductor de siempre
         else:
             self._dj_in_session = True
             key = track_key(self.current_item_info)
@@ -592,6 +602,13 @@ class DjMixin:
         self._dj_mix = (a_path, duration, result)
         return result
 
+    def _dj_current_mix(self):
+        """La mezcla que se va a oír: la que prepara el motor propio si está activo, o la del fundido de siempre."""
+        if self.dj_engine_on():
+            plan = self.dj_engine_plan()
+            return None if plan is None else (None, plan)
+        return self.dj_mix_plan()
+
     def dj_forget_mix(self):
         """La próxima mezcla se vuelve a planificar en la siguiente consulta."""
         self._dj_mix = None
@@ -617,7 +634,7 @@ class DjMixin:
             text = "Sin fundido: la siguiente empieza al terminar esta"
         elif duration <= 0:
             text = ""
-        elif (mix := self.dj_mix_plan()) is not None:          # punto de mezcla según el análisis (el mismo del fundido)
+        elif (mix := self._dj_current_mix()) is not None:      # punto de mezcla según el análisis (el mismo del fundido)
             plan = mix[1]
             if plan.kind == KIND_CUT:
                 text = "Canción corta: la siguiente entra al terminar, sin mezcla"

@@ -67,6 +67,8 @@ dj_service.MAX_FILES = old_max
 check("por defecto la carpeta general es la de descargas", dj_service.get_root() == str(dj_service.get_download_dir()))
 check("por defecto suena toda la carpeta", dj_service.get_source() == SOURCE_ALL)
 dj_service.set_root(root)
+from config import update_settings  # noqa: E402
+update_settings(dj_engine=False)       # esta prueba es del reproductor de siempre (el motor propio tiene la suya)
 dj_service.set_source("Drill")
 check("se recuerda la carpeta general", dj_service.get_root() == root)
 check("se recuerda qué suena", dj_service.get_source() == "Drill")
@@ -156,6 +158,15 @@ class FakeWindow(DjMixin):
         self._fade_ms = 0
         self._context, self.current_item_info = [], None
         self.context, self.played, self.notes = None, [], []
+
+    def dj_engine_enter(self):              # el motor propio tiene su prueba (prueba_motor_dj_ventana.py)
+        return False
+
+    def dj_engine_leave(self):
+        pass
+
+    def dj_engine_on(self):
+        return False
 
     def set_context(self, tracks):
         self._context = list(tracks)
