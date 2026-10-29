@@ -92,7 +92,7 @@ dummy = os.path.join(folder, "nota.mp3")
 with open(dummy, "wb") as fh:
     fh.write(b"x")
 track_analysis.save(dummy, res)
-check("lo guardado se lee igual", track_analysis.stored(dummy) == {k: res[k] for k in track_analysis.stored(dummy)})
+check("lo guardado se lee igual", track_analysis.stored(dummy) == {k: res.get(k) for k in track_analysis.stored(dummy)})
 os.utime(dummy, (time.time() + 100, time.time() + 100))
 check("si el archivo cambia, se vuelve a analizar", track_analysis.stored(dummy) is None)
 
@@ -184,9 +184,16 @@ else:
           and abs(found["bpm"] - 120) / 120 < 0.03)
     check(f"audio de verdad: intro de unos 8 s (da {found and found['intro_ms']} ms)",
           found is not None and 6000 <= found["intro_ms"] <= 11000)
-    from services import key_detect
+    from services import beatgrid, key_detect
     check("el análisis completo trae el tono (los golpes secos no tienen armonía: «» o un tono dudoso)",
           found is not None and (found["tone"] is not None if key_detect.available() else True))
+    grid = track_analysis.grid_from(found or {})
+    check(f"el análisis completo trae la rejilla de golpes (da {grid and round(grid.bpm, 2)} BPM, primer golpe en "
+          f"{grid and round(grid.first_beat_s, 2)} s)",
+          found is not None and (found["beat_conf"] is not None) and (grid is not None if beatgrid.available() else True)
+          and (grid is None or (abs(grid.bpm - 120) < 2 and 7.5 <= grid.first_beat_s <= 8.6)))
+    check("sin rejilla fiable no se inventa una (confianza baja o sin datos da None)",
+          track_analysis.grid_from({}) is None and track_analysis.grid_from({"beat_conf": 0.2, "beat_bpm": 120, "beat_first_s": 1.0}) is None)
     check("avisa del progreso (0 de 1 y 1 de 1)", steps == [(0, 1), (1, 1)])
     check("un archivo que no existe no se cuenta ni da error", len(got) == 1)
 

@@ -56,7 +56,11 @@ CREATE TABLE IF NOT EXISTS analysis (
     artist TEXT,
     loudness_db REAL,
     brightness_hz REAL,
-    flux REAL
+    flux REAL,
+    beat_first_s REAL,
+    beat_bpm REAL,
+    beat_downbeat INTEGER,
+    beat_conf REAL
 );
 CREATE INDEX IF NOT EXISTS idx_tracks_artist ON tracks(artist);
 CREATE INDEX IF NOT EXISTS idx_tracks_album ON tracks(album);
@@ -76,7 +80,8 @@ def _migrate(con) -> None:
     # la versión, así es seguro repetirlo.
     analysis_cols = {row[1] for row in con.execute("PRAGMA table_info(analysis)")}
     for name, definition in (("tone", "TEXT"), ("tone_conf", "REAL DEFAULT 0"), ("genre", "TEXT"), ("artist", "TEXT"),
-                             ("loudness_db", "REAL"), ("brightness_hz", "REAL"), ("flux", "REAL")):
+                             ("loudness_db", "REAL"), ("brightness_hz", "REAL"), ("flux", "REAL"),
+                             ("beat_first_s", "REAL"), ("beat_bpm", "REAL"), ("beat_downbeat", "INTEGER"), ("beat_conf", "REAL")):
         if name not in analysis_cols:
             con.execute(f"ALTER TABLE analysis ADD COLUMN {name} {definition}")
     # (aquí irán los pasos «si current < 2: ALTER TABLE ...» cuando alguna tabla cambie)

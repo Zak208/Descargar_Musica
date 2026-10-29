@@ -1,16 +1,18 @@
 """Análisis de cada canción para el modo DJ: tempo (y lo fiable que es), cuánto dura la intro y cuánto el final, el tono
-(rueda Camelot, ver `key_detect`), la energía (ver `audio_features`), y el género y el artista de las etiquetas.
+(rueda Camelot, ver `key_detect`), la energía (ver `audio_features`), la rejilla de golpes (ver `beatgrid`) y el género y
+el artista de las etiquetas.
 
 El tempo, la intro y el final salen de la envolvente que ya se guarda para el visualizador (graves, medios y agudos cada
-0,1 s), así que no se vuelve a escuchar el audio si la canción ya sonó alguna vez; el tono y la energía sí necesitan
-decodificar la canción (una sola vez para los dos). Se calcula una vez por canción, en segundo plano, y se guarda en el
+0,1 s), así que no se vuelve a escuchar el audio si la canción ya sonó alguna vez; el tono, la energía y la rejilla de golpes sí
+necesitan decodificar la canción (una sola vez para los tres). Se calcula una vez por canción, en segundo plano, y se guarda en el
 índice de tu música; solo se repite si el archivo cambia (o si sube VERSION)."""
 import logging
 import os
 
 from PySide6.QtCore import QThread, Signal
 
-from services import audio_features, envelope, key_detect, library_db, tempo
+from services import audio_features, beatgrid, envelope, key_detect, library_db, tempo
+from services.mix_types import BeatGrid
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +67,8 @@ def analyze_envelope(data: bytes, genre: str = "") -> dict:
 
 
 FIELDS = ("bpm", "confidence", "energy", "intro_ms", "outro_ms", "duration_ms", "tone", "tone_conf", "genre", "artist",
-          "loudness_db", "brightness_hz", "flux")
+          "loudness_db", "brightness_hz", "flux", "beat_first_s", "beat_bpm", "beat_downbeat", "beat_conf")
+MIN_GRID_CONFIDENCE = 0.4       # por debajo, la rejilla de golpes no es de fiar: el planificador mezcla sin cuadrar compases
 
 
 def stored(path: str, mtime: float = None, need_audio: bool = False):
@@ -77,12 +80,23 @@ def stored(path: str, mtime: float = None, need_audio: bool = False):
         with library_db.connect() as con:
             row = con.execute("SELECT * FROM analysis WHERE path=?", (path,)).fetchone()
         if row and abs(row["mtime"] - mtime) < 1 and row["version"] == VERSION:
-            if need_audio and (row["tone"] is None or row["loudness_db"] is None):
+            if need_audio and (row["tone"] is None or row["loudness_db"] is None or row["beat_conf"] is None):
                 return None
             return {k: row[k] for k in FIELDS}
     except Exception:
         pass
     return None
+
+
+def grid_from(result: dict):
+    """La rejilla de golpes (`BeatGrid`) de un análisis, o None si no se calculó o no es de fiar."""
+    try:
+        if (result.get("beat_conf") or 0.0) < MIN_GRID_CONFIDENCE or not result.get("beat_bpm") or result.get("beat_first_s") is None:
+            return None
+        return BeatGrid(float(result["beat_first_s"]), float(result["beat_bpm"]), 4, int(result.get("beat_downbeat") or 0),
+                        float(result["beat_conf"]))
+    except (TypeError, ValueError):
+        return None
 
 
 def save(path: str, result: dict) -> None:
@@ -145,6 +159,24 @@ def _add_audio_analysis(path: str, result: dict, previous: dict = None) -> None:
         features = {"loudness_db": audio_features.NOT_MEASURED, "brightness_hz": 0.0, "flux": 0.0}
     result.update(features)
     result["energy"] = audio_features.energy_score(features)
+    _add_beatgrid(samples, result)
+
+
+def _add_beatgrid(samples, result: dict) -> None:
+    """La rejilla de golpes (fase 11) con las mismas muestras. `beat_conf` queda en 0 si se intentó y no hay pulso claro
+    (no se reintenta) y en None si no se pudo intentar (sin numpy)."""
+    if not beatgrid.available():
+        return
+    try:
+        grid = beatgrid.compute(samples, result.get("bpm"))
+    except Exception as e:                    # fallaría igual cada vez: se apunta como intentado
+        logger.warning(f"No se pudo calcular la rejilla de golpes: {e}")
+        grid = None
+    if grid is None:
+        result["beat_conf"] = 0.0
+        return
+    result.update({"beat_first_s": grid.first_beat_s, "beat_bpm": grid.bpm, "beat_downbeat": grid.downbeat_offset,
+                   "beat_conf": grid.confidence})
 
 
 class AnalysisWorker(QThread):
