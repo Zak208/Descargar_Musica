@@ -62,12 +62,32 @@ CREATE TABLE IF NOT EXISTS analysis (
     beat_downbeat INTEGER,
     beat_conf REAL
 );
+CREATE TABLE IF NOT EXISTS transition_votes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL NOT NULL,
+    session TEXT DEFAULT '',
+    source TEXT DEFAULT 'live',
+    a_path TEXT NOT NULL, b_path TEXT NOT NULL,
+    a_title TEXT, b_title TEXT,
+    a_start_s REAL, b_start_s REAL, length_s REAL,
+    tempo_ratio_b REAL, bass_swap_s REAL,
+    kind TEXT, reason TEXT,
+    a_bpm REAL, b_bpm REAL,
+    a_tone TEXT, b_tone TEXT,
+    a_energy REAL, b_energy REAL,
+    auto_score REAL,
+    vote INTEGER NOT NULL,
+    tags TEXT DEFAULT '[]',
+    note TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_votes_ts ON transition_votes(ts);
+CREATE INDEX IF NOT EXISTS idx_votes_pair ON transition_votes(a_path, b_path);
 CREATE INDEX IF NOT EXISTS idx_tracks_artist ON tracks(artist);
 CREATE INDEX IF NOT EXISTS idx_tracks_album ON tracks(album);
 """
 
 
-SCHEMA_VERSION = 1       # PRAGMA user_version: si cambia una tabla, súbelo y añade el paso en _migrate()
+SCHEMA_VERSION = 2       # PRAGMA user_version: si cambia una tabla, súbelo y añade el paso en _migrate()
 _ready = False
 _ready_lock = threading.Lock()
 
@@ -84,7 +104,9 @@ def _migrate(con) -> None:
                              ("beat_first_s", "REAL"), ("beat_bpm", "REAL"), ("beat_downbeat", "INTEGER"), ("beat_conf", "REAL")):
         if name not in analysis_cols:
             con.execute(f"ALTER TABLE analysis ADD COLUMN {name} {definition}")
-    # (aquí irán los pasos «si current < 2: ALTER TABLE ...» cuando alguna tabla cambie)
+    # v2: tabla transition_votes (votos de las transiciones del DJ). Se crea con el SCHEMA de arriba (IF NOT EXISTS), así que
+    # una base anterior la recibe sola y repetirlo no hace nada.
+    # (aquí irán los pasos «si current < 3: ALTER TABLE ...» cuando alguna tabla cambie)
     if current < SCHEMA_VERSION:
         con.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
