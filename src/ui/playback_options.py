@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from config import get_setting, set_setting
 from services import envelope, library_db, loudness_service, tempo
+from services.mix_types import KIND_BLEND
 from services.smtc_service import MediaControls
 from ui.icons import icon
 from ui.styles import accent
@@ -101,6 +102,8 @@ class PlaybackOptionsMixin:
         self._out_factor = 0.0
         self._out_gain = 1.0
         self._out_start = 1.0
+        self._xf_plan = None             # en una sesión DJ, mientras empieza la mezcla planificada: (ruta de la que entra, plan)
+        self._incoming_seek = None       # (reproductor, función, ruta) que espera a que cargue la que entra para llevarla a su punto
         self.active_player = ActivePlayer(self)
         self._xf_anim = QVariantAnimation(self)
         self._xf_anim.setStartValue(0.0)
@@ -206,13 +209,15 @@ class PlaybackOptionsMixin:
             return 0
         if natural:
             remaining = int(self.player.duration() - self.player.position())
-            return max(500, min(self._fade_ms, remaining))
+            fade = int(self._xf_plan[1].length_s * 1000) if self._xf_plan else self._fade_ms   # sesión DJ: lo planificado
+            return max(500, min(fade, remaining))
         return min(self._fade_ms, MANUAL_CROSSFADE_MS)
 
     def _begin_crossfade(self, ms: int, next_path: str = None):
         """La canción que suena pasa a un reproductor aparte que baja el volumen; el reproductor libre queda como
         el principal para recibir la canción nueva, que sube a la vez. Se llama antes de cargar la nueva.
         `next_path`: archivo de la canción que entra (para igualar su ritmo con el de la que sale)."""
+        planned, self._xf_plan = self._xf_plan, None
         start = self._fade_factor
         out_path = (self.current_item_info or {}).get("local_path")
         self._rate_back.stop()
@@ -242,6 +247,33 @@ class PlaybackOptionsMixin:
         self._xf_anim.stop()
         self._xf_anim.setDuration(max(200, int(ms)))
         self._xf_anim.start()
+        if planned is not None and planned[0] == next_path and planned[1].b_start_s > 0:
+            self._start_incoming_at(next_path, int(planned[1].b_start_s * 1000))     # sesión DJ: la que entra, desde su punto
+
+    def _start_incoming_at(self, path: str, ms: int):
+        """La canción que entra en la mezcla empieza en `ms` y no en el principio. Se llama antes de cargarla: el
+        reproductor no puede saltar hasta que la tiene cargada, así que se espera a ese momento (y entra con el volumen
+        casi a cero, así que el instante que suena desde el principio no se oye)."""
+        self._drop_incoming_seek()
+        player = self.player
+
+        def on_status(status, p=player):
+            if status not in (QMediaPlayer.LoadedMedia, QMediaPlayer.BufferedMedia, QMediaPlayer.InvalidMedia):
+                return
+            self._drop_incoming_seek()
+            if status != QMediaPlayer.InvalidMedia and p is self.player:
+                p.setPosition(ms)
+        player.mediaStatusChanged.connect(on_status)
+        self._incoming_seek = (player, on_status, path)
+
+    def _drop_incoming_seek(self):
+        """Olvida la espera de `_start_incoming_at` (ya se hizo, o la canción cambió antes de cargar)."""
+        pending, self._incoming_seek = self._incoming_seek, None
+        if pending is not None:
+            try:
+                pending[0].mediaStatusChanged.disconnect(pending[1])
+            except (RuntimeError, TypeError):
+                pass
 
     def _on_xf_value(self, t: float):
         t = max(0.0, min(1.0, t))
@@ -252,6 +284,8 @@ class PlaybackOptionsMixin:
     def _finish_crossfade(self):
         """Termina (o corta) el fundido: el reproductor que se apagaba se detiene y queda libre."""
         self._xf_anim.stop()
+        if self._incoming_seek is not None and self._incoming_seek[0] is not self.player:
+            self._drop_incoming_seek()          # la que iba a entrar ya no es la que suena
         out = self._out_deck
         if out is not None:
             player = out[0]
@@ -277,6 +311,9 @@ class PlaybackOptionsMixin:
     # ---------------------------------------------- empieza una canción nueva
     def on_track_started(self):
         info = self.current_item_info
+        pending = self._incoming_seek
+        if pending is not None and (pending[0] is not self.player or pending[2] != (info or {}).get("local_path")):
+            self._drop_incoming_seek()          # lo que empieza no es la canción que esperaba su punto de entrada
         if self._xf_matched and not self._xf_active and self._rate_back.state() != QVariantAnimation.Running:
             self._xf_matched = False
         self._ab = [None, None]
@@ -457,6 +494,9 @@ class PlaybackOptionsMixin:
             self.player.setPosition(a)
             return
         duration = self.player.duration()
+        if self._fade_ms > 0 and not self.is_loop_enabled and not self._xf_active and not self._sleep_end_of_track \
+                and self._planned_tick(position_ms):
+            return
         if self._fade_ms > 0 and duration > self._fade_ms * 3 and not self.is_loop_enabled and not self._xf_active:
             remaining = duration - position_ms
             if 0 < remaining <= self._fade_ms and not self._fading_out \
@@ -477,6 +517,37 @@ class PlaybackOptionsMixin:
                 self._fading_out = False
                 self._fade_anim.stop()
                 self._set_fade(1.0)
+
+    def _planned_tick(self, position_ms: int) -> bool:
+        """En una sesión DJ con la canción analizada (fase 8): la mezcla empieza donde dice el plan (`dj_mix_plan`) y
+        dura lo planificado, en vez del fundido fijo de los Ajustes. Devuelve False si no hay plan (vale lo de siempre)."""
+        mix_plan = getattr(self, "dj_mix_plan", None)
+        mix = mix_plan() if mix_plan is not None else None
+        if mix is None:
+            return False
+        path, plan = mix
+        if plan.kind != KIND_BLEND:
+            return True                     # corte limpio: la siguiente entra cuando esta termine
+        start_ms = int(plan.a_start_s * 1000)
+        if position_ms < start_ms:
+            if self._fading_out:            # se retrocedió dentro de la canción
+                self._fading_out = False
+                self._fade_anim.stop()
+                self._set_fade(1.0)
+            return True
+        if self._fading_out or self.player.playbackState() != QMediaPlayer.PlayingState \
+                or position_ms >= self.player.duration():
+            return True
+        nxt = (self.peek_next() or {}).get("local_path")
+        if nxt != path:                     # lo que viene cambió sin avisar: se planifica otra vez con la de verdad
+            self.dj_forget_mix()
+            return True
+        self._xf_plan = mix
+        try:
+            self.play_next(natural=True)    # fundido cruzado: la siguiente empieza ya, mientras esta se apaga
+        finally:
+            self._xf_plan = None
+        return True
 
     def on_end_of_track(self) -> bool:
         """Devuelve True si el temporizador pide parar aquí (no se pasa a la siguiente)."""
@@ -746,6 +817,7 @@ class PlaybackOptionsMixin:
                                        QSystemTrayIcon.Information, 6000)
 
     def shutdown_playback_options(self):
+        self._drop_incoming_seek()
         self._finish_crossfade()
         if self._spare_deck is not None:
             self._spare_deck[0].setSource(QUrl())
