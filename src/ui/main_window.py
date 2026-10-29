@@ -1394,7 +1394,11 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
     def update_duration(self, duration_ms):
         if self._full_player_visible():
             self.full_player.set_duration(duration_ms)
-        self.seek_slider.setRange(0, duration_ms)
+        self.is_updating_seek = True        # cambiar el rango recorta el valor de la barra: eso no es que el usuario busque
+        try:
+            self.seek_slider.setRange(0, duration_ms)
+        finally:
+            self.is_updating_seek = False
         self.time_total_label.setText(self.format_time(duration_ms))
 
     def on_seek_changed(self, value):

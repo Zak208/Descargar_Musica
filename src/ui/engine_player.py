@@ -178,15 +178,18 @@ class EnginePlayer(QObject):
             self._status = QMediaPlayer.LoadedMedia
             self.mediaStatusChanged.emit(QMediaPlayer.LoadedMedia)
         duration = int(info["duration_s"] * 1000)
-        if duration != self._duration_ms and duration > 0:
-            self._duration_ms = duration
-            self.durationChanged.emit(duration)
+        new_duration = duration != self._duration_ms and duration > 0
         if info["state"] in ("playing", "paused"):
             pos = int(info["position_s"] * 1000)
             self._position_ms = pos
-            if abs(pos - self._last_emitted_pos) >= POSITION_STEP_MS and self._state != QMediaPlayer.StoppedState:
+            # primero la posición de la canción nueva y luego su duración (como QMediaPlayer): si no, la barra, que aún tiene el
+            # rango de la anterior, recorta su valor al cambiar el rango y eso se leería como «buscar al final»
+            if (new_duration or abs(pos - self._last_emitted_pos) >= POSITION_STEP_MS) and self._state != QMediaPlayer.StoppedState:
                 self._last_emitted_pos = pos
                 self.positionChanged.emit(pos)
+        if new_duration:
+            self._duration_ms = duration
+            self.durationChanged.emit(duration)
         if info.get("advanced") or info.get("ended"):
             self._position_ms = 0 if info.get("ended") else self._position_ms
             self._status = QMediaPlayer.EndOfMedia
