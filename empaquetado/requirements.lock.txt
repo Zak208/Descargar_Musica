@@ -11,7 +11,7 @@ requests==2.34.2
 shiboken6==6.11.2
 urllib3==2.8.0
 winrt-runtime==3.2.1
-winrt-Windows.Foundation==3.2.1
+winrt-Windows.Foundation==4!10.0.28000.2705
 winrt-Windows.Foundation.Collections==3.2.1
 winrt-Windows.Media==3.2.1
 winrt-Windows.Media.Playback==3.2.1
