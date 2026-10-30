@@ -130,8 +130,76 @@ check("con el artista de la que suena ya, la primera nueva no es de ese artista"
       all(dp.plan(library(30, artists=3), previous=T("x", 120, "8A", 0.9, 0.5, "pop", "artista0"), rng=random.Random(s))[0].artist != "artista0"
           for s in range(10)))
 
+# ritmo que se pueda mezclar: lo que `mix_planner` no corta por tempo (±8 %, con la mitad y el doble)
+from services import mix_planner  # noqa: E402
+
+pares = [(a, b) for a in (60, 70, 71.5, 88, 95, 100, 110, 128, 130, 140, 174) for b in (65, 70, 76, 80, 92, 96, 104, 120, 129, 150, 175)]
+check("«se puede mezclar» coincide con lo que mezcla el planificador de mezclas (±8 %, la mitad y el doble)",
+      all(dp.mixable(a, b) == (abs(mix_planner.tempo_ratio(a, b) - 1.0) <= mix_planner.MAX_TEMPO_CHANGE) for a, b in pares))
+check("con un tempo desconocido se puede mezclar (se mezcla sin igualar el ritmo)", dp.mixable(None, 120) and dp.mixable(120, 0))
+check("el salto de tempo cuenta la mitad y el doble: 70 a 140 es 0, 100 a 104 sube, 104 a 100 baja",
+      abs(dp.tempo_step(70, 140)) < 1e-12 and dp.tempo_step(100, 104) > 0 > dp.tempo_step(104, 100))
+
+
+def cortes(lista):
+    return sum(not dp.mixable(x.bpm, y.bpm) for x, y in zip(lista, lista[1:]))
+
+
+def familias(semilla, otra=100, energia=None, artistas=20):
+    r = random.Random(100 + semilla)
+    return [T(i, (70 if i < 10 else otra) * r.uniform(0.99, 1.01), r.choice(TONES), 0.8, energia if energia is not None else r.random(),
+              "pop", f"a{i % artistas}") for i in range(20)]
+
+
+# dos familias de tempo que no se pueden mezclar entre sí (70 y 100 BPM; 130 no valdría: su mitad, 65, mezcla con 70)
+planos = [dp.plan(familias(s, energia=0.5), rng=random.Random(s)) for s in range(10)]
+check(f"dos familias de tempo (70 y 100 BPM) y la energía igual: se agrupan y solo hay un salto grande ({[cortes(o) for o in planos]})",
+      all(cortes(o) == 1 for o in planos))
+saltos = [cortes(dp.plan(familias(s), rng=random.Random(s))) for s in range(20)]
+check(f"y con energías al azar, la curva manda pero salta poco de familia ({sum(saltos) / 20:.1f} saltos de media; antes, unos 4)",
+      sum(saltos) / 20 <= 2.5 and max(saltos) <= 4)
+check("70 y 130 BPM son el mismo ritmo (130 es el doble de 65): ningún corte",
+      all(cortes(dp.plan(familias(s, otra=130), rng=random.Random(s))) == 0 for s in range(10)))
+
+# con varias familias de tempo (las de `library`), casi todo se puede mezclar
+cien = library(100)
+al_azar = cien[:]
+random.Random(11).shuffle(al_azar)
+corte_plan = sum(cortes(dp.plan(cien, rng=random.Random(s))) for s in range(5)) / (5 * 99)
+check(f"con 100 canciones de 7 tempos distintos, pocos cortes por tempo ({100 * corte_plan:.0f} %; al azar, "
+      f"{100 * cortes(al_azar) / 99:.0f} %)", corte_plan < 0.12)
+
+
+def correlacion(orden):
+    rk = dp.energy_ranker([t.energy for t in orden])
+    xs = [rk(t.energy) for t in orden]
+    ys = [dp.target_energy(dp.curve_progress(i, len(orden))) for i in range(len(orden))]
+    mx, my = sum(xs) / len(xs), sum(ys) / len(ys)
+    return sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / math.sqrt(sum((x - mx) ** 2 for x in xs) * sum((y - my) ** 2 for y in ys))
+
+
+mismo = [T(i, 100.0, rng.choice(TONES), 0.8, rng.random(), "pop", f"artista{i % 5}") for i in range(40)]
+orden_mismo = dp.plan(mismo, rng=random.Random(3))
+check(f"todas al mismo BPM: ningún corte, la energía sigue la curva ({correlacion(orden_mismo):.2f}) y no repite artista",
+      cortes(orden_mismo) == 0 and correlacion(orden_mismo) > 0.8 and repetidos(orden_mismo) == 0)
+desconocido = [t._replace(bpm=None) if t.ref % 3 == 0 else t for t in familias(4)]
+orden_desc = dp.plan(desconocido, rng=random.Random(4))
+check("con algunos BPM desconocidos sale completo y sin romper nada",
+      sorted(t.ref for t in orden_desc) == list(range(20)) and all(t.bpm is None or t.bpm > 0 for t in orden_desc))
+
+# como la música real: 14 de 22 del mismo artista y tempos de 70 a 130; repetir artista no sube por mezclar mejor
+def dominada_real(semilla):
+    r = random.Random(semilla)
+    return [T(i, r.choice([72, 75, 80, 86, 88, 92, 95, 97, 103, 105, 108, 110, 129]) * r.uniform(0.99, 1.01), r.choice(TONES), 0.8,
+              r.random(), "urbano", "Quevedo" if i < 14 else f"otro{i}") for i in range(22)]
+
+
+repes = [repetidos(dp.plan(dominada_real(s), rng=random.Random(s))) for s in range(20)]
+check(f"14 de 22 del mismo artista: repite lo justo ({sum(repes) / 20:.1f} veces de media; el mínimo posible es 5 y antes eran 8)",
+      sum(repes) / 20 <= 7.0)
+
 # sin datos
-vacias = [T(i, None, None, 0.0, None, "", "") for i in range(30)]
+vacias =[T(i, None, None, 0.0, None, "", "") for i in range(30)]
 check("sin ningún dato de las canciones, sale igualmente completo", sorted(t.ref for t in dp.plan(vacias)) == list(range(30)))
 mixtas = [T(i, 120.0 if i % 2 else None, "8A" if i % 3 else None, 0.8, 0.5 if i % 4 else None, "pop", "") for i in range(40)]
 check("con datos a medias también", sorted(t.ref for t in dp.plan(mixtas)) == list(range(40)))
@@ -158,6 +226,12 @@ out = dp.plan(grande, rng=random.Random(9))
 dt = time.time() - t0
 check(f"20.000 canciones se ordenan en {dt:.2f} s (menos de 1 s: se hace en el hilo de la interfaz)", dt < 1.0)
 check("y salen todas (las 400 primeras ordenadas, el resto detrás)", len(out) == 20000 and len({t.ref for t in out}) == 20000)
+cuatrocientas = library(400)
+t0 = time.time()
+out = dp.plan(cuatrocientas, rng=random.Random(9))
+dt = time.time() - t0
+check(f"400 canciones (todas ordenadas y repasadas: el caso más lento) en {dt:.2f} s, menos de 1 s",
+      dt < 1.0 and sorted(t.ref for t in out) == list(range(400)))
 check("limit=10: se ordenan 10 y las demás van detrás", sorted(t.ref for t in dp.plan(songs, limit=10)) == list(range(100)))
 
 # ------------------------------------------------------------------ medidas de energía del audio
