@@ -822,6 +822,7 @@ class PlaybackOptionsMixin:
                                        QSystemTrayIcon.Information, 6000)
 
     def shutdown_playback_options(self):
+        self.dj_record_shutdown()
         self.dj_engine_leave()
         self._drop_incoming_seek()
         self._finish_crossfade()
