@@ -48,6 +48,8 @@ class FakeLoader:
         env = np.where(ph < 0.15, np.sin(np.pi * ph / 0.15) ** 2, 0.0)
         amp = s.get("amp", 0.3)
         v = (amp * np.sin(2 * np.pi * s["freq"] * t) + 0.2 * env * np.sin(2 * np.pi * 60.0 * t)).astype(np.float32)
+        for a, b in s.get("silence", ()):              # tramos en silencio digital (principio o final de un mp3)
+            v[int(a * SR):int(b * SR)] = 0.0
         return np.stack([v, v], axis=1)
 
     def __call__(self, path, tempo_ratio=1.0, start_s=0.0, duration_s=None):

@@ -302,5 +302,35 @@ voz ya leídos, o None). `mix_planner` la usa solo en la mezcla por frases; sin 
   una vez la frase de la mitad y se queda la que solape menos. Nunca lleva a un corte (la voz es una estimación con la señal,
   que en música real distingue poco).
 
-Pruebas: `pruebas/prueba_planificador_estructura.py` (casos construidos a mano). En reguetón y géneros con el bajo siempre
+### Cortes que no caen en un silencio
+
+Encontrado con las canciones reales (`pruebas/medir_calidad_mezcla.py`): muchos mp3 acaban con varios segundos de silencio
+digital y algunos empiezan con un poco. Un corte en ese silencio dejaba un hueco (10 de 44 transiciones con huecos de 0,5 a
+4,8 s). Ahora:
+
+- Corte limpio: si los últimos 100 ms de A antes del corte están por debajo de -50 dBFS, el corte se adelanta a donde A deja
+  de sonar; si los primeros 100 ms de B lo están, B entra donde empieza a sonar (10 ms antes). El plan lo dice («corte movido:
+  ...»).
+- Corte en el compás y eco de una mezcla: el corte va al comienzo de compás de A más cercano en que A suena justo antes y B
+  justo después.
+- Si el corte en el compás aún deja un hueco (B callada en toda la parte en que entraría sola), el puntuador lo cambia por la
+  mezcla: la otra canción tapa el silencio y, con B callada, no hay golpes que puedan chocar. Es la única excepción a la regla
+  de seguridad de `choose_type`.
+
+Pruebas: `pruebas/prueba_motor_silencios.py`.
+
+### Rampa de vuelta al tempo original (fase 6, `EngineSession(tempo_ramp=True)`, APAGADA por defecto)
+
+Hoy B, estirada hasta ±8 % en la mezcla, vuelve a su tempo de golpe tras ella (empalme de 20 ms). La rampa pone antes del
+cuerpo original 3 tramos de 2 s con el tempo cada vez más cerca de 1,0 (con 0,96: 0,97, 0,98 y 0,99), cada uno estirado con
+el cargador desde 0,5 s antes de donde acaba el anterior (ese medio segundo se tira: el principio de un estirado con rubberband
+no es fiel) y empalmado con el mismo fundido de 20 ms.
+
+Medido (`pruebas/prueba_motor_rampa.py`): con el cargador falso, lo que sale es B leída con la curva de tempo, sin saltos de
+fase. Con rubberband y una pista de golpes exactos: sin rampa, los golpes de B tras la mezcla caen a 0,0 a 0,3 ms de su sitio;
+con rampa, a -1,5 a +0,3 ms, pero aparecen 2 ataques de más, unos 30 ms tras un golpe, justo después de dos de los empalmes.
+El fundido de 20 ms entre dos estirados distintos de la misma música puede restar (las fases de un estirado y otro no
+coinciden) y la envolvente cae y vuelve a subir: un posible «flam» en cada empalme. Por eso queda apagada; para encenderla
+haría falta empalmar en puntos sin ataques (entre golpes, con la rejilla) o con un fundido más largo y comprobarlo de oído.
+ En reguetón y géneros con el bajo siempre
 presente salen pocos drops (lo dice `structure.py`), así que en la carpeta de prueba esto casi no cambia nada.

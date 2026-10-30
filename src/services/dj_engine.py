@@ -30,6 +30,11 @@ Cómo suena una canción A y cómo se pasa a la siguiente B (todo a precisión d
   * Bucles (`loops=True`; APAGADO por defecto, ver docs/MOTOR_DJ.md): si `loops.needs_loop` lo pide, A suena hasta
     `loop_start`, repite sus 4 compases de antes del punto de mezcla (segmentos «loop» de `loops.extend_body`) y la mezcla, la
     misma y desde la misma muestra de A, llega `loop_bars` compases más tarde. Con el bucle sonando, B ya no se cambia.
+  * Silencios: un corte limpio no corta A cuando ya calla (se adelanta a donde deja de sonar) ni hace entrar B donde aún
+    calla (entra donde empieza a sonar); con corte en el compás o eco, el corte se mueve al compás más cercano en que suenan
+    las dos. Si aun así el corte en el compás deja un hueco, se cambia por la mezcla (la otra canción lo tapa).
+  * Rampa de tempo (`tempo_ramp=True`; APAGADA por defecto, ver docs/MOTOR_DJ.md): tras una mezcla con B estirada, 3 tramos
+    de 2 s con el tempo cada vez más cerca de 1,0 antes del cuerpo original, en vez del empalme directo de 20 ms.
   * Si cuando llega el plan el punto de mezcla cae dentro del trozo que ya suena y aún le faltan más de 0,25 s para llegar,
     el motor acorta ese trozo justo en él (`MixEngine.truncate_current`): no hace falta que el trozo acabe antes (canciones
     de 20 s, o `play(start_s)` cerca del final).
@@ -102,10 +107,16 @@ TRUNCATED_TOL_S = 0.05          # una canción cargada hasta el tope del cargado
 CHECK_CONTEXT_S = 2.0           # el puntuador mira también los 2 s de antes y de después de la mezcla (saltos de volumen)
 CHECK_CLICK_S = 0.05            # y busca clics en ±50 ms alrededor de cada unión de la mezcla
 AUDIO_CHECKS = ("light", "full")
+SILENCE_DB = -50.0              # 100 ms más flojos que esto (dBFS) son silencio: ni se corta A ni entra B en él
+SOUND_WIN_S = 0.1               # ventana con la que se mira si algo suena justo antes o justo después de un corte
+SOUND_SEARCH_S = 30.0           # hasta dónde se busca sonido antes del corte (A) o después de la entrada (B)
 MAX_TRIES = 5                   # canciones seguidas que se intentan cargar como siguiente antes de rendirse
 INSTALL_TRIES = 8               # reintentos de cambiar la cola si la llamada de audio avanza a la vez
 
 LOOP_BARS = 4                   # el bucle repite los 4 compases de antes del punto de mezcla
+RAMP_STEPS = 3                  # rampa de vuelta al tempo original de B: 3 tramos con el tempo cada vez más cerca de 1,0
+RAMP_SEG_S = 2.0                # de 2 s de salida cada uno
+RAMP_PREROLL_S = 0.5            # cada tramo se estira desde 0,5 s antes y eso se tira (el principio de un estirado no es fiel)
 
 _track_ids = itertools.count(1)
 _loop_ids = itertools.count(1)
@@ -201,6 +212,42 @@ class _Ask:
         self.force = False              # «replan» que rehace la mezcla aunque la siguiente sea la misma (llegó un análisis)
 
 
+def _sounds(x) -> bool:
+    """¿Suena algo en x (RMS por encima de `SILENCE_DB`)? Un trozo vacío no suena."""
+    if not len(x):
+        return False
+    np = dj_dsp._np()
+    return float(np.mean(np.square(x, dtype=np.float64))) > 10 ** (SILENCE_DB / 10.0)
+
+
+def _block_loud(x, block):
+    """Por cada bloque de `block` muestras de x: ¿suena (RMS por encima de `SILENCE_DB`)?"""
+    np = dj_dsp._np()
+    k = len(x) // block
+    if k < 1:
+        return np.zeros(0, dtype=bool)
+    p = np.square(x[:k * block], dtype=np.float64).mean(axis=1).reshape(k, block).mean(axis=1)
+    return p > 10 ** (SILENCE_DB / 10.0)
+
+
+def _last_sound(data, end, search_s=SOUND_SEARCH_S):
+    """Muestra donde acaba el último bloque de 10 ms que suena antes de `end` (buscando `search_s` hacia atrás), o None."""
+    block = int(0.01 * SAMPLE_RATE)
+    lo = max(0, end - int(search_s * SAMPLE_RATE))
+    lo = end - (end - lo) // block * block
+    loud = _block_loud(data[lo:end], block)
+    hits = loud.nonzero()[0]
+    return None if not len(hits) else lo + (int(hits[-1]) + 1) * block
+
+
+def _first_sound(data, start, search_s=SOUND_SEARCH_S):
+    """Muestra donde empieza el primer bloque de 10 ms que suena desde `start` (buscando `search_s`), o None."""
+    block = int(0.01 * SAMPLE_RATE)
+    loud = _block_loud(data[start:start + int(search_s * SAMPLE_RATE)], block)
+    hits = loud.nonzero()[0]
+    return None if not len(hits) else start + int(hits[0]) * block
+
+
 def _max_minutes():
     from services import pcm_loader
     return round(pcm_loader.MAX_SECONDS / 60)
@@ -235,7 +282,7 @@ class EngineSession:
     """Sesión del DJ sobre un `MixEngine` (ver la explicación del módulo). El dueño del motor hace start()/stop() del flujo."""
 
     def __init__(self, engine, info_for, next_after, bars=16, loader=None, lead_s=45.0, lufs_stored=None, lufs_measure=None,
-                 typed=True, audio_check="light", loops=False):
+                 typed=True, audio_check="light", loops=False, tempo_ramp=False):
         if loader is None:
             from services import pcm_loader
             loader = pcm_loader.load
@@ -249,6 +296,7 @@ class EngineSession:
         # con sus funciones y umbrales; "full" llama a score_audio entero (0,1 a 0,4 s más por mezcla); None: no se puntúa
         self.audio_check = audio_check if audio_check in AUDIO_CHECKS else None
         self.loops = bool(loops)        # bucles de 4 u 8 compases antes de la mezcla (loops.needs_loop); ver docs/MOTOR_DJ.md
+        self.tempo_ramp = bool(tempo_ramp)  # B vuelve a su tempo en 3 tramos de 2 s en vez de en el empalme de 20 ms
         self._loader = loader
         self._lufs_stored = lufs_stored or _stored_lufs
         self._lufs_measure = lufs_measure or _measured_lufs
@@ -883,7 +931,7 @@ class EngineSession:
             return None, "la mezcla no cabe en la canción que suena"
         if b_body + int(MIN_CHUNK_S * sr) > b.frames:
             return None, "la canción que entra es demasiado corta"
-        join = None
+        join = join_tail = None
         if abs(ratio - 1.0) < 1e-6:
             piece = b.data[bs:bs + n]                           # ya con su ganancia
         else:
@@ -891,13 +939,16 @@ class EngineSession:
             if piece is None:
                 return None, "no se pudo cambiar el tempo de la que entra"
             piece *= b.gain
-            join, piece = self._join_piece(piece[n:], b, b_body), piece[:n]
+            join_tail = piece[n:]
+            join, piece = self._join_piece(join_tail, b, b_body), piece[:n]
         kind, why = self._choose(ctx, plan)
         a_part = a.data[a_mix:a_mix + n]
+        base_plan = plan
+        plan = self._audible_plan(base_plan, kind, a_part, piece, ctx)
         x, tail = self._render(a_part, piece, plan, kind, ctx)
         split = self._split(kind, plan, len(x))
         check = {}
-        if self.audio_check and kind != transition_types.TYPE_CUT_BAR:
+        if self.audio_check:
             t0 = time.perf_counter()
             k = int(CHECK_CONTEXT_S * sr)
             after = b.data[b_body:b_body + k]
@@ -905,10 +956,16 @@ class EngineSession:
                 after = dj_dsp._np().concatenate((join, b.data[b_body + len(join):b_body + k]))
             bad = self._audio_problems(x, a_part, piece, plan, kind, split, ctx, a.data[max(0, a_mix - k):a_mix], after)
             check = {"audio": bad}
-            if bad:
-                old = kind
-                kind = transition_types.TYPE_CUT_BAR
-                why = f"corte en el compás: el puntuador descartó «{old}» ({'; '.join(bad)})"
+            new = None
+            if bad and kind != transition_types.TYPE_CUT_BAR:
+                new = transition_types.TYPE_CUT_BAR
+            elif bad and any("hueco" in m for m in bad):      # el corte deja un silencio: la mezcla lo tapa con la otra
+                new = transition_types.TYPE_BLEND
+            if new is not None:
+                old, kind = kind, new
+                what = "corte en el compás" if new == transition_types.TYPE_CUT_BAR else "mezcla"
+                why = f"{what}: el puntuador descartó «{old}» ({'; '.join(bad)})"
+                plan = self._audible_plan(base_plan, kind, a_part, piece, ctx)
                 x, tail = self._render(a_part, piece, plan, kind, ctx)
                 split = self._split(kind, plan, len(x))
                 check["swapped"] = old
@@ -916,14 +973,51 @@ class EngineSession:
         del piece, a_part
         x1_label = _Label(a.id, "x1", a_mix / sr, 1.0, a_mix)
         entry = [(x[split:], _Label(b.id, "entry", plan.b_start_s + split * ratio / sr, ratio))]
-        more, b_body = self._tail_entry(b, b_body, join, tail, plan.b_start_s + n * ratio / sr, ratio)
-        entry += more
+        ramp = None
+        if join is not None and self.tempo_ramp and not len(tail):
+            ramp = self._ramp_entry(b, join_tail, plan.b_start_s + plan.length_s * ratio, ratio)
+        if ramp is not None:
+            entry += ramp[0]
+            b_body = ramp[1]
+        else:
+            more, b_body = self._tail_entry(b, b_body, join, tail, plan.b_start_s + n * ratio / sr, ratio)
+            entry += more
         for i, (_, lab) in enumerate(entry):
             lab.idx = i
         plan = self._typed_plan(plan, why)
         pair = _Pair(b, plan, a_mix, x[:split], x1_label, entry, b_body, bs, ctx.grid_a, ctx, kind)
         pair.check = check
         return pair, None
+
+    @staticmethod
+    def _audible_plan(plan, kind, a_part, b_part, ctx):
+        """Con corte en el compás o eco, el corte (`bass_swap_at`) debe caer donde A aún suena justo antes y B ya suena justo
+        después (si no, un silencio: A con su final mudo o B con su principio mudo). Si no es así, se mueve al comienzo de
+        compás de A más cercano en que sí (o cada medio segundo sin rejilla). Con los demás tipos, el plan tal cual."""
+        if kind not in (transition_types.TYPE_CUT_BAR, transition_types.TYPE_ECHO_OUT):
+            return plan
+        sr = SAMPLE_RATE
+        n = round(plan.length_s * sr)
+        win = int(SOUND_WIN_S * sr)
+
+        def ok(c):
+            return _sounds(a_part[max(0, c - win):c]) and _sounds(b_part[c:c + win])
+
+        c = transition_types._cut_point(plan, n, sr)
+        if ok(c):
+            return plan
+        grid = ctx.grid_a if ctx is not None else None
+        if grid is not None:
+            first = math.ceil(grid.bar_at(plan.a_start_s) - 1e-9)
+            last = math.floor(grid.bar_at(plan.a_start_s + plan.length_s) + 1e-9)
+            cands = [round((grid.bar_time(k) - plan.a_start_s) * sr) for k in range(first, last + 1)]
+        else:
+            cands = list(range(0, n, int(0.5 * sr)))
+        cands = sorted((x for x in cands if win <= x <= n - win), key=lambda x: abs(x - c))
+        best = next((x for x in cands if ok(x)), None)
+        if best is None:
+            return plan
+        return dataclasses.replace(plan, bass_swap_s=round(best / sr, 3))
 
     @staticmethod
     def _split(kind, plan, n) -> int:
@@ -949,7 +1043,7 @@ class EngineSession:
         """A y B en la línea de tiempo de la mezcla y su ganancia de medios y agudos (fundido, o escalón en el corte)."""
         ts = transition_scorer
         n = len(x)
-        if kind == transition_types.TYPE_ECHO_OUT:
+        if kind in (transition_types.TYPE_ECHO_OUT, transition_types.TYPE_CUT_BAR):
             a_line, b_line = ts._place(np, a_part[:split], 0, n), ts._place(np, b_part[split:], split, n)
             gain_a = (np.arange(n) < split).astype(np.float64)
             return a_line, b_line, gain_a, 1.0 - gain_a
@@ -972,7 +1066,7 @@ class EngineSession:
         w = int(CHECK_CLICK_S * sr)
         joins = [(np.concatenate((a_before[-w:], x[:w])), (np.concatenate((a_before[-w:], a_part[:w])),)),
                  (np.concatenate((x[-w:], b_after[:w])), (np.concatenate((b_part[-w:], b_after[:w])),))]
-        if kind == transition_types.TYPE_ECHO_OUT:
+        if kind in (transition_types.TYPE_ECHO_OUT, transition_types.TYPE_CUT_BAR):
             lo, hi = max(0, split - w), min(n, split + w)
             joins.append((x[lo:hi], (a_part[lo:hi], b_part[lo:hi])))
         for seq, refs in joins:
@@ -983,7 +1077,7 @@ class EngineSession:
                 break
         k = int(CHECK_CONTEXT_S * sr)
         excess = ts._loudness(np, x, a_line, b_line, gain_a, gain_b, a_before[-k:], b_after[:k], sr,
-                              split if kind == transition_types.TYPE_ECHO_OUT else None)[0]
+                              split if kind in (transition_types.TYPE_ECHO_OUT, transition_types.TYPE_CUT_BAR) else None)[0]
         if excess is not None and excess >= ts.LOUD_DISCARD_DB:
             bad.append(f"salto de volumen de {excess:.1f} dB".replace(".", ","))
         return bad
@@ -991,7 +1085,7 @@ class EngineSession:
     @staticmethod
     def _full_problems(x, a_part, b_part, plan, kind, split, ctx, a_before, b_after) -> list:
         ts = transition_scorer
-        if kind == transition_types.TYPE_ECHO_OUT:             # se mide como un corte en `split` (B sola desde ahí)
+        if kind in (transition_types.TYPE_ECHO_OUT, transition_types.TYPE_CUT_BAR):     # como un corte en `split`
             a_part, b_part = a_part[:split], b_part[split:]
             plan = TransitionPlan(plan.a_start_s, plan.b_start_s, 0.0, 1.0, None, KIND_CUT, plan.reason)
         info_a, info_b = ctx.info_a if ctx else {}, ctx.info_b if ctx else {}
@@ -1010,6 +1104,44 @@ class EngineSession:
         if ((m.get("loudness_step_db") or {}).get("value") or 0.0) >= ts.LOUD_DISCARD_DB:
             bad.append("salto de volumen")
         return bad
+
+    def _ramp_entry(self, b, tail, t, ratio):
+        """Rampa de vuelta al tempo original de B tras una mezcla con B estirada: `RAMP_STEPS` tramos de `RAMP_SEG_S` s con
+        el tempo cada vez más cerca de 1,0 (con 0,96: 0,97, 0,98, 0,99), cada uno cargado con el cargador desde donde acaba
+        el anterior (en el tiempo de B) y empalmado con el mismo fundido de 20 ms que el empalme normal; el último se empalma
+        con el cuerpo original de B. `tail`: lo que el tramo estirado de la mezcla sigue tras ella. Devuelve
+        ([(array, etiqueta)], muestra de B donde sigue su cuerpo) o None si algún tramo no se pudo cargar o no cabe."""
+        np = dj_dsp._np()
+        sr = SAMPLE_RATE
+        seg_n = round(RAMP_SEG_S * sr)
+        out = []
+        for i in range(1, RAMP_STEPS + 1):
+            r = ratio + (1.0 - ratio) * i / (RAMP_STEPS + 1)
+            if round((t + (RAMP_SEG_S + JOIN_S) * r) * sr) + int(MIN_CHUNK_S * sr) > b.frames:
+                return None
+            pre = min(RAMP_PREROLL_S, t)                        # se carga desde antes y se tira: el arranque de rubberband
+            skip = round(pre / r * sr)
+            try:
+                seg = self._loader(b.path, tempo_ratio=r, start_s=t - pre, duration_s=pre + (RAMP_SEG_S + JOIN_S) * r)
+            except Exception as e:
+                log.warning("no se pudo cargar la rampa de tempo de %s: %s", b.path, e)
+                return None
+            if seg is None or len(seg) < skip + seg_n + 8:
+                return None
+            seg = (seg[skip:] * np.float32(b.gain)).astype(np.float32)
+            k = min(len(tail), seg_n)
+            if k:
+                fade = np.linspace(0.0, 1.0, k, dtype="float32")[:, None]
+                seg[:k] = tail[:k] * (1.0 - fade) + seg[:k] * fade
+            out.append((seg[:seg_n], _Label(b.id, "entry", t, r)))
+            tail = seg[seg_n:]
+            t += RAMP_SEG_S * r
+        b_body = round(t * sr)
+        join = self._join_piece(tail, b, b_body)
+        if join is not None:
+            out.append((join, _Label(b.id, "entry", t, 1.0)))
+            b_body += len(join)
+        return out, b_body
 
     @staticmethod
     def _join_piece(tail, b, b_body):
@@ -1039,9 +1171,24 @@ class EngineSession:
         piece = int(CUT_PIECE_S * sr)
         c = min(max(c, lo_min), a.frames)
         bs = min(max(bs, 0), max(0, b.frames - 1))
+        win = int(SOUND_WIN_S * sr)
+        moved = []
+        if c > lo_min and not _sounds(a.data[max(lo_min, c - win):c]):     # A ya no suena: se corta donde deja de sonar
+            end = _last_sound(a.data, c)
+            if end is not None and end > lo_min:
+                c = end
+                moved.append("la que suena ya estaba en silencio")
+        if not _sounds(b.data[bs:bs + win]):                               # B empieza en silencio: entra donde suena
+            first = _first_sound(b.data, bs)
+            if first is not None and first + int(MIN_CHUNK_S * sr) < b.frames:
+                bs = max(0, first - int(0.01 * sr))
+                moved.append("la que entra empezaba en silencio")
         lo = max(lo_min, c - piece)
         if plan.kind != KIND_CUT:
             plan = TransitionPlan(c / sr, bs / sr, 0.0, 1.0, None, KIND_CUT, plan.reason)
+        if moved:
+            plan = dataclasses.replace(plan, a_start_s=round(c / sr, 3), b_start_s=round(bs / sr, 3),
+                                       reason=f"{plan.reason}; corte movido: {' y '.join(moved)}")
         kind, why = self._choose(ctx, plan)
         x, tail = self._render(a.data[lo:c], b.data[bs:bs + piece], plan, kind, ctx)
         k = c - lo
