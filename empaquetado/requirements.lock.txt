@@ -10,7 +10,7 @@ PySide6_Essentials==6.11.2
 requests==2.34.2
 shiboken6==6.11.2
 urllib3==2.8.0
-winrt-runtime==3.2.1
+winrt-runtime==4.0.3
 winrt-Windows.Foundation==3.2.1
 winrt-Windows.Foundation.Collections==3.2.1
 winrt-Windows.Media==3.2.1
