@@ -17,7 +17,18 @@ en milisegundos) y devuelve un `TransitionPlan`. Cómo decide:
   punto en que su cuerpo llegaría al acabar la mezcla. El cambio de graves cae en el comienzo de compás más cercano a la
   mitad.
 - **Sin rejillas** (falta alguna): el punto de la fase 8 tal cual, con el tempo igualado si se sabe el BPM de las dos.
-- **Con datos que faltan**: nunca falla; devuelve un corte limpio con el motivo."""
+- **Con datos que faltan**: nunca falla; devuelve un corte limpio con el motivo.
+- **Con estructura** (`structure` en la ficha: el dict de `structure.analyse`, ya leído con `track_analysis.structure_from`;
+  opcional, sin ella todo es como arriba), solo en la mezcla por frases:
+  * Dos drops a la vez (`structure.drops_overlap`: un drop de cada una dentro de la mezcla, o el de una en plena subida de
+    la otra): la frase se parte por la mitad hasta que no coincidan; si con 4 compases siguen coincidiendo, corte limpio en
+    el principio de la frase de A (el tipo de transición decide luego si va con eco).
+  * Drop de B al final de la mezcla (`structure.drop_aligned_b_start`): es solo una candidata para la entrada de B. Se usa si
+    cae en un comienzo de compás de B que cuadra con la frase al menos tan bien como la que ya había (comienzo de frase de 8,
+    de 4 o solo de compás), cabe en B, no pasa de su mitad y no hace coincidir drops.
+  * Voces (`structure.vocal_overlap`), con peso BAJO porque la voz es una estimación que distingue poco en música real: si
+    las dos tienen voz en más del 60 % de una mezcla de más de 16 s, se prueba UNA vez la frase de la mitad y se queda la que
+    tenga menos voz solapada. Nunca lleva a un corte."""
 import math
 
 from services import mix_points
@@ -28,6 +39,8 @@ A_PHRASES = (16, 8)             # comienzos de frase de A que se prueban, de má
 B_PHRASE = 8                    # B entra en un comienzo de frase de 8 compases
 MIN_BARS = 4                    # una mezcla por frases de menos de 4 compases no tiene sentido: se usa la de la fase 8
 B_BODY_MIN_S = 1.0              # tras la mezcla, a B le debe quedar al menos esto de cuerpo (el motor lo exige)
+VOCAL_SHORTEN = 0.6             # voz de las dos en más de esto de la mezcla: se prueba una frase más corta (peso bajo)
+VOCAL_LONG_S = 16.0             # solo con mezclas más largas que esto
 
 
 def _number(value):
@@ -98,6 +111,9 @@ def plan_transition(a: dict, b: dict, bars: int = 16) -> TransitionPlan:
         return TransitionPlan(base.a_start_s, base.b_start_s, base.length_s, round(ratio, 6), None, base.kind,
                               f"{base.reason}; sin rejilla de golpes: sin cuadrar compases; {tempo_note}")
     phrased = _phrased(a, b, grid_a, grid_b, ratio, max(1, int(bars or 16)), base)
+    if isinstance(phrased, dict):                       # los drops coinciden con cualquier frase: corte al empezar la de A
+        return mix_points.cut(phrased["a_start"], phrased["b_start"],
+                              "corte limpio: los drops de las dos caerían a la vez en cualquier mezcla por frases")
     if phrased is None:
         return TransitionPlan(base.a_start_s, base.b_start_s, base.length_s, round(ratio, 6), None, base.kind,
                               f"{base.reason}; no cabe una frase entera: sin cuadrar compases; {tempo_note}")
@@ -105,11 +121,34 @@ def plan_transition(a: dict, b: dict, bars: int = 16) -> TransitionPlan:
                           f"{phrased[4]}; {tempo_note}")
 
 
+def _structure(info):
+    """Los eventos y la voz de la estructura de una ficha (o None)."""
+    st = info.get("structure") if isinstance(info, dict) else None
+    return st if isinstance(st, dict) else None
+
+
+def _phrase_rank(grid: BeatGrid, t: float) -> int:
+    """Lo bien que cuadra el instante t con las frases de la rejilla: 3 comienzo de frase de 8, 2 de 4, 1 de compás, 0 nada."""
+    bar_f = grid.bar_at(t)
+    bar = round(bar_f)
+    if abs(bar_f - bar) > 0.05:
+        return 0
+    return 3 if bar % B_PHRASE == 0 else 2 if bar % 4 == 0 else 1
+
+
 def _phrased(a, b, grid_a: BeatGrid, grid_b: BeatGrid, ratio: float, bars: int, base: TransitionPlan):
-    """(a_start, b_start, length, bass_swap, motivo) cuadrados con las frases, o None si no cabe ninguna."""
+    """(a_start, b_start, length, bass_swap, motivo) cuadrados con las frases, o None si no cabe ninguna. Con estructura, un
+    dict {"a_start", "b_start"} si cabía una frase pero los drops coinciden en todas (ver la explicación del módulo)."""
     a_dur = mix_points.seconds(a, "duration")
     b_dur = mix_points.seconds(b, "duration")
     intro_b = mix_points.seconds(b, "intro") or 0.0
+    sa, sb = _structure(a), _structure(b)
+    st = None
+    if sa is not None or sb is not None:
+        from services import structure as st            # solo si hay estructura (el planificador sigue siendo puro)
+    ev_a, ev_b = (sa or {}).get("events"), (sb or {}).get("events")
+    voc_a, voc_b = (sa or {}).get("vocal"), (sb or {}).get("vocal")
+    clash, keep, vocal_tried = None, None, False
     while grid_a.bar_s * bars > mix_points.MAX_MIX_S and bars > MIN_BARS:
         bars //= 2
     while bars >= MIN_BARS:
@@ -128,14 +167,43 @@ def _phrased(a, b, grid_a: BeatGrid, grid_b: BeatGrid, ratio: float, bars: int, 
                 b_start = _closest(_phrase_starts(grid_b, target_b, B_PHRASE), target_b, 0.0, high_b)
                 if b_start is None:
                     b_start = _closest((grid_b.next_bar_time(0.0),), target_b, 0.0, high_b)
-                if b_start is not None and b_dur and b_start + length * ratio + B_BODY_MIN_S > b_dur:
+
+                def fits(t, length=length, high_b=high_b):
+                    return t is not None and 0.0 <= t <= high_b + 1e-6 and (not b_dur or t + length * ratio + B_BODY_MIN_S <= b_dur)
+
+                if not fits(b_start):
                     b_start = None                      # el cuerpo de B no llegaría a sonar: frase más corta
+                notes = []
+                if b_start is not None and st is not None:
+                    cand = st.drop_aligned_b_start(ev_a, ev_b, a_start, length, ratio, grid_b)
+                    if (cand is not None and abs(cand - b_start) > 1e-6 and fits(cand)
+                            and _phrase_rank(grid_b, cand) >= _phrase_rank(grid_b, b_start)
+                            and not st.drops_overlap(a_start, length, ratio, cand, ev_a, ev_b)):
+                        b_start = cand
+                        notes.append("la que entra, con su drop al final de la mezcla")
+                    if st.drops_overlap(a_start, length, ratio, b_start, ev_a, ev_b):
+                        clash = clash or {"a_start": round(a_start, 3), "b_start": round(b_start, 3)}
+                        b_start = None                  # dos drops a la vez: frase más corta
+                        bars //= 2
+                        continue
                 if b_start is not None:
                     middle = a_start + length / 2
                     swap = grid_a.bar_time(round(grid_a.bar_at(middle))) - a_start
                     swap = min(max(swap, 0.0), length)
                     why = (f"mezcla de {bars} compases ({mix_points.fmt_seconds(length)}) desde un comienzo de frase "
-                           f"de {multiple} compases; la que entra, desde un comienzo de frase suyo")
-                    return round(a_start, 3), round(b_start, 3), round(length, 3), round(swap, 3), why
+                           f"de {multiple} compases; " + ("; ".join(notes) if notes else "la que entra, desde un comienzo de frase suyo"))
+                    if clash is not None:
+                        why += "; más corta para que no coincidan los drops de las dos"
+                    found = (round(a_start, 3), round(b_start, 3), round(length, 3), round(swap, 3), why)
+                    voc = st.vocal_overlap(a_start, length, ratio, b_start, voc_a, voc_b) if st is not None else 0.0
+                    if keep is not None:                # la frase corta que se probó por las voces
+                        return found[:4] + (found[4] + "; más corta: menos voces a la vez",) if voc < keep[1] else keep[0]
+                    if voc >= VOCAL_SHORTEN and length > VOCAL_LONG_S and bars // 2 >= MIN_BARS and not vocal_tried:
+                        keep, vocal_tried = (found, voc), True
+                        bars //= 2
+                        continue
+                    return found
         bars //= 2
-    return None
+    if keep is not None:
+        return keep[0]
+    return clash

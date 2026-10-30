@@ -287,3 +287,20 @@ contra la llamada de audio):
    y la cuenta atrás sube y baja. Habría que darle a la página los segundos de salida que faltan (no es de este cambio:
    `ui/dj_mixin.py` lo lleva otra sesión).
 5. No se ha oído: que la repetición suene natural en música real es una hipótesis.
+
+### Estructura en el planificador (fase 5, activa si la ficha trae `structure`)
+
+`dj_engine_mixin._dj_engine_info` añade a la ficha `structure` = `track_analysis.structure_from(análisis)` (drops, subidas y
+voz ya leídos, o None). `mix_planner` la usa solo en la mezcla por frases; sin ella (o con None) el plan es el de siempre:
+
+- **Dos drops a la vez** (`structure.drops_overlap`): la frase se parte por la mitad hasta que no coincidan; si con 4
+  compases siguen coincidiendo, corte limpio al empezar la frase de A (el tipo de transición decide si con eco).
+- **Drop de B al final de la mezcla** (`structure.drop_aligned_b_start`): solo candidata para la entrada de B; se usa si cuadra
+  con la frase de B al menos tan bien como la entrada normal (comienzo de frase de 8, de 4 o de compás), cabe en B, no pasa
+  de su mitad y no hace coincidir drops.
+- **Voces** (`structure.vocal_overlap`), peso bajo: con voz de las dos en más del 60 % de una mezcla de más de 16 s se prueba
+  una vez la frase de la mitad y se queda la que solape menos. Nunca lleva a un corte (la voz es una estimación con la señal,
+  que en música real distingue poco).
+
+Pruebas: `pruebas/prueba_planificador_estructura.py` (casos construidos a mano). En reguetón y géneros con el bajo siempre
+presente salen pocos drops (lo dice `structure.py`), así que en la carpeta de prueba esto casi no cambia nada.
