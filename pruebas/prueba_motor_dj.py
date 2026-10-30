@@ -177,10 +177,11 @@ check(f"la transición llega con A ya sonando: mezcla con tempo de B {plan.tempo
 check("next_after se pidió en un tick, en el hilo de la interfaz y con la ruta actual",
       r.asked[0][:2] == ("A", "A") and r.asked[0][3] is threading.current_thread())
 stretch = [c for c in r.fake.calls if c[0] == "B" and c[1] != 1.0]
-check("el tramo de B se pide estirado, desde b_start y con duration = length * ratio",
+check("el tramo de B se pide estirado, desde b_start y con duration = (length + empalme) * ratio",
       len(stretch) == 1 and abs(stretch[0][2] - plan.b_start_s) < 1e-9
-      and abs(stretch[0][3] - plan.length_s * plan.tempo_ratio_b) < 1e-9)
+      and abs(stretch[0][3] - (plan.length_s + dj_engine.JOIN_S) * plan.tempo_ratio_b) < 1e-9)
 a_mix, n = round(plan.a_start_s * SR), round(plan.length_s * SR)
+JOIN = round((plan.length_s + dj_engine.JOIN_S) * SR) - n         # muestras del empalme (el tramo estirado sigue un poco más)
 half = n // 2
 ratio = plan.tempo_ratio_b
 b_body = round((plan.b_start_s + plan.length_s * ratio) * SR)
@@ -214,8 +215,12 @@ check("A suena idéntica (con su ganancia de volumen igualado) hasta la muestra 
       np.array_equal(out[FADE:a_mix], A[FADE:a_mix]))
 check("la mezcla empieza en esa muestra y sale entera (las dos mitades seguidas)",
       np.allclose(out[a_mix:a_mix + n], x, atol=1e-6))
-check("después, el cuerpo de B (con su ganancia) desde b_start + length * ratio",
-      np.array_equal(out[a_mix + n:a_mix + n + 3 * SR], B[b_body:b_body + 3 * SR]))
+check("después del empalme, el cuerpo de B (con su ganancia) desde b_start + length * ratio (+ lo que duró el empalme)",
+      np.array_equal(out[a_mix + n + JOIN:a_mix + n + 3 * SR], B[b_body + JOIN:b_body + 3 * SR]))
+seam = np.abs(np.diff(out[a_mix + n - 300:a_mix + n + JOIN + 300, 0]))
+normal = np.abs(np.diff(out[a_mix + n + JOIN + 1000:a_mix + n + SR, 0]))
+check(f"sin clic en el empalme del tramo estirado con el cuerpo de B (salto {seam.max():.4f}, normal {normal.max():.4f})",
+      JOIN > 100 and seam.max() < 2.5 * normal.max() + 1e-4)
 check("la ganancia se aplicó: A se subió +3 dB y B se bajó -3 dB",
       abs(float(np.abs(out[SR:2 * SR]).max()) / float(np.abs(r.fake.full("A")[SR:2 * SR]).max()) - 10 ** (3 / 20)) < 1e-3
       and abs(gb - 10 ** (-3 / 20)) < 1e-9)
@@ -312,6 +317,8 @@ check("seek justo antes de la mezcla: la mezcla vuelve a estar en su sitio (sigu
 r.sess.seek(plan.a_start_s + 1.0)
 st = r.tick()
 b_body = round((plan.b_start_s + plan.length_s * plan.tempo_ratio_b) * SR)
+JOIN = round((plan.length_s + dj_engine.JOIN_S) * SR) - n
+b_body += JOIN                                           # el cuerpo empieza tras el empalme
 check("seek dentro de la mezcla: salta al inicio del cuerpo de B, con advanced = B",
       st["path"] == "B" and st["advanced"] == "B" and abs(st["position_s"] - b_body / SR) < 1e-9)
 mark = r.frames

@@ -66,6 +66,7 @@ log = logging.getLogger(__name__)
 CHUNK_S = 15.0                  # tamaño de los trozos del cuerpo
 MIN_CHUNK_S = 1.0               # un último trozo más corto se junta con el anterior
 CUT_PIECE_S = 0.5               # piezas del corte limpio (A con rampa de bajada, B con rampa de subida)
+JOIN_S = 0.020                  # con tempo estirado, fundido lineal entre el final del tramo estirado y el cuerpo original de B
 MIN_GAP_FRAMES = 4096           # en un corte tardío, el trozo de A que queda antes no puede ser más corto que esto
 MAX_TRIES = 5                   # canciones seguidas que se intentan cargar como siguiente antes de rendirse
 INSTALL_TRIES = 8               # reintentos de cambiar la cola si la llamada de audio avanza a la vez
@@ -655,23 +656,41 @@ class EngineSession:
             return None, "la mezcla no cabe en la canción que suena"
         if b_body + int(MIN_CHUNK_S * sr) > b.frames:
             return None, "la canción que entra es demasiado corta"
+        join = None
         if abs(ratio - 1.0) < 1e-6:
             piece = b.data[bs:bs + n]                           # ya con su ganancia
         else:
-            piece = self._load_piece(b.path, ratio, plan)
+            piece = self._load_piece(b.path, ratio, plan, extra_s=JOIN_S)
             if piece is None:
                 return None, "no se pudo cambiar el tempo de la que entra"
             piece *= b.gain
+            join, piece = self._join_piece(piece[n:], b, b_body), piece[:n]
         x = dj_dsp.render_transition(a.data[a_mix:a_mix + n], piece, plan)
         del piece
         half = len(x) // 2
         x1_label = _Label(a.id, "x1", a_mix / sr, 1.0, a_mix)
         entry = [(x[half:], _Label(b.id, "entry", plan.b_start_s + half * ratio / sr, ratio))]
+        if join is not None:                                    # el empalme sin salto con el cuerpo original de B
+            entry.append((join, _Label(b.id, "entry", plan.b_start_s + n * ratio / sr, ratio, idx=1)))
+            b_body += len(join)
         return _Pair(b, plan, a_mix, x[:half], x1_label, entry, b_body, bs, grid_a), None
 
-    def _load_piece(self, path, ratio, plan):
+    @staticmethod
+    def _join_piece(tail, b, b_body):
+        """El empalme de B: el tramo estirado sigue unos 20 ms más (`tail`) y se funde en línea recta con el cuerpo original de B desde
+        `b_body`. Las dos versiones son la misma música con unos milisegundos de desfase del estirado: sin este fundido, el paso de una a
+        otra es un salto de la onda (un clic en cada mezcla con cambio de tempo). None si no hay tramo suficiente."""
+        k = min(len(tail), b.frames - b_body)
+        if k < 8:
+            return None
+        import numpy as np
+        fade = np.linspace(0.0, 1.0, k, dtype="float32")
+        body = b.data[b_body:b_body + k]
+        return (tail[:k] * (1.0 - fade)[:, None] + body * fade[:, None]).astype("float32")
+
+    def _load_piece(self, path, ratio, plan, extra_s=0.0):
         try:
-            piece = self._loader(path, tempo_ratio=ratio, start_s=plan.b_start_s, duration_s=plan.length_s * ratio)
+            piece = self._loader(path, tempo_ratio=ratio, start_s=plan.b_start_s, duration_s=(plan.length_s + extra_s) * ratio)
         except Exception as e:
             log.warning("no se pudo estirar %s: %s", path, e)
             return None
