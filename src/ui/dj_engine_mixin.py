@@ -198,6 +198,15 @@ class DjEngineMixin:
             return None
         return next((p for p in paths[at + 1:] if p and os.path.isfile(p)), None)
 
+    def dj_engine_analysis_arrived(self, path: str):
+        """Llegó el análisis de una canción: si es la que suena o la siguiente, la mezcla ya preparada se rehace con él."""
+        player, session = self._dj_engine_player, self._dj_engine_session
+        if player is None or session is None:
+            return
+        info = player.last_info
+        if _same_path(path, info.get("path")) or _same_path(path, info.get("next_path")):
+            session.replan(force=True)
+
     def dj_engine_plan(self):
         """La transición planificada de lo que suena a lo siguiente, o None."""
         player = self._dj_engine_player

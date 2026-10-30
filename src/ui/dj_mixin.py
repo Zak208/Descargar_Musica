@@ -144,6 +144,8 @@ class DjMixin:
         if mix is not None and (path == mix[0] or (mix[2] is not None and path == mix[2][0])):
             self._dj_mix = None                    # llegó el análisis de una de las dos de la próxima mezcla
         self._dj_apply_bpm(path)                   # el fundido ya no tiene que calcularlo
+        if self.dj_engine_on():
+            self.dj_engine_analysis_arrived(path)   # el motor rehace la mezcla ya preparada con el análisis nuevo
         if not self._dj_refresh_timer.isActive():
             self._dj_refresh_timer.start()
 

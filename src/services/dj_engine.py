@@ -131,7 +131,7 @@ class _Pair:
 
 class _Ask:
     """Petición pendiente de `next_after` (la hace tick())."""
-    __slots__ = ("kind", "after", "a_id", "attempt", "not_before")
+    __slots__ = ("kind", "after", "a_id", "attempt", "not_before", "force")
 
     def __init__(self, kind, after, a_id, attempt, not_before):
         self.kind = kind                # "next" (tras cargar o avanzar), "replan" o "skip" (B no se pudo cargar)
@@ -139,6 +139,7 @@ class _Ask:
         self.a_id = a_id
         self.attempt = attempt
         self.not_before = not_before    # número de tick a partir del cual se puede pedir
+        self.force = False              # «replan» que rehace la mezcla aunque la siguiente sea la misma (llegó un análisis)
 
 
 def _stored_lufs(path):
@@ -285,8 +286,9 @@ class EngineSession:
             self._sync_locked()
             self._seek_locked(float(seconds))
 
-    def replan(self):
-        """La siguiente canción cambió: en el próximo tick se pide `next_after` y se rehace lo que aún no ha empezado."""
+    def replan(self, force=False):
+        """La siguiente canción cambió: en el próximo tick se pide `next_after` y se rehace lo que aún no ha empezado. Con
+        `force`, se rehace aunque la siguiente sea la misma (por ejemplo, llegó el análisis de una de las dos canciones)."""
         with self._lock:
             if self._loading is not None or self._a is None:
                 return
@@ -296,6 +298,7 @@ class EngineSession:
             self._no_next = False
             if self._ask is None or self._ask.kind != "skip":
                 self._ask = _Ask("replan", self._a.path, self._a.id, 1, 0)
+                self._ask.force = bool(force)
 
     def set_volume(self, gain):
         self._engine.set_master_gain(gain)
@@ -428,7 +431,7 @@ class EngineSession:
             self._preparing = None
             self._no_next = True
             return
-        if ask.kind == "replan" and ((p is not None and p.b.path == nxt) or (p is None and self._preparing == nxt)):
+        if ask.kind == "replan" and not ask.force and ((p is not None and p.b.path == nxt) or (p is None and self._preparing == nxt)):
             return                                              # la misma de antes: nada que rehacer
         if p is not None:
             self._pair = None

@@ -340,6 +340,10 @@ r.sess.replan()
 r.tick()
 r.tick()
 check("replan con la misma siguiente: no se rehace nada", len(r.fake.calls) == loads and r.tick()["next_path"] == "B")
+r.sess.replan(force=True)
+st = r.wait(lambda x: len(r.fake.calls) > loads and x["plan"] is not None)
+check("replan(force=True) con la misma siguiente rehace la mezcla (llegó un análisis nuevo) y sigue siendo B",
+      st is not None and st["next_path"] == "B")
 r.order["A"] = "C"
 r.sess.replan()
 st = r.wait(lambda x: x["plan"] is not None and x["next_path"] == "C")
