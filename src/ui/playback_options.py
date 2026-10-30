@@ -350,7 +350,7 @@ class PlaybackOptionsMixin:
                 QTimer.singleShot(4000, lambda p=nxt: self._measure_loudness(p, quiet=True))
         self._apply_volume()
         self._load_envelope(path)
-        if path and self._fade_ms > 0 and not self._sleep_end_of_track:
+        if path and self._fade_ms > 0 and not self._sleep_end_of_track and not self.dj_engine_on():
             nxt_path = self._next_local_path()
             QTimer.singleShot(3000, lambda a=path, b=nxt_path: self._ensure_tempo(a, b))   # para igualar el ritmo al mezclar
         self._refresh_options_icon()

@@ -128,8 +128,11 @@ real_player = w.player
 w.open_dj_page()
 check("la carpeta se lee", wait(lambda: w._dj_summary is not None))
 check("el análisis en segundo plano termina", wait(lambda: w._dj_an_worker is None, 120))
-for p in paths:                      # un análisis fijado a mano (tempo, intro, final y rejilla) para que la mezcla sea la de siempre
-    w._dj_analysis[p] = {"bpm": 120.0, "intro_ms": 2000, "outro_ms": 12000, "duration_ms": DURATIONS[paths.index(p)] * 1000, "energy": 0.5,
+scanned = dj_service.tracks_for(w._dj_summary, w._dj_source())      # las rutas como las escanea la ventana (con barras mezcladas)
+check("la ventana conoce las 4 canciones", len(scanned) == 4)
+for p in scanned:                    # un análisis fijado a mano (tempo, intro, final y rejilla) para que la mezcla sea la de siempre
+    i = next(k for k, q in enumerate(paths) if os.path.basename(q) == os.path.basename(p))
+    w._dj_analysis[p] = {"bpm": 120.0, "intro_ms": 2000, "outro_ms": 12000, "duration_ms": DURATIONS[i] * 1000, "energy": 0.5,
                          "tone": "8A", "beat_first_s": 0.0, "beat_bpm": 120.0, "beat_downbeat": 0, "beat_conf": 0.9}
 
 calls = []
@@ -145,6 +148,9 @@ w.play_next = counted_next
 w.start_dj_session()
 check("empieza la sesión", wait(lambda: w.dj_session_active()))
 check("el reproductor de la ventana es el del motor", w.dj_engine_on() and isinstance(w.player, EnginePlayer))
+check("la sesión del motor conoce la primera canción con la ruta de la ventana (y así encuentra su análisis)",
+      w._dj_engine_session.current_path == w.current_item_info["local_path"]
+      and w._dj_engine_info(w._dj_engine_session.current_path).get("bpm") == 120.0)
 check("suena (estado Reproduciendo)", wait(lambda: w.player.playbackState() == QMediaPlayer.PlayingState, 10))
 check("conoce la duración de la que suena", wait(lambda: any(abs(w.player.duration() - d * 1000) < 1500 for d in DURATIONS), 10))
 p0 = 0

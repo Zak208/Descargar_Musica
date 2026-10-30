@@ -49,9 +49,10 @@ class EnginePlayer(QObject):
     errorOccurred = Signal(object, str)
     foreign_source = Signal(QUrl)
 
-    def __init__(self, session, parent=None):
+    def __init__(self, session, parent=None, resolve=None):
         super().__init__(parent)
         self.session = session
+        self._resolve = resolve                 # ruta de Qt -> la misma canción escrita como la guarda la ventana (con ella se busca su análisis)
         self.audio_output = EngineOutput(session, self)
         self._state = QMediaPlayer.StoppedState
         self._status = QMediaPlayer.NoMedia
@@ -98,6 +99,8 @@ class EnginePlayer(QObject):
             self._stop_now()
             return
         path = os.path.normpath(url.toLocalFile()) if url.isLocalFile() else ""     # con las barras de la ventana (\), no las de Qt (/)
+        if path and self._resolve is not None:
+            path = self._resolve(path) or path
         if not path or not os.path.isfile(path):
             self._stop_now()
             if not path:
@@ -117,6 +120,7 @@ class EnginePlayer(QObject):
     def play(self):
         if self.session.current_path is None and self._last_path and os.path.isfile(self._last_path):
             self._announced_loaded = False                  # tras «Fin de la lista» o un error: vuelve a empezar la última
+            self._status = QMediaPlayer.LoadingMedia
             self.session.play(self._last_path, 0.0, autoplay=True)
         self.session.resume()
         self._timer.start()
@@ -134,6 +138,7 @@ class EnginePlayer(QObject):
         ms = max(0, int(ms))
         if self.session.current_path is None and self._last_path and os.path.isfile(self._last_path):
             self._announced_loaded = False                  # repetir una canción que acabó (la sesión ya la había soltado)
+            self._status = QMediaPlayer.LoadingMedia
             self.session.play(self._last_path, ms / 1000.0, autoplay=self._state == QMediaPlayer.PlayingState)
         else:
             self.session.seek(ms / 1000.0)
@@ -194,5 +199,6 @@ class EnginePlayer(QObject):
             self._position_ms = 0 if info.get("ended") else self._position_ms
             self._status = QMediaPlayer.EndOfMedia
             self.mediaStatusChanged.emit(QMediaPlayer.EndOfMedia)       # la aplicación llama a play_next() y a setSource()
-            if info.get("ended") and self._state == QMediaPlayer.PlayingState and self._status == QMediaPlayer.EndOfMedia:
+            if info.get("ended") and self._state == QMediaPlayer.PlayingState and self._status == QMediaPlayer.EndOfMedia \
+                    and self.session.current_path is None:        # (con repetir, la ventana ya volvió a empezar la canción)
                 self._set_state(QMediaPlayer.StoppedState)

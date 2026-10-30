@@ -649,7 +649,8 @@ class DjMixin:
         elif (mix := self._dj_current_mix()) is not None:      # punto de mezcla según el análisis (el mismo del fundido)
             plan = mix[1]
             if plan.kind == KIND_CUT:
-                text = "Canción corta: la siguiente entra al terminar, sin mezcla"
+                text = (plan.reason[:1].upper() + plan.reason[1:]) if self.dj_engine_on() and plan.reason else \
+                    "Canción corta: la siguiente entra al terminar, sin mezcla"
             else:
                 left = int(plan.a_start_s * 1000) - position_ms
                 text = (f"La mezcla empieza en {self.format_time(left)} · dura {round(plan.length_s)} s" if left > 0
@@ -660,3 +661,4 @@ class DjMixin:
             left = duration - position_ms - self._fade_ms
             text = f"La mezcla empieza en {self.format_time(left)}" if left > 0 else "Mezclando con la siguiente…"
         page.set_countdown(text)
+        page.set_vote_target(self.dj_vote_text())          # al empezar la mezcla se vota esa y no la anterior
