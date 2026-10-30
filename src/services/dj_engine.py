@@ -23,6 +23,10 @@ Cómo suena una canción A y cómo se pasa a la siguiente B (todo a precisión d
     cola encima, y el cuerpo normal sigue detrás. En un corte (plan de corte, corte por mezcla imposible o tardío) solo cabe
     cut_bar (el corte limpio de siempre) o echo_out (tempos lejanos o final brusco, con el tempo de A). El tipo se añade al
     motivo del plan («; tipo: ...») y al estado (`transition_type`). `typed=False`: exactamente lo de antes.
+  * Puntuador (`audio_check="light"`, lo normal; ver docs/MOTOR_DJ.md): antes de renderizar, `transition_scorer.score_plan`;
+    si dice «descartar», corte limpio con su motivo. Después de renderizar una mezcla en la que suenan las dos, si hay clic
+    en una unión, recorte, hueco o salto de volumen (umbrales del puntuador), se cambia por un corte en el compás en vez de
+    retocarla. Unos 0,1 s por mezcla de 32 s, en el hilo de trabajo. `audio_check="full"` usa `score_audio` entero.
   * Si cuando llega el plan el punto de mezcla cae dentro del trozo que ya suena y aún le faltan más de 0,25 s para llegar,
     el motor acorta ese trozo justo en él (`MixEngine.truncate_current`): no hace falta que el trozo acabe antes (canciones
     de 20 s, o `play(start_s)` cerca del final).
@@ -79,7 +83,7 @@ import queue as _queue
 import threading
 import time
 
-from services import dj_dsp, dj_fx, mix_planner, mix_points, transition_types
+from services import dj_dsp, dj_fx, mix_planner, mix_points, transition_scorer, transition_types
 from services.mix_types import KIND_CUT, SAMPLE_RATE, BeatGrid, TransitionPlan
 
 log = logging.getLogger(__name__)
@@ -92,6 +96,9 @@ MIN_GAP_FRAMES = 4096           # en un corte tardío, el trozo de A que queda a
 TRUNC_GUARD_S = 0.25            # el trozo que suena se acorta en el punto de mezcla solo si aún le faltan 0,25 s para llegar
 FIT_TOL_S = 0.05                # la mezcla puede pasarse del final de A hasta 50 ms (redondeos del plan): se rellena con silencio
 TRUNCATED_TOL_S = 0.05          # una canción cargada hasta el tope del cargador (menos esto) se ha truncado si dura más
+CHECK_CONTEXT_S = 2.0           # el puntuador mira también los 2 s de antes y de después de la mezcla (saltos de volumen)
+CHECK_CLICK_S = 0.05            # y busca clics en ±50 ms alrededor de cada unión de la mezcla
+AUDIO_CHECKS = ("light", "full")
 MAX_TRIES = 5                   # canciones seguidas que se intentan cargar como siguiente antes de rendirse
 INSTALL_TRIES = 8               # reintentos de cambiar la cola si la llamada de audio avanza a la vez
 
@@ -151,7 +158,7 @@ class _Ctx:
 
 class _Pair:
     """Paso preparado de la actual (A) a la siguiente (B)."""
-    __slots__ = ("b", "plan", "a_mix", "x1", "x1_label", "entry", "b_body", "b_cut", "grid_a", "ctx", "kind")
+    __slots__ = ("b", "plan", "a_mix", "x1", "x1_label", "entry", "b_body", "b_cut", "grid_a", "ctx", "kind", "check")
 
     def __init__(self, b, plan, a_mix, x1, x1_label, entry, b_body, b_cut, grid_a, ctx=None, kind=None):
         self.b = b
@@ -165,6 +172,7 @@ class _Pair:
         self.grid_a = grid_a
         self.ctx = ctx                  # _Ctx (fichas de las dos), para rehacer un corte tardío con su tipo
         self.kind = kind                # tipo de transición (transition_types.TYPE_*) que suena
+        self.check = {}                 # lo que dijo el puntuador: "plan" (veredicto), "audio" (motivos), "swapped", "seconds"
 
 
 class _Ask:
@@ -214,7 +222,7 @@ class EngineSession:
     """Sesión del DJ sobre un `MixEngine` (ver la explicación del módulo). El dueño del motor hace start()/stop() del flujo."""
 
     def __init__(self, engine, info_for, next_after, bars=16, loader=None, lead_s=45.0, lufs_stored=None, lufs_measure=None,
-                 typed=True):
+                 typed=True, audio_check="light"):
         if loader is None:
             from services import pcm_loader
             loader = pcm_loader.load
@@ -224,6 +232,9 @@ class EngineSession:
         self.bars = bars
         self.lead_s = lead_s
         self.typed = bool(typed)        # tipos de transición (transition_types); False: solo mezcla larga o corte limpio
+        # puntuador (transition_scorer): "light" (por defecto) mide recorte, huecos, clics en las uniones y saltos de volumen
+        # con sus funciones y umbrales; "full" llama a score_audio entero (0,1 a 0,4 s más por mezcla); None: no se puntúa
+        self.audio_check = audio_check if audio_check in AUDIO_CHECKS else None
         self._loader = loader
         self._lufs_stored = lufs_stored or _stored_lufs
         self._lufs_measure = lufs_measure or _measured_lufs
@@ -720,9 +731,18 @@ class EngineSession:
             plan = mix_points.cut(c / SAMPLE_RATE, plan.b_start_s,
                                   f"corte limpio al llegar al tope de {_max_minutes()} min que se carga de cada canción "
                                   "(el resto de la que suena no se carga)")
+        verdict = None
+        if plan.kind != KIND_CUT and plan.length_s > 0 and self.audio_check:
+            verdict = transition_scorer.score_plan(info_a, info_b, plan)
+            if verdict["verdict"] == transition_scorer.VERDICT_DISCARD:
+                end = min(a.frames, round((plan.a_start_s + plan.length_s) * SAMPLE_RATE))
+                plan = mix_points.cut(self._bar_before(a, grid_a, end) / SAMPLE_RATE, plan.b_start_s,
+                                      "corte limpio: el puntuador descartó la mezcla (" + "; ".join(verdict["reasons"]) + ")")
         if plan.kind != KIND_CUT and plan.length_s > 0:
             pair, why = self._blend(a, b, plan, ctx)
             if pair is not None:
+                if verdict is not None:
+                    pair.check["plan"] = verdict["verdict"]
                 return pair
             # donde A se habría ido del todo (su final, si la mezcla no cabía): no se tira el final de A
             end = min(a.frames, round((plan.a_start_s + plan.length_s) * SAMPLE_RATE))
@@ -811,12 +831,27 @@ class EngineSession:
             piece *= b.gain
             join, piece = self._join_piece(piece[n:], b, b_body), piece[:n]
         kind, why = self._choose(ctx, plan)
-        x, tail = self._render(a.data[a_mix:a_mix + n], piece, plan, kind, ctx)
-        del piece
-        # B domina desde la mitad; con corte en el compás o eco, desde el corte (ahí ya suena sola)
-        split = len(x) // 2
-        if kind in (transition_types.TYPE_CUT_BAR, transition_types.TYPE_ECHO_OUT):
-            split = transition_types._cut_point(plan, len(x), sr)
+        a_part = a.data[a_mix:a_mix + n]
+        x, tail = self._render(a_part, piece, plan, kind, ctx)
+        split = self._split(kind, plan, len(x))
+        check = {}
+        if self.audio_check and kind != transition_types.TYPE_CUT_BAR:
+            t0 = time.perf_counter()
+            k = int(CHECK_CONTEXT_S * sr)
+            after = b.data[b_body:b_body + k]
+            if join is not None:                                # lo que suena de verdad tras la mezcla: el empalme y el cuerpo
+                after = dj_dsp._np().concatenate((join, b.data[b_body + len(join):b_body + k]))
+            bad = self._audio_problems(x, a_part, piece, plan, kind, split, ctx, a.data[max(0, a_mix - k):a_mix], after)
+            check = {"audio": bad}
+            if bad:
+                old = kind
+                kind = transition_types.TYPE_CUT_BAR
+                why = f"corte en el compás: el puntuador descartó «{old}» ({'; '.join(bad)})"
+                x, tail = self._render(a_part, piece, plan, kind, ctx)
+                split = self._split(kind, plan, len(x))
+                check["swapped"] = old
+            check["seconds"] = round(time.perf_counter() - t0, 4)
+        del piece, a_part
         x1_label = _Label(a.id, "x1", a_mix / sr, 1.0, a_mix)
         entry = [(x[split:], _Label(b.id, "entry", plan.b_start_s + split * ratio / sr, ratio))]
         more, b_body = self._tail_entry(b, b_body, join, tail, plan.b_start_s + n * ratio / sr, ratio)
@@ -824,7 +859,95 @@ class EngineSession:
         for i, (_, lab) in enumerate(entry):
             lab.idx = i
         plan = self._typed_plan(plan, why)
-        return _Pair(b, plan, a_mix, x[:split], x1_label, entry, b_body, bs, ctx.grid_a, ctx, kind), None
+        pair = _Pair(b, plan, a_mix, x[:split], x1_label, entry, b_body, bs, ctx.grid_a, ctx, kind)
+        pair.check = check
+        return pair, None
+
+    @staticmethod
+    def _split(kind, plan, n) -> int:
+        """Dónde se parte la mezcla (desde ahí domina B): la mitad, o el corte con corte en el compás y eco de salida."""
+        if kind in (transition_types.TYPE_CUT_BAR, transition_types.TYPE_ECHO_OUT):
+            return transition_types._cut_point(plan, n, SAMPLE_RATE)
+        return n // 2
+
+    def _audio_problems(self, x, a_part, b_part, plan, kind, split, ctx, a_before, b_after) -> list:
+        """Motivos (en español) por los que el puntuador DESCARTA esta mezcla por algo que un corte en el compás arregla: clic,
+        recorte, hueco de silencio o salto de volumen. [] si nada. Los veredictos de gusto (golpes, graves, voces, tonos) no se
+        usan aquí. Umbrales: los de `transition_scorer` (CLICK_RATIO, CLIP_DISCARD, GAP_DISCARD_MS, LOUD_DISCARD_DB)."""
+        try:
+            if self.audio_check == "full":
+                return self._full_problems(x, a_part, b_part, plan, kind, split, ctx, a_before, b_after)
+            return self._light_problems(x, a_part, b_part, kind, split, a_before, b_after)
+        except Exception as e:                                  # el puntuador nunca debe romper la mezcla
+            log.warning("no se pudo puntuar la mezcla: %s", e)
+            return []
+
+    @staticmethod
+    def _lines(np, x, a_part, b_part, kind, split):
+        """A y B en la línea de tiempo de la mezcla y su ganancia de medios y agudos (fundido, o escalón en el corte)."""
+        ts = transition_scorer
+        n = len(x)
+        if kind == transition_types.TYPE_ECHO_OUT:
+            a_line, b_line = ts._place(np, a_part[:split], 0, n), ts._place(np, b_part[split:], split, n)
+            gain_a = (np.arange(n) < split).astype(np.float64)
+            return a_line, b_line, gain_a, 1.0 - gain_a
+        gain_a, gain_b = ts._fades(np, np.arange(n) / SAMPLE_RATE, n / SAMPLE_RATE)
+        return ts._place(np, a_part, 0, n), ts._place(np, b_part, 0, n), gain_a, gain_b
+
+    def _light_problems(self, x, a_part, b_part, kind, split, a_before, b_after) -> list:
+        ts = transition_scorer
+        np = dj_dsp._np()
+        sr = SAMPLE_RATE
+        n = len(x)
+        bad = []
+        a_line, b_line, gain_a, gain_b = self._lines(np, x, a_part, b_part, kind, split)
+        added = float((np.abs(x) > 1.0).mean()) - max(float((np.abs(a_line) > 1.0).mean()), float((np.abs(b_line) > 1.0).mean()))
+        if added >= ts.CLIP_DISCARD:
+            bad.append(f"recorte en un {added * 100:.2f} % de las muestras".replace(".", ","))
+        gap = ts._silence_gap_ms(np, x, sr)
+        if gap >= ts.GAP_DISCARD_MS:
+            bad.append(f"hueco de silencio de {gap:.0f} ms")
+        w = int(CHECK_CLICK_S * sr)
+        joins = [(np.concatenate((a_before[-w:], x[:w])), (np.concatenate((a_before[-w:], a_part[:w])),)),
+                 (np.concatenate((x[-w:], b_after[:w])), (np.concatenate((b_part[-w:], b_after[:w])),))]
+        if kind == transition_types.TYPE_ECHO_OUT:
+            lo, hi = max(0, split - w), min(n, split + w)
+            joins.append((x[lo:hi], (a_part[lo:hi], b_part[lo:hi])))
+        for seq, refs in joins:
+            ratio = ts._click_ratio(np, seq, sr)[0]
+            base = max((ts._click_ratio(np, r, sr)[0] for r in refs if len(r) > 2), default=0.0)
+            if ratio >= ts.CLICK_RATIO and (base <= 0 or ratio >= ts.CLICK_VS_PARTS * base):
+                bad.append(f"clic en una unión (salto de {ratio:.0f} veces lo normal)")
+                break
+        k = int(CHECK_CONTEXT_S * sr)
+        excess = ts._loudness(np, x, a_line, b_line, gain_a, gain_b, a_before[-k:], b_after[:k], sr,
+                              split if kind == transition_types.TYPE_ECHO_OUT else None)[0]
+        if excess is not None and excess >= ts.LOUD_DISCARD_DB:
+            bad.append(f"salto de volumen de {excess:.1f} dB".replace(".", ","))
+        return bad
+
+    @staticmethod
+    def _full_problems(x, a_part, b_part, plan, kind, split, ctx, a_before, b_after) -> list:
+        ts = transition_scorer
+        if kind == transition_types.TYPE_ECHO_OUT:             # se mide como un corte en `split` (B sola desde ahí)
+            a_part, b_part = a_part[:split], b_part[split:]
+            plan = TransitionPlan(plan.a_start_s, plan.b_start_s, 0.0, 1.0, None, KIND_CUT, plan.reason)
+        info_a, info_b = ctx.info_a if ctx else {}, ctx.info_b if ctx else {}
+        grid_b = info_b.get("beatgrid") if isinstance(info_b.get("beatgrid"), BeatGrid) else None
+        res = ts.score_audio(x, a_part, b_part, plan, ctx.grid_a if ctx else None, grid_b, tone_a=info_a.get("tone"),
+                             tone_b=info_b.get("tone"), tone_conf_a=info_a.get("tone_conf"), tone_conf_b=info_b.get("tone_conf"),
+                             a_before=a_before, b_after=b_after)
+        m = res["metrics"]
+        bad = []
+        if (m.get("click") or {}).get("note") == 0.0:
+            bad.append("clic")
+        if ((m.get("clipping") or {}).get("added") or 0.0) >= ts.CLIP_DISCARD:
+            bad.append("recorte")
+        if ((m.get("silence_gap_ms") or {}).get("value") or 0.0) >= ts.GAP_DISCARD_MS:
+            bad.append("hueco de silencio")
+        if ((m.get("loudness_step_db") or {}).get("value") or 0.0) >= ts.LOUD_DISCARD_DB:
+            bad.append("salto de volumen")
+        return bad
 
     @staticmethod
     def _join_piece(tail, b, b_body):

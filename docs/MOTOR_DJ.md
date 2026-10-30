@@ -224,3 +224,34 @@ hay mezcla larga de graves (corte en el compás, o mezcla si ya era corta). Deta
 Pruebas: `pruebas/prueba_motor_tipos.py` (cada tipo en su sitio y con la longitud exacta, sin clic, cola sumada, `advanced`,
 posiciones, seek, replan, memoria, corte tardío con eco y `typed=False`). Que cada tipo suene bien en su caso es una
 hipótesis: no se ha oído.
+
+### Puntuador como red de seguridad (fase 3, `EngineSession(audio_check="light")`, activo por defecto)
+
+Todo en el hilo de trabajo, nunca en la llamada de audio.
+
+1. **Antes de renderizar** una mezcla, `transition_scorer.score_plan(ficha A, ficha B, plan)` (microsegundos). Si dice
+   «descartar» (cambio de tempo de más del 8 %, la mezcla no cabe en alguna de las dos...), se pasa a corte limpio en el
+   compás donde la mezcla habría acabado, con el motivo en `plan.reason` («corte limpio: el puntuador descartó la mezcla
+   (...)»), sin estirar ni renderizar nada.
+2. **Después de renderizar** una mezcla en la que suenan las dos (mezcla, filtro o eco de salida; el corte en el compás no se
+   mide: es ya lo más seguro), se buscan los fallos que un corte en el compás arregla: clic, recorte, hueco de silencio o
+   salto de volumen. Si hay alguno, la mezcla NO se retoca: se vuelve a renderizar como corte en el compás (`cut_bar`), con el
+   motivo en el plan («tipo: corte en el compás: el puntuador descartó «blend» (...)»). Los veredictos de gusto (golpes
+   desfasados, graves dobles, voces, tonos) no cambian nada aquí: los usa la elección del tipo y quedan para el diagnóstico.
+
+Umbrales (los de `transition_scorer`, sin tocar): clic si un salto entre muestras es 10 veces el normal de sus 50 ms de
+alrededor y 1,5 veces lo que ya tenían A y B; recorte si la mezcla añade un 0,1 % de muestras por encima de 1,0; hueco si hay
+500 ms por debajo de -60 dBFS; salto de volumen si el nivel a corto plazo (400 ms) cambia 8 dB más de lo que traían A y B
+(con los 2 s de antes y de después). **Son de criterio, no están calibrados con el oído**; cuando haya votos (fase 24) habrá
+que ajustarlos.
+
+Coste. `score_audio` entero cuesta 0,12 s con 8 s de mezcla y 0,41 s con 32 s (medido), por encima de lo que se quería
+gastar (0,1 s). Por eso el modo por defecto, «light», usa las mismas funciones y umbrales del puntuador pero solo para esas
+cuatro medidas, y el clic solo en ±50 ms alrededor de cada unión (principio de la mezcla con el cuerpo de A, final con lo que
+sigue de B y, en el eco de salida, el corte): son los únicos sitios donde el motor puede crear un salto, porque dentro de la
+mezcla todo es una combinación lineal suave de A y B. Medido: 55 a 60 ms con 16 s de mezcla y 108 ms con 32 s. Limitación:
+un clic en mitad de la mezcla (un fallo del render) solo lo ve `audio_check="full"`, que llama a `score_audio` entero.
+`audio_check=None` no puntúa nada. Lo que dijo el puntuador queda en `_Pair.check` (veredicto del plan, motivos del audio,
+tipo descartado y segundos).
+
+Pruebas: `pruebas/prueba_motor_puntuador.py`.
