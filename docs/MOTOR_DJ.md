@@ -255,3 +255,35 @@ un clic en mitad de la mezcla (un fallo del render) solo lo ve `audio_check="ful
 tipo descartado y segundos).
 
 Pruebas: `pruebas/prueba_motor_puntuador.py`.
+
+### Bucles (fase 4, `EngineSession(loops=True)`, APAGADO por defecto)
+
+Cómo se integra (`loops.needs_loop` + `loops.extend_body`, siguiendo lo que pide `loops.py`):
+
+- Tras preparar una mezcla, si `needs_loop(ficha A, ficha B, plan, rejilla A, rejilla B)` pide 4 u 8 compases, A se alarga
+  repitiendo sus 4 compases de antes del punto de mezcla M: suena su cuerpo hasta L = M - 4 compases, luego las repeticiones
+  (segmentos con rol «loop», etiquetados en el tiempo de A de la región, así que la posición vuelve atrás en cada vuelta) y
+  luego la mezcla, la misma de siempre y desde la misma muestra M de A. `_Pair` guarda `loop_segs`, `loop_start`, `loop_id` y
+  `loop_bars`; el plan lleva el motivo («; bucle de 8 compases: ...») y el estado de `tick()`, `loop_bars`.
+- `_from_frame_locked`: cuerpo hasta L y bucle; desde dentro de la región [L, M) (un seek), el resto de la primera vuelta y
+  las demás. `_future_locked`: tras una vuelta, la siguiente; el trozo del cuerpo que suena se acorta en L (no en M).
+  `_late_cut_locked`: si lo que suena ya pasó M, corte tardío sin bucle, como siempre. `_seek_locked`: como antes.
+- `_locked_in_locked`: con el bucle sonando, B ya no se cambia (el bucle va derecho a la mezcla). Si se dejara a medias, el
+  final de una vuelta que no es la última está doblado hacia el principio de la siguiente (el fundido de la unión de
+  `loops.repeat`) y saltar de ahí al cuerpo de A en M haría un medio escalón (posible clic).
+- `needs_loop` solo lee `intro_s`; la sesión le pasa la intro de B en segundos aunque la ficha la traiga en milisegundos (el
+  análisis de la aplicación usa `intro_ms`: sin esto el bucle no se pediría nunca).
+
+Por qué queda apagado (decisión, no un fallo de las pruebas, que pasan: `pruebas/prueba_motor_bucles.py`, con carrera
+contra la llamada de audio):
+
+1. El motivo que más se da en la práctica (la intro de B no está hecha al acabar la mezcla) solo **retrasa** la mezcla: B
+   entra con el mismo `b_start_s` (lo avisa `needs_loop`), así que el bucle no arregla lo que mide; es A sonando 8 compases
+   más. Para que sirva habría que recalcular la entrada de B (que B empiece antes, por debajo del bucle), y eso es otra mezcla.
+2. El otro motivo (mezcla a 4 compases de una frase) casi nunca se da: con rejillas el planificador ya empieza la mezcla en
+   un comienzo de frase de 8 o 16 compases.
+3. Mientras suena el bucle (hasta 16 s) no se puede cambiar la siguiente.
+4. La interfaz calcula la cuenta atrás de la mezcla con `plan.a_start_s - posición`: con el bucle, la posición vuelve atrás
+   y la cuenta atrás sube y baja. Habría que darle a la página los segundos de salida que faltan (no es de este cambio:
+   `ui/dj_mixin.py` lo lleva otra sesión).
+5. No se ha oído: que la repetición suene natural en música real es una hipótesis.

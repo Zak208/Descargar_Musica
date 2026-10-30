@@ -27,6 +27,9 @@ Cómo suena una canción A y cómo se pasa a la siguiente B (todo a precisión d
     si dice «descartar», corte limpio con su motivo. Después de renderizar una mezcla en la que suenan las dos, si hay clic
     en una unión, recorte, hueco o salto de volumen (umbrales del puntuador), se cambia por un corte en el compás en vez de
     retocarla. Unos 0,1 s por mezcla de 32 s, en el hilo de trabajo. `audio_check="full"` usa `score_audio` entero.
+  * Bucles (`loops=True`; APAGADO por defecto, ver docs/MOTOR_DJ.md): si `loops.needs_loop` lo pide, A suena hasta
+    `loop_start`, repite sus 4 compases de antes del punto de mezcla (segmentos «loop» de `loops.extend_body`) y la mezcla, la
+    misma y desde la misma muestra de A, llega `loop_bars` compases más tarde. Con el bucle sonando, B ya no se cambia.
   * Si cuando llega el plan el punto de mezcla cae dentro del trozo que ya suena y aún le faltan más de 0,25 s para llegar,
     el motor acorta ese trozo justo en él (`MixEngine.truncate_current`): no hace falta que el trozo acabe antes (canciones
     de 20 s, o `play(start_s)` cerca del final).
@@ -83,7 +86,7 @@ import queue as _queue
 import threading
 import time
 
-from services import dj_dsp, dj_fx, mix_planner, mix_points, transition_scorer, transition_types
+from services import dj_dsp, dj_fx, loops, mix_planner, mix_points, transition_scorer, transition_types
 from services.mix_types import KIND_CUT, SAMPLE_RATE, BeatGrid, TransitionPlan
 
 log = logging.getLogger(__name__)
@@ -102,7 +105,10 @@ AUDIO_CHECKS = ("light", "full")
 MAX_TRIES = 5                   # canciones seguidas que se intentan cargar como siguiente antes de rendirse
 INSTALL_TRIES = 8               # reintentos de cambiar la cola si la llamada de audio avanza a la vez
 
+LOOP_BARS = 4                   # el bucle repite los 4 compases de antes del punto de mezcla
+
 _track_ids = itertools.count(1)
+_loop_ids = itertools.count(1)
 
 
 def _key(path):
@@ -129,16 +135,18 @@ class _Track:
 
 class _Label:
     """Etiqueta de cada segmento encolado: de qué canción es y en qué instante de ella (tiempo original) empieza."""
-    __slots__ = ("track_id", "role", "t0", "ratio", "f0", "f1", "idx")
+    __slots__ = ("track_id", "role", "t0", "ratio", "f0", "f1", "idx", "tag")
 
-    def __init__(self, track_id, role, t0, ratio=1.0, f0=0, f1=0, idx=0):
+    def __init__(self, track_id, role, t0, ratio=1.0, f0=0, f1=0, idx=0, tag=None):
         self.track_id = track_id
-        self.role = role                # "body" (trozo del cuerpo), "x1" (1.ª mitad o final del corte), "entry"
+        self.role = role                # "body" (trozo del cuerpo), "loop" (repetición del bucle), "x1" (1.ª mitad o final
+                                        # del corte), "entry"
         self.t0 = t0                    # segundo de la canción en el que empieza el segmento
         self.ratio = ratio              # segundos de la canción por segundo de salida (tempo de B en la mezcla)
-        self.f0 = f0                    # "body" y "x1": primera muestra del cuerpo que cubre
-        self.f1 = f1                    # "body": muestra del cuerpo donde acaba (sin incluir)
-        self.idx = idx                  # "entry": posición en track.entry
+        self.f0 = f0                    # "body", "loop" y "x1": primera muestra del cuerpo que cubre
+        self.f1 = f1                    # "body": muestra del cuerpo donde acaba (sin incluir); "loop": el punto de mezcla
+        self.idx = idx                  # "entry": posición en track.entry; "loop": número de repetición
+        self.tag = tag                  # "loop": de qué bucle es (_Pair.loop_id)
 
     def __repr__(self):
         return f"<{self.role} pista {self.track_id} desde {self.t0:.3f} s>"
@@ -158,7 +166,8 @@ class _Ctx:
 
 class _Pair:
     """Paso preparado de la actual (A) a la siguiente (B)."""
-    __slots__ = ("b", "plan", "a_mix", "x1", "x1_label", "entry", "b_body", "b_cut", "grid_a", "ctx", "kind", "check")
+    __slots__ = ("b", "plan", "a_mix", "x1", "x1_label", "entry", "b_body", "b_cut", "grid_a", "ctx", "kind", "check",
+                 "loop_segs", "loop_start", "loop_id", "loop_bars")
 
     def __init__(self, b, plan, a_mix, x1, x1_label, entry, b_body, b_cut, grid_a, ctx=None, kind=None):
         self.b = b
@@ -173,6 +182,10 @@ class _Pair:
         self.ctx = ctx                  # _Ctx (fichas de las dos), para rehacer un corte tardío con su tipo
         self.kind = kind                # tipo de transición (transition_types.TYPE_*) que suena
         self.check = {}                 # lo que dijo el puntuador: "plan" (veredicto), "audio" (motivos), "swapped", "seconds"
+        self.loop_segs = []             # bucle (loops.extend_body): repeticiones que suenan entre loop_start y a_mix
+        self.loop_start = a_mix         # muestra de A donde empieza el bucle (el cuerpo de A suena hasta aquí)
+        self.loop_id = None
+        self.loop_bars = 0              # compases que añade el bucle (0: sin bucle)
 
 
 class _Ask:
@@ -222,7 +235,7 @@ class EngineSession:
     """Sesión del DJ sobre un `MixEngine` (ver la explicación del módulo). El dueño del motor hace start()/stop() del flujo."""
 
     def __init__(self, engine, info_for, next_after, bars=16, loader=None, lead_s=45.0, lufs_stored=None, lufs_measure=None,
-                 typed=True, audio_check="light"):
+                 typed=True, audio_check="light", loops=False):
         if loader is None:
             from services import pcm_loader
             loader = pcm_loader.load
@@ -235,6 +248,7 @@ class EngineSession:
         # puntuador (transition_scorer): "light" (por defecto) mide recorte, huecos, clics en las uniones y saltos de volumen
         # con sus funciones y umbrales; "full" llama a score_audio entero (0,1 a 0,4 s más por mezcla); None: no se puntúa
         self.audio_check = audio_check if audio_check in AUDIO_CHECKS else None
+        self.loops = bool(loops)        # bucles de 4 u 8 compases antes de la mezcla (loops.needs_loop); ver docs/MOTOR_DJ.md
         self._loader = loader
         self._lufs_stored = lufs_stored or _stored_lufs
         self._lufs_measure = lufs_measure or _measured_lufs
@@ -438,7 +452,7 @@ class EngineSession:
         nxt = p.b.path if p is not None else self._preparing
         return {"path": path, "position_s": pos, "duration_s": dur, "state": state, "advanced": advanced, "ended": ended,
                 "error": error, "plan": p.plan if p is not None else None, "next_path": nxt,
-                "transition_type": p.kind if p is not None else None}
+                "transition_type": p.kind if p is not None else None, "loop_bars": p.loop_bars if p is not None else 0}
 
     def _locked_in_locked(self) -> bool:
         """¿Ha empezado ya la mezcla hacia B (su primera mitad suena)? Entonces B ya no se puede cambiar."""
@@ -447,6 +461,8 @@ class EngineSession:
             return False
         cur = self._engine.current()
         lab = cur[0] if cur is not None else None
+        if isinstance(lab, _Label) and lab.role == "loop" and lab.track_id == self._a.id:
+            return lab.tag == p.loop_id and (cur[2] > 0 or lab.idx > 0)    # el bucle ya suena: va derecho a la mezcla
         return isinstance(lab, _Label) and ((lab.role == "x1" and lab.track_id == self._a.id and cur[2] > 0)
                                             or lab.track_id == p.b.id)
 
@@ -529,12 +545,28 @@ class EngineSession:
         if f > p.a_mix:
             self._late_cut_locked(f)
             p = self._pair
-        segs = self._body_segs(a, f, p.a_mix)
-        if p.x1 is not None:
-            segs.append((p.x1, p.x1_label))
+        if p.loop_segs and f < p.a_mix:                         # cuerpo hasta el bucle (o desde dentro de su región)
+            return self._body_segs(a, f, p.loop_start) + self._loop_from_locked(p, max(0, f - p.loop_start), 0)
+        return self._body_segs(a, f, p.a_mix) + self._mix_on_locked(p)
+
+    def _mix_on_locked(self, p) -> list:
+        """La mezcla (primera parte), la entrada de B y el cuerpo de B."""
+        segs = [(p.x1, p.x1_label)] if p.x1 is not None else []
         segs += p.entry
         segs += self._body_segs(p.b, p.b_body, p.b.frames)
         return segs
+
+    def _loop_from_locked(self, p, off, i) -> list:
+        """Las repeticiones del bucle desde la número i (la primera, desde su muestra `off`) y luego la mezcla."""
+        a = self._a
+        segs = []
+        for k in range(i, len(p.loop_segs)):
+            arr = p.loop_segs[k][off if k == i else 0:]
+            o = len(p.loop_segs[k]) - len(arr)
+            if len(arr):
+                segs.append((arr, _Label(a.id, "loop", (p.loop_start + o) / SAMPLE_RATE, 1.0, p.loop_start + o, p.a_mix,
+                                         idx=k, tag=p.loop_id)))
+        return segs + self._mix_on_locked(p)
 
     def _future_locked(self, cur):
         """Lo que debe venir detrás del segmento que suena (o desde él, si aún no ha empezado). None: no tocar nada."""
@@ -553,10 +585,16 @@ class EngineSession:
             if not started:
                 return self._from_frame_locked(lab.f0)
             p = self._pair
-            if (p is not None and lab.f0 < p.a_mix < lab.f1
-                    and self._engine.truncate_current(cur[1], p.a_mix - lab.f0, round(TRUNC_GUARD_S * SAMPLE_RATE))):
-                lab.f1 = p.a_mix                                # el trozo que suena acaba ya en el punto de mezcla
+            end = (p.loop_start if p.loop_segs else p.a_mix) if p is not None else None
+            if (p is not None and lab.f0 < end < lab.f1
+                    and self._engine.truncate_current(cur[1], end - lab.f0, round(TRUNC_GUARD_S * SAMPLE_RATE))):
+                lab.f1 = end                                    # el trozo que suena acaba ya en el bucle o el punto de mezcla
             return self._from_frame_locked(lab.f1)
+        if lab.role == "loop":
+            p = self._pair
+            if p is not None and lab.tag == p.loop_id:
+                return self._loop_from_locked(p, 0, lab.idx + (1 if started else 0))
+            return self._from_frame_locked(lab.f1 if started else lab.f0)   # bucle de un plan que ya no está
         if lab.role == "x1" and not started:
             return self._from_frame_locked(lab.f0)
         return None                                             # la mezcla ya suena: no se toca
@@ -743,11 +781,35 @@ class EngineSession:
             if pair is not None:
                 if verdict is not None:
                     pair.check["plan"] = verdict["verdict"]
+                if self.loops:
+                    self._add_loop(pair, a, ctx)
                 return pair
             # donde A se habría ido del todo (su final, si la mezcla no cabía): no se tira el final de A
             end = min(a.frames, round((plan.a_start_s + plan.length_s) * SAMPLE_RATE))
             plan = mix_points.cut(self._bar_before(a, grid_a, end) / SAMPLE_RATE, plan.b_start_s, "corte limpio: " + why)
         return self._cut(a, b, plan, ctx, round(plan.a_start_s * SAMPLE_RATE), round(plan.b_start_s * SAMPLE_RATE))
+
+    @staticmethod
+    def _add_loop(pair, a, ctx):
+        """Bucle antes de la mezcla si `loops.needs_loop` lo pide: A repite sus `LOOP_BARS` compases de antes del punto de mezcla
+        y la mezcla (la misma, desde la misma muestra de A) suena `loop_bars` compases más tarde."""
+        grid_b = ctx.info_b.get("beatgrid") if isinstance(ctx.info_b.get("beatgrid"), BeatGrid) else None
+        info_b = dict(ctx.info_b, intro_s=mix_points.seconds(ctx.info_b, "intro"))     # needs_loop solo lee intro_s
+        try:
+            extra, why = loops.needs_loop(ctx.info_a, info_b, pair.plan, ctx.grid_a, grid_b)
+            if extra <= 0:
+                return
+            segs, _ = loops.extend_body(a.data, ctx.grid_a, pair.plan.a_start_s, extra, loop_bars=LOOP_BARS)
+        except Exception as e:                                  # una ayuda nunca debe romper la mezcla
+            log.warning("no se pudo preparar el bucle: %s", e)
+            return
+        if not segs or round(pair.plan.a_start_s * SAMPLE_RATE) != pair.a_mix:
+            return
+        pair.loop_segs = segs
+        pair.loop_start = pair.a_mix - len(segs[0])
+        pair.loop_id = next(_loop_ids)
+        pair.loop_bars = extra
+        pair.plan = dataclasses.replace(pair.plan, reason=f"{pair.plan.reason}; {why}")
 
     @staticmethod
     def _bar_before(a, grid_a, end) -> int:
