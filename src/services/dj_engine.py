@@ -13,6 +13,16 @@ Cómo suena una canción A y cómo se pasa a la siguiente B (todo a precisión d
     `b_start_s + length_s * tempo_ratio_b` (en su tiempo original).
   * Un corte limpio (KIND_CUT, o una mezcla imposible) se encola igual, en dos piezas de 0,5 s: el final de A con su rampa de
     bajada de 5 ms y el principio de B con su rampa de subida (las hace `render_transition` con el plan de corte).
+  * Tipos de transición (`typed=True`, lo normal; ver `transition_types`): `choose_type(ficha A, ficha B, plan, BPM de A)`
+    decide entre mezcla larga (blend, la de siempre), corte en el compás (cut_bar), eco de salida (echo_out) y filtro (filter);
+    su regla de seguridad manda (rejillas poco fiables o tempo a más del 5 % nunca dan una mezcla larga). La mezcla mide lo
+    mismo en todos los tipos y B no se desplaza, así que todo lo demás (cuerpo de B, empalme, posiciones) no cambia. Con
+    cut_bar y echo_out B suena sola desde el corte (`plan.bass_swap_at`): la mezcla se parte ahí (y no en la mitad) para que
+    `advanced` salga cuando entra B. La cola del eco (lo que suena después de la mezcla) se SUMA al principio del cuerpo de B
+    en una copia: se encola un trozo «entry» con el empalme del tramo estirado (si lo hay), el cuerpo de B desde `b_body` y la
+    cola encima, y el cuerpo normal sigue detrás. En un corte (plan de corte, corte por mezcla imposible o tardío) solo cabe
+    cut_bar (el corte limpio de siempre) o echo_out (tempos lejanos o final brusco, con el tempo de A). El tipo se añade al
+    motivo del plan («; tipo: ...») y al estado (`transition_type`). `typed=False`: exactamente lo de antes.
   * Si cuando llega el plan el punto de mezcla cae dentro del trozo que ya suena y aún le faltan más de 0,25 s para llegar,
     el motor acorta ese trozo justo en él (`MixEngine.truncate_current`): no hace falta que el trozo acabe antes (canciones
     de 20 s, o `play(start_s)` cerca del final).
@@ -60,6 +70,7 @@ Mediciones (pruebas/prueba_motor_dj.py, Windows 11, CPU compartida; cargador rea
     guardado), estirar 32 s de B con rubberband (tempo 0,9615) y `render_transition` de 32 s.
   * Con el cargador falso y un hilo que saca audio 20 veces más deprisa que el tiempo real mientras la interfaz hace replan
     cada 0,35 s y algún seek: sin huecos, repeticiones ni clics, y nunca más de 2 canciones enteras en memoria."""
+import dataclasses
 import itertools
 import logging
 import math
@@ -68,7 +79,7 @@ import queue as _queue
 import threading
 import time
 
-from services import dj_dsp, mix_planner, mix_points
+from services import dj_dsp, dj_fx, mix_planner, mix_points, transition_types
 from services.mix_types import KIND_CUT, SAMPLE_RATE, BeatGrid, TransitionPlan
 
 log = logging.getLogger(__name__)
@@ -126,11 +137,23 @@ class _Label:
         return f"<{self.role} pista {self.track_id} desde {self.t0:.3f} s>"
 
 
+class _Ctx:
+    """Lo que se sabe de las dos canciones al preparar el paso (para elegir el tipo y para el corte tardío)."""
+    __slots__ = ("info_a", "info_b", "grid_a", "bpm_a")
+
+    def __init__(self, info_a, info_b, grid_a):
+        self.info_a = info_a if isinstance(info_a, dict) else {}
+        self.info_b = info_b if isinstance(info_b, dict) else {}
+        self.grid_a = grid_a
+        bpm = grid_a.bpm if grid_a is not None else self.info_a.get("bpm")
+        self.bpm_a = float(bpm) if isinstance(bpm, (int, float)) and not isinstance(bpm, bool) and bpm > 0 else None
+
+
 class _Pair:
     """Paso preparado de la actual (A) a la siguiente (B)."""
-    __slots__ = ("b", "plan", "a_mix", "x1", "x1_label", "entry", "b_body", "b_cut", "grid_a")
+    __slots__ = ("b", "plan", "a_mix", "x1", "x1_label", "entry", "b_body", "b_cut", "grid_a", "ctx", "kind")
 
-    def __init__(self, b, plan, a_mix, x1, x1_label, entry, b_body, b_cut, grid_a):
+    def __init__(self, b, plan, a_mix, x1, x1_label, entry, b_body, b_cut, grid_a, ctx=None, kind=None):
         self.b = b
         self.plan = plan
         self.a_mix = a_mix              # muestra de A donde acaba su cuerpo y empieza x1
@@ -140,6 +163,8 @@ class _Pair:
         self.b_body = b_body            # muestra de B donde sigue su cuerpo
         self.b_cut = b_cut              # muestra de B por la que entraría un corte limpio (para el plan tardío)
         self.grid_a = grid_a
+        self.ctx = ctx                  # _Ctx (fichas de las dos), para rehacer un corte tardío con su tipo
+        self.kind = kind                # tipo de transición (transition_types.TYPE_*) que suena
 
 
 class _Ask:
@@ -401,7 +426,8 @@ class EngineSession:
             state = "playing" if self._want_play else "paused"
         nxt = p.b.path if p is not None else self._preparing
         return {"path": path, "position_s": pos, "duration_s": dur, "state": state, "advanced": advanced, "ended": ended,
-                "error": error, "plan": p.plan if p is not None else None, "next_path": nxt}
+                "error": error, "plan": p.plan if p is not None else None, "next_path": nxt,
+                "transition_type": p.kind if p is not None else None}
 
     def _locked_in_locked(self) -> bool:
         """¿Ha empezado ya la mezcla hacia B (su primera mitad suena)? Entonces B ya no se puede cambiar."""
@@ -685,22 +711,23 @@ class EngineSession:
             return None
         gain = self._apply_gain(self._lufs_measure, b_path, body)
         b = _Track(b_path, body, gain)
-        info_a = self._info(a.path, a.frames)
-        plan = mix_planner.plan_transition(info_a, self._info(b_path, b.frames), self.bars)
+        info_a, info_b = self._info(a.path, a.frames), self._info(b_path, b.frames)
+        plan = mix_planner.plan_transition(info_a, info_b, self.bars)
         grid_a = info_a.get("beatgrid") if isinstance(info_a.get("beatgrid"), BeatGrid) else None
+        ctx = _Ctx(info_a, info_b, grid_a)
         if info_a.get("truncated"):
             c = self._bar_before(a, grid_a, a.frames)
             plan = mix_points.cut(c / SAMPLE_RATE, plan.b_start_s,
                                   f"corte limpio al llegar al tope de {_max_minutes()} min que se carga de cada canción "
                                   "(el resto de la que suena no se carga)")
         if plan.kind != KIND_CUT and plan.length_s > 0:
-            pair, why = self._blend(a, b, plan, grid_a)
+            pair, why = self._blend(a, b, plan, ctx)
             if pair is not None:
                 return pair
             # donde A se habría ido del todo (su final, si la mezcla no cabía): no se tira el final de A
             end = min(a.frames, round((plan.a_start_s + plan.length_s) * SAMPLE_RATE))
             plan = mix_points.cut(self._bar_before(a, grid_a, end) / SAMPLE_RATE, plan.b_start_s, "corte limpio: " + why)
-        return self._cut(a, b, plan, grid_a, round(plan.a_start_s * SAMPLE_RATE), round(plan.b_start_s * SAMPLE_RATE))
+        return self._cut(a, b, plan, ctx, round(plan.a_start_s * SAMPLE_RATE), round(plan.b_start_s * SAMPLE_RATE))
 
     @staticmethod
     def _bar_before(a, grid_a, end) -> int:
@@ -714,7 +741,57 @@ class EngineSession:
             return int(end)
         return c if 0 < c <= end and end - c <= grid_a.bar_s * SAMPLE_RATE + 1 else int(end)
 
-    def _blend(self, a, b, plan, grid_a):
+    # ---- tipos de transición -------------------------------------------------------------------------------------------
+    def _choose(self, ctx, plan):
+        """(tipo, motivo) de la transición. Sin `typed`: mezcla larga (o corte limpio, que con un plan de corte es lo mismo)."""
+        cut = plan.kind == KIND_CUT or plan.length_s <= 0
+        default = transition_types.TYPE_CUT_BAR if cut else transition_types.TYPE_BLEND
+        if not self.typed or ctx is None:
+            return default, ""
+        try:
+            return transition_types.choose_type(ctx.info_a, ctx.info_b, plan, ctx.bpm_a)
+        except Exception as e:                                  # una regla de ayuda nunca debe romper la mezcla
+            log.warning("no se pudo elegir el tipo de transición: %s", e)
+            return default, ""
+
+    @staticmethod
+    def _render(a_part, b_part, plan, kind, ctx):
+        """(mezcla, cola) del tipo `kind`. La mezcla larga y el corte limpio, con `render_transition` tal cual."""
+        if kind == transition_types.TYPE_BLEND or (kind == transition_types.TYPE_CUT_BAR and plan.kind == KIND_CUT):
+            x = dj_dsp.render_transition(a_part, b_part, plan)
+            return x, x[:0]
+        return transition_types.render_typed_parts(a_part, b_part, plan, kind, bpm=ctx.bpm_a if ctx else None)
+
+    @staticmethod
+    def _typed_plan(plan, why):
+        return dataclasses.replace(plan, reason=f"{plan.reason}; tipo: {why}") if why else plan
+
+    @staticmethod
+    def _tail_entry(b, b_body, join, tail, t0, ratio):
+        """Lo que suena tras la mezcla antes del cuerpo normal de B: el empalme del tramo estirado (`join`) y, si el tipo deja
+        cola (eco de salida), el principio del cuerpo de B con la cola SUMADA (copia: el cuerpo de B no se toca). Devuelve
+        ([(array, etiqueta)], muestra de B donde sigue su cuerpo)."""
+        np = dj_dsp._np()
+        k_join = len(join) if join is not None else 0
+        m = len(tail)
+        only_join = ([(join, _Label(b.id, "entry", t0, ratio))], b_body + k_join) if k_join else ([], b_body)
+        length = min(max(m, k_join), b.frames - b_body)
+        if not m or length <= 0:
+            return only_join
+        post = np.empty((length, 2), dtype=np.float32)
+        kj = min(k_join, length)
+        if kj:
+            post[:kj] = join[:kj]
+        post[kj:] = b.data[b_body + kj:b_body + length]
+        k = min(m, length)
+        add = tail[:k]
+        if k < m:                                               # B se acaba antes que el eco: que la cola baje a cero
+            add = add.copy()
+            dj_fx._fade_out(add, min(k, int(0.05 * SAMPLE_RATE)))
+        post[:k] += add
+        return [(post, _Label(b.id, "entry", t0, 1.0))], b_body + length
+
+    def _blend(self, a, b, plan, ctx):
         """(_Pair, None) con la mezcla hecha, o (None, motivo) si no cabe (datos del análisis que no cuadran con el audio)."""
         sr = SAMPLE_RATE
         ratio = float(plan.tempo_ratio_b or 1.0)
@@ -733,15 +810,21 @@ class EngineSession:
                 return None, "no se pudo cambiar el tempo de la que entra"
             piece *= b.gain
             join, piece = self._join_piece(piece[n:], b, b_body), piece[:n]
-        x = dj_dsp.render_transition(a.data[a_mix:a_mix + n], piece, plan)
+        kind, why = self._choose(ctx, plan)
+        x, tail = self._render(a.data[a_mix:a_mix + n], piece, plan, kind, ctx)
         del piece
-        half = len(x) // 2
+        # B domina desde la mitad; con corte en el compás o eco, desde el corte (ahí ya suena sola)
+        split = len(x) // 2
+        if kind in (transition_types.TYPE_CUT_BAR, transition_types.TYPE_ECHO_OUT):
+            split = transition_types._cut_point(plan, len(x), sr)
         x1_label = _Label(a.id, "x1", a_mix / sr, 1.0, a_mix)
-        entry = [(x[half:], _Label(b.id, "entry", plan.b_start_s + half * ratio / sr, ratio))]
-        if join is not None:                                    # el empalme sin salto con el cuerpo original de B
-            entry.append((join, _Label(b.id, "entry", plan.b_start_s + n * ratio / sr, ratio, idx=1)))
-            b_body += len(join)
-        return _Pair(b, plan, a_mix, x[:half], x1_label, entry, b_body, bs, grid_a), None
+        entry = [(x[split:], _Label(b.id, "entry", plan.b_start_s + split * ratio / sr, ratio))]
+        more, b_body = self._tail_entry(b, b_body, join, tail, plan.b_start_s + n * ratio / sr, ratio)
+        entry += more
+        for i, (_, lab) in enumerate(entry):
+            lab.idx = i
+        plan = self._typed_plan(plan, why)
+        return _Pair(b, plan, a_mix, x[:split], x1_label, entry, b_body, bs, ctx.grid_a, ctx, kind), None
 
     @staticmethod
     def _join_piece(tail, b, b_body):
@@ -764,8 +847,9 @@ class EngineSession:
             return None
         return piece if piece is not None and len(piece) else None
 
-    def _cut(self, a, b, plan, grid_a, c, bs, lo_min=0):
-        """Corte limpio en la muestra c de A hacia la muestra bs de B: dos piezas de 0,5 s con sus rampas."""
+    def _cut(self, a, b, plan, ctx, c, bs, lo_min=0):
+        """Corte limpio en la muestra c de A hacia la muestra bs de B: dos piezas de 0,5 s con sus rampas (y, con el tipo eco
+        de salida, el eco del último golpe de A sumado a lo que sigue de B)."""
         sr = SAMPLE_RATE
         piece = int(CUT_PIECE_S * sr)
         c = min(max(c, lo_min), a.frames)
@@ -773,11 +857,18 @@ class EngineSession:
         lo = max(lo_min, c - piece)
         if plan.kind != KIND_CUT:
             plan = TransitionPlan(c / sr, bs / sr, 0.0, 1.0, None, KIND_CUT, plan.reason)
-        x = dj_dsp.render_transition(a.data[lo:c], b.data[bs:bs + piece], plan)
+        kind, why = self._choose(ctx, plan)
+        x, tail = self._render(a.data[lo:c], b.data[bs:bs + piece], plan, kind, ctx)
         k = c - lo
         x1 = x[:k] if k else None
         entry = [(x[k:], _Label(b.id, "entry", bs / sr, 1.0))]
-        return _Pair(b, plan, lo, x1, _Label(a.id, "x1", lo / sr, 1.0, lo), entry, bs + (len(x) - k), bs, grid_a)
+        b_body = bs + (len(x) - k)
+        more, b_body = self._tail_entry(b, b_body, None, tail, b_body / sr, 1.0)
+        entry += more
+        for i, (_, lab) in enumerate(entry):
+            lab.idx = i
+        return _Pair(b, self._typed_plan(plan, why), lo, x1, _Label(a.id, "x1", lo / sr, 1.0, lo), entry, b_body, bs,
+                     ctx.grid_a if ctx else None, ctx, kind)
 
     def _late_cut_locked(self, f):
         """El plan llegó tarde (lo que suena ya pasa del punto de mezcla): corte limpio en el siguiente compás tras f."""
@@ -791,4 +882,4 @@ class EngineSession:
                 c = cb
         plan = TransitionPlan(min(c, a.frames) / sr, p.b_cut / sr, 0.0, 1.0, None, KIND_CUT,
                               "corte limpio en el siguiente compás: la transición llegó cuando el punto de mezcla ya había pasado")
-        self._pair = self._cut(a, p.b, plan, p.grid_a, c, p.b_cut, lo_min=f)
+        self._pair = self._cut(a, p.b, plan, p.ctx, c, p.b_cut, lo_min=f)

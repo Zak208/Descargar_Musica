@@ -200,3 +200,27 @@ transparente en música real es una hipótesis que hay que comprobar de oído.
 Coste medido (pruebas/prueba_motor_audio.py, bloque 1024, sin dispositivo, CPU compartida): media 0,0024 ms si nada pasa del
 umbral (dos reducciones; 0,0011 ms sin limitador) y 0,015 ms si todo el bloque pasa (presupuesto 23,2 ms). Con el
 dispositivo real la media siguió en 0,022 a 0,028 ms y la máxima en 0,1 ms.
+
+### Tipos de transición (fase 2, `EngineSession(typed=True)`, activo por defecto)
+
+`_blend`, `_cut` y `_late_cut_locked` piden el tipo a `transition_types.choose_type(ficha A, ficha B, plan, BPM de A)` y lo
+renderizan con `render_typed_parts` (la mezcla larga y el corte limpio siguen saliendo de `render_transition` tal cual). La
+regla de seguridad de `choose_type` manda: con rejillas de confianza menor de 0,4 o un cambio de tempo de más del 5 % nunca
+hay mezcla larga de graves (corte en el compás, o mezcla si ya era corta). Detalles de la integración:
+
+- La mezcla mide lo mismo en todos los tipos y B no se desplaza: el cuerpo de B, el empalme del tramo estirado y las
+  posiciones no cambian.
+- Con cut_bar y echo_out B suena sola desde el corte (`bass_swap_at`): la mezcla se parte ahí, no en la mitad, y `advanced`
+  sale cuando entra B.
+- La cola del eco se SUMA al principio del cuerpo de B, en una copia (los trozos del cuerpo son vistas): se encola un trozo
+  «entry» con el empalme del tramo estirado (si lo hay) seguido del cuerpo de B desde `b_body`, con la cola encima, y el
+  cuerpo normal sigue tras él. Si B se acaba antes que la cola, la cola baja a cero en 50 ms.
+- En la práctica la cola solo aparece en cortes (plan de corte por tempos lejanos, corte tardío o por mezcla imposible): en
+  una mezcla, el corte cae hacia la mitad y el eco (unos 3,9 s a 120 BPM) se apaga dentro.
+- El tipo se ve en el motivo del plan («...; tipo: eco de salida: ...») y en el estado de `tick()` (`transition_type`).
+- `typed=False` da exactamente la mezcla de antes (`pruebas/prueba_motor_dj.py` la usa para comparar muestra a muestra).
+- Coste: el filtro tarda 1 s con 30 s de mezcla (los demás, unas centésimas); va en el hilo de trabajo.
+
+Pruebas: `pruebas/prueba_motor_tipos.py` (cada tipo en su sitio y con la longitud exacta, sin clic, cola sumada, `advanced`,
+posiciones, seek, replan, memoria, corte tardío con eco y `typed=False`). Que cada tipo suene bien en su caso es una
+hipótesis: no se ha oído.
