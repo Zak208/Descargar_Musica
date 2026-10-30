@@ -150,11 +150,13 @@ check("la barra superior tiene el botón DJ y avisa al pulsarlo", pressed == [1]
 
 # Arranque de la sesión (con una ventana de mentira que solo apunta lo que se le pide)
 from ui.dj_mixin import DJ_FADE_SECONDS, DjMixin
+from ui.dj_votes_mixin import DjVotesMixin
 
 
-class FakeWindow(DjMixin):
+class FakeWindow(DjMixin, DjVotesMixin):
     def __init__(self):
         self.init_dj_state()
+        self.init_dj_votes_state()
         self._fade_ms = 0
         self._context, self.current_item_info = [], None
         self.context, self.played, self.notes = None, [], []

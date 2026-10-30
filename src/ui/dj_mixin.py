@@ -67,6 +67,7 @@ class DjMixin:
         self.page_dj.reshuffle_requested.connect(self.dj_reshuffle)
         self.page_dj.unblock_all_requested.connect(self.dj_unblock_all)
         self.page_dj.bpm_requested.connect(self.dj_bpm)
+        self.page_dj.vote_requested.connect(self.dj_vote)
         self.stacked_widget.addWidget(self.page_dj)
         assert self.stacked_widget.indexOf(self.page_dj) == Page.DJ
 
@@ -398,6 +399,7 @@ class DjMixin:
                 at = next((i for i, t in enumerate(self._dj_context) if track_key(t) == self._dj_last_key), -1)
                 self._dj_context.insert(at + 1, dict(self.current_item_info))
             self._dj_last_key = key
+            self.dj_mix_happened(self.current_item_info.get("local_path"))
             self._dj_prune_next()
         self._dj_mix = None
         self._dj_has_next = bool(self.dj_session_active() and self.peek_next())
@@ -575,6 +577,7 @@ class DjMixin:
             return
         upcoming = self.upcoming_tracks(UPCOMING_SHOWN)
         page.set_session(True, self.current_item_info, self.peek_next(), upcoming, self._dj_remaining(), self.dj_describe)
+        page.set_vote_target(self.dj_vote_text())
         self.dj_tick()
 
     # ------------------------------------------------------------ punto de mezcla (fase 8)
@@ -599,6 +602,7 @@ class DjMixin:
             if b_path and os.path.isfile(b_path):
                 plan = mix_points.plan(found, self._dj_analysis.get(b_path), duration / 1000.0 if duration > 0 else None)
                 result = (b_path, plan)
+                self.dj_note_mix(a_path, b_path, plan)
         self._dj_mix = (a_path, duration, result)
         return result
 

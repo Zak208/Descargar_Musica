@@ -27,6 +27,7 @@ from services.ffmpeg_service import FFmpegService
 from services.dj_service import DJ_EXTS
 from services.library_service import local_id
 from services.metadata_service import MetadataService
+from services import transition_votes
 from services.playlist_service import PlaylistService
 from ui.styles import (MAIN_STYLE, get_theme_stylesheet, THEME_CONFIGS, set_active_theme, retheme_stylesheet,
                        contrast_stylesheet, high_contrast_enabled)
@@ -49,6 +50,7 @@ from ui.theme_mixin import ThemeMixin
 from ui.equalizer_mixin import EqualizerMixin
 from ui.dj_engine_mixin import DjEngineMixin
 from ui.dj_mixin import DjMixin
+from ui.dj_votes_mixin import DjVotesMixin
 from ui.artist_page import ArtistProfilePage
 from ui.album_page import AlbumDetailsPage
 from ui.list_page import ListPage
@@ -114,7 +116,7 @@ class FFmpegDownloadWorker(QThread):
 
 class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin, DownloadsMixin, OfflineMixin,
                  UsabilityMixin, PlaybackOptionsMixin, UpdatesMixin, LyricsMixin, SessionMixin, ThemeMixin, EqualizerMixin,
-                 SidebarMixin, DjMixin, DjEngineMixin):
+                 SidebarMixin, DjMixin, DjEngineMixin, DjVotesMixin):
     playing_changed = Signal(bool)          # empieza o se detiene el sonido (los indicadores de «sonando» lo siguen)
 
     def __init__(self):
@@ -162,6 +164,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self.init_search_state()
         self.init_downloads_state()
         self.init_dj_engine_state()
+        self.init_dj_votes_state()
         self.init_dj_state()
 
         # Ecualizador (graves / voces / agudos) aplicado a la música local
@@ -1100,6 +1103,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
                 show_message(self, "No se pudo cambiar el nombre", str(e))
                 return
             PlaylistService.relocate(path, new_path)         # listas y favoritos siguen encontrando la canción
+            transition_votes.rename_path(path, new_path)     # y los votos de mezclas del DJ también
             self.rescan_library()
 
     def show_in_explorer(self, path):

@@ -6,6 +6,8 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QListWidget, QAbstractItemView, QMenu
 )
 
+from services.transition_votes import TAGS
+from ui.dj_votes_mixin import TAG_LABELS
 from ui.icons import icon
 from ui.widgets import ElidedLabel
 
@@ -43,6 +45,7 @@ class DjPage(QWidget):
     reshuffle_requested = Signal()
     unblock_all_requested = Signal()
     bpm_requested = Signal(str, str)         # (ruta de la canción, «half», «double», «set» o «auto»)
+    vote_requested = Signal(int, list)       # (+1 o -1, motivos marcados) de la mezcla que toca
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -145,6 +148,33 @@ class DjPage(QWidget):
         self.countdown.setWordWrap(True)
         now_lay.addSpacing(6)
         now_lay.addWidget(self.countdown)
+        vote_row = QHBoxLayout()
+        vote_row.setSpacing(8)
+        self.vote_caption = QLabel("Esta mezcla:")
+        self.vote_caption.setStyleSheet("font-weight: 700; background: transparent;")
+        vote_row.addWidget(self.vote_caption)
+        self.btn_up = QPushButton("👍 Buena")
+        self.btn_up.setObjectName("TopPillBtn")
+        self.btn_up.setCursor(Qt.PointingHandCursor)
+        self.btn_up.setToolTip("Votar la mezcla que suena (o la última) como buena: sirve para que el DJ aprenda tu gusto")
+        self.btn_up.clicked.connect(lambda: self.vote_requested.emit(1, []))
+        vote_row.addWidget(self.btn_up)
+        self.btn_down = QPushButton("👎 Mala")
+        self.btn_down.setObjectName("TopPillBtn")
+        self.btn_down.setCursor(Qt.PointingHandCursor)
+        self.btn_down.setToolTip("Votar la mezcla como mala, y marcar qué falló si quieres")
+        down_menu = QMenu(self.btn_down)
+        down_menu.addAction("Sin motivo").triggered.connect(lambda: self.vote_requested.emit(-1, []))
+        down_menu.addSeparator()
+        for tag in TAGS:
+            down_menu.addAction(TAG_LABELS.get(tag, tag)).triggered.connect(lambda _=False, t=tag: self.vote_requested.emit(-1, [t]))
+        self.btn_down.setMenu(down_menu)
+        vote_row.addWidget(self.btn_down)
+        self.vote_status = QLabel("")
+        self.vote_status.setObjectName("SectionSubtitle")
+        self.vote_status.setWordWrap(True)
+        vote_row.addWidget(self.vote_status, 1)
+        now_lay.addLayout(vote_row)
         sess.addWidget(now)
 
         buttons = QHBoxLayout()
@@ -287,6 +317,17 @@ class DjPage(QWidget):
         """Cómo va el análisis de las canciones («Analizando 34 de 100…»); vacío = oculto."""
         self.progress.setText(text)
         self.progress.setVisible(bool(text))
+
+    def set_vote_target(self, text: str):
+        """De qué mezcla se votaría ahora («A → B»), o vacío si todavía no hay ninguna."""
+        self.btn_up.setEnabled(bool(text))
+        self.btn_down.setEnabled(bool(text))
+        self.vote_caption.setText(f"Votar {text}:" if text else "Votar la mezcla:")
+        if not text:
+            self.vote_status.setText("")
+
+    def set_vote_status(self, text: str):
+        self.vote_status.setText(text)
 
     def set_countdown(self, text: str):
         if self.countdown.text() != text:

@@ -176,6 +176,8 @@ class DjEngineMixin:
             return
         info = player.last_info
         current = info.get("path")
+        if info.get("plan") is not None and info.get("next_path"):
+            self.dj_note_mix(current, info["next_path"], info["plan"])      # para poder votar esta mezcla
         if info.get("state") != "playing" or not _same_path(current, (self.current_item_info or {}).get("local_path")):
             return                              # la ventana aún no ha puesto al día la canción actual
         want = self._dj_engine_next(current)
