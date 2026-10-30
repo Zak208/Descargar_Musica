@@ -4,7 +4,7 @@ mutagen>=1.47.0
 requests>=2.31.0
 # Control multimedia de Windows (opcional: sin ellos la aplicación funciona igual)
 winrt-runtime>=3.2.1; sys_platform == "win32"
-winrt-Windows.Foundation>=3.2.1; sys_platform == "win32"
+winrt-Windows.Foundation>=4!10.0.28000.2705; sys_platform == "win32"
 winrt-Windows.Foundation.Collections>=3.2.1; sys_platform == "win32"
 winrt-Windows.Media>=3.2.1; sys_platform == "win32"
 winrt-Windows.Media.Playback>=3.2.1; sys_platform == "win32"
