@@ -369,6 +369,68 @@ def _polish(ordered, previous, wanted, rank, rng) -> list:
     return [items[k] for k in seq[fixed:]]
 
 
+RETARGET_SHIFT = 0.30           # «más / menos energía»: cuánto se mueve la posición de energía pedida respecto a la que suena
+RETARGET_RAMP = 3               # canciones en las que se llega a esa energía (subida o bajada gradual, no de golpe)
+RETARGET_HORIZON = 12           # canciones que se reordenan (unos 40 minutos); las demás siguen en el orden que tenían
+
+
+def retarget(tracks, current, direction: int, rng=None, horizon: int = RETARGET_HORIZON, shift: float = RETARGET_SHIFT,
+             ramp: int = RETARGET_RAMP) -> list:
+    """«Más energía» (`direction` > 0) o «menos energía» (< 0) en plena sesión: las canciones de `tracks` (lo que queda, lista de
+    `Track`, en el orden de ahora) reordenadas para que las próximas `horizon` suban (o bajen) de energía respecto a `current`
+    (la que suena, o la que ya está preparada para sonar después y no se puede cambiar).
+
+    La energía que se pide sale de la posición de `current` entre todas (la que suena y las que quedan): se desplaza `shift`
+    hacia arriba o hacia abajo y se llega a ella en `ramp` canciones; luego se mantiene. Cada puesto se elige como en `plan`
+    (los mismos escalones: primero las que se pueden mezclar sin cortar por tempo y de otro artista, y entre ellas por tempo,
+    tono, género y energía). Aquí no se pasa el repaso de `plan` (`_polish`): cambia energía por tono y aquí lo que se ha pedido
+    es la energía; los escalones ya evitan los cortes por tempo mientras haya alguna que se pueda mezclar. Las canciones sin
+    energía conocida van detrás de las que sí la tienen (no se sabe si suben o bajan). Lo que no entra en las `horizon`
+    primeras se queda en su orden de antes, detrás. Con `direction` 0, sin canciones o sin `current`, devuelve la lista tal
+    cual (copia). No cambia nada de `plan`: es una función aparte."""
+    remaining = [_clean(t) for t in tracks]
+    if not remaining or not direction or current is None:
+        return list(tracks)
+    current = _clean(current)
+    rng = rng or random.Random()
+    sign = 1 if direction > 0 else -1
+    rank = energy_ranker([current.energy] + [t.energy for t in remaining])
+    start = rank(current.energy)
+    if start is None:
+        start = NEUTRAL
+    goal = min(1.0, max(0.0, start + sign * shift))
+    count = min(len(remaining), max(1, int(horizon)))
+    steps = max(1, int(ramp))
+    wanted = [start + (goal - start) * min(1.0, (i + 1) / steps) for i in range(count)]
+    order = {id(t): i for i, t in enumerate(remaining)}        # para devolver el resto en su orden de antes
+    pool = list(remaining)
+    ordered = []
+    previous = current
+    recent = [_artist(current.artist)]
+    for target in wanted:
+        tier_best, tier_score = [-1] * _TIERS, [-1e9] * _TIERS
+        last_artist = recent[-1] if recent else ""
+        for i, candidate in enumerate(pool):
+            change = tempo_step(previous.bpm, candidate.bpm)
+            score = _score(previous, candidate, target, rank, recent, rng, change)
+            energy = rank(candidate.energy)
+            distance = WIDE_WINDOW + 0.01 if energy is None else abs(energy - target)
+            artist = _artist(candidate.artist)
+            ok = change is None or -_STEP_UP <= change <= _STEP_DOWN
+            tier = _tier(distance, ok, bool(artist and artist == last_artist))
+            if not ok:
+                score -= JUMP_PENALTY * abs(change)
+            if score > tier_score[tier]:
+                tier_best[tier], tier_score[tier] = i, score
+        best = next(i for i in tier_best if i >= 0)
+        chosen = pool.pop(best)
+        ordered.append(chosen)
+        previous = chosen
+        recent = (recent + [_artist(chosen.artist)])[-RECENT_ARTISTS:]
+    pool.sort(key=lambda t: order[id(t)])
+    return ordered + pool
+
+
 def transition_quality(ordered, previous=None) -> dict:
     """Cómo encajan de media los saltos de una lista: {«bpm», «key», «genre»} entre 0 y 1 (sirve para medir si un orden es
     mejor que otro; la energía no entra porque depende de la curva)."""
