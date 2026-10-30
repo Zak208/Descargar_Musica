@@ -320,9 +320,12 @@ class DjPage(QWidget):
 
     def set_vote_target(self, text: str):
         """De qué mezcla se votaría ahora («A → B»), o vacío si todavía no hay ninguna."""
+        caption = f"Votar {text}:" if text else "Votar la mezcla:"
+        if caption == self.vote_caption.text() and self.btn_up.isEnabled() == bool(text):
+            return                                  # se llama con cada avance de la canción: nada que cambiar
         self.btn_up.setEnabled(bool(text))
         self.btn_down.setEnabled(bool(text))
-        self.vote_caption.setText(f"Votar {text}:" if text else "Votar la mezcla:")
+        self.vote_caption.setText(caption)
         if not text:
             self.vote_status.setText("")
 

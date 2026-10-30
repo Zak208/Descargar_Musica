@@ -83,7 +83,7 @@ class DjEngineMixin:
             real_player, real_output = self.player, self.audio_output
             real_player.stop()
             real_player.setSource(QUrl())       # suelta el archivo de antes (Windows lo bloquearía para renombrar o borrar)
-            player = EnginePlayer(session, self)
+            player = EnginePlayer(session, self, resolve=self._dj_engine_resolve)
             player.foreign_source.connect(self._dj_engine_foreign)
             self._wire_player(player)
         except Exception as e:                  # el DJ nunca debe quedarse sin sonido por esto (ni dejar el flujo abierto)
@@ -150,17 +150,28 @@ class DjEngineMixin:
         info["beatgrid"] = grid
         return info
 
+    def _dj_engine_resolve(self, path: str):
+        """La ruta tal como la guarda la ventana (la de la lista de la sesión o la de la canción actual) para la misma canción: Qt la da con
+        otras barras y el análisis, el volumen y los votos se buscan con la de la ventana."""
+        current = (self.current_item_info or {}).get("local_path")
+        if _same_path(current, path):
+            return current
+        return next((t["local_path"] for t in (self._dj_context or []) if _same_path(t.get("local_path"), path)), path)
+
     def _dj_engine_next(self, path: str):
         """La canción que sigue a `path` (solo si es la que suena ahora y la sesión DJ sigue)."""
         if not self.dj_session_active() or self.is_loop_enabled or self._sleep_end_of_track:
             return None
         if not _same_path((self.current_item_info or {}).get("local_path"), path):
             return self._dj_engine_skip_failed(path)         # el motor salta una canción que no se pudo cargar
+        self._dj_prune_next()                   # una siguiente borrada del disco se quita de la sesión (si no, la ventana no la podría tocar)
         nxt = (self.peek_next() or {}).get("local_path")
         return nxt if nxt and os.path.isfile(nxt) else None
 
     def _dj_engine_skip_failed(self, path: str):
         """El motor no pudo cargar `path` (archivo roto): se quita de la sesión y se da la que sigue, que es la que mezclará."""
+        if not os.path.isfile(path):             # borrada, no es un fallo de carga: la ventana ya la quitará al avanzar
+            return self._dj_engine_after_in_list(path)
         after = self._dj_engine_after_in_list(path)
         failed = next((t for t in (self._dj_context or []) if _same_path(t.get("local_path"), path)), None)
         if failed is not None:

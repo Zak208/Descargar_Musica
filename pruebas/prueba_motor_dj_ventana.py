@@ -145,6 +145,9 @@ w.play_next = counted_next
 w.start_dj_session()
 check("empieza la sesión", wait(lambda: w.dj_session_active()))
 check("el reproductor de la ventana es el del motor", w.dj_engine_on() and isinstance(w.player, EnginePlayer))
+check("la sesión del motor conoce la primera canción con la ruta de la ventana (y así encuentra su análisis)",
+      w._dj_engine_session.current_path == w.current_item_info["local_path"]
+      and w._dj_engine_info(w._dj_engine_session.current_path).get("bpm") == 120.0)
 check("suena (estado Reproduciendo)", wait(lambda: w.player.playbackState() == QMediaPlayer.PlayingState, 10))
 check("conoce la duración de la que suena", wait(lambda: any(abs(w.player.duration() - d * 1000) < 1500 for d in DURATIONS), 10))
 p0 = 0
