@@ -94,8 +94,8 @@ lo de arriba solo demuestra que el motor no se queda sin datos ni tarda en la ll
   pesado en Python puro mientras suena el DJ.
 - **Dispositivo desconectado** (auriculares USB, Bluetooth): el flujo se para y llega `on_stream_finished`. El motor no
   reabre solo; la sesión debe llamar a `stop()` y `start()` (con otro dispositivo o el predeterminado nuevo).
-- **Saturación.** El motor no recorta: si la mezcla pasa de ±1,0 lo recorta el dispositivo. El margen (o un limitador) va en
-  la preparación de la transición.
+- **Saturación.** El motor lleva un limitador suave de salida (ver «Limitador de salida» abajo): nada sale por encima de ±1,0
+  y por debajo de 0,9 no se toca nada.
 - Un segundo salto antes de que acabe el fundido del primero (15 ms) corta en seco ese resto de fundido.
 - ASIO: la rueda de sounddevice trae también una PortAudio con ASIO (`libportaudio64bit-asio.dll`), que solo se usa con la
   variable de entorno `SD_ENABLE_ASIO`; no se ha probado.
@@ -181,3 +181,22 @@ Lo que la sesión (`dj_engine.EngineSession`) hace además de la mezcla larga y 
   tope y el análisis dice que dura más) y la transición es un corte limpio en el último compás antes del tope, con su motivo,
   en vez de una mezcla de outro sobre un final que no existe. El tope no se ha subido (`pcm_loader` no es de este cambio): una
   canción de 12 min serían 254 MB, y con A y B en memoria se pasaría del medio giga.
+
+### Limitador de salida (fase 1)
+
+Dos canciones igualadas a -14 LUFS sumadas en una mezcla pasan de 1,0 (el grabador midió picos de 1,93) y los mp3 reales ya
+pasan de 1,0 en un 0,1 a 0,3 % de las muestras. `MixEngine` aplica al final de cada bloque (después de las ganancias de pausa
+y maestra) una rodilla suave, estática y por muestra:
+
+    |x| <= 0,9  ->  sin cambios (idéntica, muestra a muestra)
+    |x| >  0,9  ->  signo(x) · (0,9 + 0,1 · tanh((|x| - 0,9) / 0,1))      (pendiente 1 en 0,9, nunca llega a 1,0)
+
+No tiene memoria entre bloques, así que no puede crear saltos en las uniones. NaN e infinitos salen como 0 y ±1. Se puede
+apagar con `MixEngine(limit=False)` (las pruebas que comparan muestras numeradas mayores que 1 lo hacen). `stats()` cuenta
+en `limited_blocks` los bloques en los que tuvo que redondear algún pico. No es un limitador con ataque y relajación: redondea
+los picos que pasan de 0,9 (algo de distorsión armónica en ellos, mucho menos que el recorte duro del dispositivo); que suene
+transparente en música real es una hipótesis que hay que comprobar de oído.
+
+Coste medido (pruebas/prueba_motor_audio.py, bloque 1024, sin dispositivo, CPU compartida): media 0,0024 ms si nada pasa del
+umbral (dos reducciones; 0,0011 ms sin limitador) y 0,015 ms si todo el bloque pasa (presupuesto 23,2 ms). Con el
+dispositivo real la media siguió en 0,022 a 0,028 ms y la máxima en 0,1 ms.

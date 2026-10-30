@@ -19,8 +19,17 @@ Sin sounddevice (o sin tarjeta de sonido) `available()` devuelve False y `start(
 igual con `pull(frames)`, que es la misma función que usa la llamada de audio (así se prueba el motor sin sonido).
 
 Ganancias: la salida es contenido × ganancia maestra (`set_master_gain`, con rampa) × ganancia de pausa (micro-fundido de
-15 ms al pausar, reanudar o saltar, para no hacer clic). No se recorta nada: si el contenido pasa de ±1, lo recorta el
-dispositivo; quien prepara los segmentos debe dejar margen (el limitador, si hace falta, va en la preparación)."""
+15 ms al pausar, reanudar o saltar, para no hacer clic).
+
+Limitador de salida (`limit=True`, lo normal): dos canciones a -14 LUFS sumadas en una mezcla, o un mp3 que ya pasa de 1,0,
+saturarían el dispositivo (recorte duro, se oye como un chasquido áspero). Al final de cada bloque, cada muestra con |x| por
+encima de `LIMIT_THRESHOLD` (0,9) pasa por una rodilla suave: y = signo(x) · (T + (1 - T) · tanh((|x| - T) / (1 - T))). Por
+debajo de 0,9 no se toca nada (la salida es idéntica, muestra a muestra); en 0,9 la curva sigue con pendiente 1 (sin quiebro);
+y nunca llega a pasar de 1,0. Es una ganancia estática por muestra, sin memoria entre bloques: no puede crear saltos en las
+uniones de bloques ni de segmentos. No es un limitador «de verdad» (con ataque y relajación): los picos que pasan de 0,9 se
+redondean, lo que añade algo de distorsión armónica en esos picos (mucho menos que el recorte duro del dispositivo). Coste:
+dos reducciones (máximo y mínimo) por bloque cuando nada pasa de 0,9; si algo pasa, unas operaciones sobre solo esas muestras.
+Las muestras NaN o infinitas salen como 0 o ±1."""
 import itertools
 import logging
 import math
@@ -38,6 +47,7 @@ FADE_MS = 15.0                  # micro-fundido de pausa, reanudación y salto
 GAIN_RAMP_MS = 50.0             # lo que tarda la ganancia maestra en ir de 0 a 1 (o al revés)
 DEFAULT_BLOCKSIZE = 1024        # muestras por llamada de audio (23 ms a 44.100 Hz)
 DEFAULT_LATENCY = "high"        # lo que PortAudio deja de colchón; ver docs/MOTOR_DJ.md
+LIMIT_THRESHOLD = 0.9           # el limitador de salida no toca nada por debajo de esto (ver la explicación del módulo)
 
 # Notificaciones (primer elemento de cada tupla que devuelve `poll_events`)
 EV_SEGMENT_START = "segment_start"      # (EV_SEGMENT_START, label, seg_id, start_frame)
@@ -128,7 +138,7 @@ class MixEngine:
 
     def __init__(self, sample_rate: int = SAMPLE_RATE, blocksize: int = DEFAULT_BLOCKSIZE, device=None,
                  latency=DEFAULT_LATENCY, master_gain: float = 1.0, fade_ms: float = FADE_MS, meter: bool = False,
-                 extra_settings=None):
+                 extra_settings=None, limit: bool = True):
         np = _numpy()
         if np is None:
             raise RuntimeError("el motor de audio necesita numpy")
@@ -139,6 +149,7 @@ class MixEngine:
         self.latency = latency
         self.extra_settings = extra_settings    # p. ej. sd.WasapiSettings(auto_convert=True) para WASAPI a otra frecuencia
         self.meter = meter                      # True: apunta el pico de la salida (`peak_out`) en cada bloque
+        self.limit = bool(limit)                # limitador suave de salida (ver la explicación del módulo)
         self.on_segment_start = None            # fn(label, seg_id, start_frame)
         self.on_queue_empty = None              # fn(position_frames)
         self.on_stream_finished = None          # fn(motivo)
@@ -378,8 +389,25 @@ class MixEngine:
             else:                               # alguna rampa en marcha: ganancia muestra a muestra
                 g = (pg if pg is not None else self._pause_gain) * (mg if mg is not None else self._master)
                 out *= g[:, None]
+        if self.limit:
+            self._limit(out)
         if self.meter:
             self.peak_out = max(self.peak_out, float(self._np.abs(out).max()))
+
+    def _limit(self, out):
+        """Limitador suave en el sitio (ver la explicación del módulo). Lo normal (nada por encima del umbral): dos reducciones."""
+        hi, lo = float(out.max()), float(out.min())
+        t = LIMIT_THRESHOLD
+        if hi <= t and lo >= -t:
+            return
+        np = self._np
+        if not (math.isfinite(hi) and math.isfinite(lo)):
+            np.nan_to_num(out, copy=False, nan=0.0, posinf=1.0, neginf=-1.0)
+        mag = np.abs(out)
+        over = mag > t
+        k = np.float32(1.0 - t)
+        out[over] = np.copysign(np.float32(t) + k * np.tanh((mag[over] - np.float32(t)) / k), out[over])
+        self.limited_blocks += 1
 
     def _fill(self, out, frames) -> int:
         """Copia hasta `frames` muestras de la cola en `out`; avanza la posición y apunta notificaciones. Con el candado."""
@@ -504,6 +532,7 @@ class MixEngine:
         self.callback_max_s = 0.0
         self.callback_total_s = 0.0
         self.peak_out = 0.0
+        self.limited_blocks = 0                 # bloques en los que el limitador tuvo que redondear algún pico
 
     def stats(self) -> dict:
         """Contadores de la llamada de audio: cuántas, subdesbordamientos, otros avisos, errores, duración máxima y media
@@ -513,4 +542,4 @@ class MixEngine:
                 "errors": self.callback_errors, "max_ms": self.callback_max_s * 1000.0,
                 "mean_ms": (self.callback_total_s / n * 1000.0) if n else 0.0,
                 "budget_ms": self.blocksize / self.sample_rate * 1000.0, "latency_s": self.output_latency_s,
-                "peak_out": self.peak_out}
+                "peak_out": self.peak_out, "limited_blocks": self.limited_blocks}
