@@ -219,6 +219,19 @@ class MixEngine:
                 self._events.put((EV_QUEUE_EMPTY, self._pos))
         return [s.seg_id for s in segs]
 
+    def truncate_current(self, seg_id, frames: int, guard: int = 0) -> bool:
+        """Acorta el segmento que suena (`seg_id`) para que acabe en su muestra `frames`, sin cortar nada de lo que ya se
+        oyó: solo si lo tocado más `guard` muestras de margen no llega ahí. Lo que venga detrás (la cola) se toca justo
+        después en el mismo punto, sin salto (lo usa la sesión DJ para que el punto de mezcla caiga dentro de un trozo que ya
+        suena). True si se acortó; False si ya no es ese segmento, no le queda margen o `frames` no lo acorta."""
+        with self._lock:
+            cur = self._cur
+            if cur is None or cur.seg_id != seg_id or not 0 < frames < cur.frames or self._off + guard >= frames:
+                return False
+            cur.data = cur.data[:frames]
+            cur.frames = int(frames)
+            return True
+
     def _segments(self, segments) -> list:
         out = []
         for item in segments:

@@ -10,7 +10,8 @@ en milisegundos) y devuelve un `TransitionPlan`. Cómo decide:
 - **Tempo**: `tempo_ratio_b` = tempo de A / tempo de B, contando la mitad y el doble como el mismo ritmo (70 y 140 BPM se
   mezclan sin tocar nada). Más allá de ±8 % el cambio se oye (suena artificial): entonces **corte limpio**, con su motivo.
 - **Con rejillas** en las dos: la mezcla dura `bars` compases de A (16 por defecto; si pasan de 32 s, se parten por la
-  mitad hasta caber, para seguir siendo una frase). Empieza en el comienzo de frase de A (múltiplo de 16 compases y, si
+  mitad hasta caber, para seguir siendo una frase; también se parten si pasan de un tercio de B o si tras la mezcla a B no
+  le quedaría al menos 1 s de cuerpo). Empieza en el comienzo de frase de A (múltiplo de 16 compases y, si
   no cabe ninguno, de 8) más cercano al punto de partida, siempre a partir de la mitad de la canción y con sitio para
   la mezcla entera antes de que A acabe. B entra en el comienzo de frase suyo (múltiplo de 8 compases) más cercano al
   punto en que su cuerpo llegaría al acabar la mezcla. El cambio de graves cae en el comienzo de compás más cercano a la
@@ -26,6 +27,7 @@ MAX_TEMPO_CHANGE = 0.08         # ±8 %: más allá, el cambio de tempo se nota
 A_PHRASES = (16, 8)             # comienzos de frase de A que se prueban, de más a menos largos
 B_PHRASE = 8                    # B entra en un comienzo de frase de 8 compases
 MIN_BARS = 4                    # una mezcla por frases de menos de 4 compases no tiene sentido: se usa la de la fase 8
+B_BODY_MIN_S = 1.0              # tras la mezcla, a B le debe quedar al menos esto de cuerpo (el motor lo exige)
 
 
 def _number(value):
@@ -113,7 +115,8 @@ def _phrased(a, b, grid_a: BeatGrid, grid_b: BeatGrid, ratio: float, bars: int, 
     while bars >= MIN_BARS:
         length = grid_a.bar_s * bars
         latest = a_dur - length
-        if latest >= a_dur / 2:
+        b_fits = not b_dur or length * ratio <= b_dur / mix_points.TRACK_SHARE + 1e-6    # como en la fase 8: un tercio de B
+        if latest >= a_dur / 2 and b_fits:
             for multiple in A_PHRASES:
                 a_start = _closest(_phrase_starts(grid_a, base.a_start_s, multiple), base.a_start_s, a_dur / 2, latest)
                 if a_start is not None:
@@ -125,6 +128,8 @@ def _phrased(a, b, grid_a: BeatGrid, grid_b: BeatGrid, ratio: float, bars: int, 
                 b_start = _closest(_phrase_starts(grid_b, target_b, B_PHRASE), target_b, 0.0, high_b)
                 if b_start is None:
                     b_start = _closest((grid_b.next_bar_time(0.0),), target_b, 0.0, high_b)
+                if b_start is not None and b_dur and b_start + length * ratio + B_BODY_MIN_S > b_dur:
+                    b_start = None                      # el cuerpo de B no llegaría a sonar: frase más corta
                 if b_start is not None:
                     middle = a_start + length / 2
                     swap = grid_a.bar_time(round(grid_a.bar_at(middle))) - a_start

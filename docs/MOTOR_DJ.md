@@ -156,3 +156,28 @@ Lo que tendrá que hacer la sesión DJ (`dj_mixin` / `dj_service`), sin tocar el
 10. **Empaquetado:** PyInstaller tiene que llevar `_sounddevice_data/portaudio-binaries/libportaudio64bit.dll` (unos 300 KB);
     el gancho de `pyinstaller-hooks-contrib` para sounddevice lo hace, pero hay que comprobarlo en el `.spec` y en el
     instalador (no se ha probado).
+
+## Sesión del DJ: arreglos e integración de los módulos (fases 0 a 6 de la integración)
+
+Lo que la sesión (`dj_engine.EngineSession`) hace además de la mezcla larga y el corte limpio. Las pruebas están en
+`pruebas/prueba_motor_dj_arreglos.py` y en las que se citan en cada punto.
+
+### Arreglos (fase 0)
+
+- **Redondeo del plan.** `mix_points.plan` redondea el principio y la longitud de la mezcla a milésimas por separado y la suma
+  se podía pasar hasta 44 muestras del final de A: la mezcla se rechazaba y caía a corte (casi la mitad de las canciones sin
+  análisis). Ahora se admite un exceso de hasta 50 ms (`FIT_TOL_S`); lo que falta de A se rellena con silencio con la rampa de
+  5 ms de `render_transition` (A ya está casi a cero al final de la mezcla).
+- **Canciones cortas.** Con trozos de 15 s, en una canción de 20 s el primer trozo ya sonaba pasado el punto de mezcla y toda
+  transición era un «plan tardío». `MixEngine.truncate_current(seg_id, frames, guard)` acorta el segmento que suena (solo si
+  lo tocado más 0,25 s de margen no llega al nuevo final) y la sesión lo usa para que el punto de mezcla caiga dentro del
+  trozo que suena. El corte tardío queda solo para cuando lo que suena ya pasó el punto de mezcla.
+- **B muy corta.** `mix_planner` limitaba la mezcla por frases solo por A: con B de 25 s salía una mezcla de 32 s que el motor
+  rechazaba. Ahora la frase se parte hasta que mide como mucho un tercio de B (como la fase 8) y deja al menos 1 s de cuerpo
+  de B. Si aun así la mezcla no se puede hacer, el corte va al compás de donde la mezcla habría acabado, no a su principio.
+- **Carga que se quedaba en «cargando».** Si fallaba el cálculo de la ganancia de la canción pedida, la sesión no salía nunca
+  de «loading». Ahora queda «stopped» con el error.
+- **Canciones de más de 8 min.** `pcm_loader.MAX_SECONDS` (480 s) corta sin avisar. La sesión lo detecta (lo cargado llega al
+  tope y el análisis dice que dura más) y la transición es un corte limpio en el último compás antes del tope, con su motivo,
+  en vez de una mezcla de outro sobre un final que no existe. El tope no se ha subido (`pcm_loader` no es de este cambio): una
+  canción de 12 min serían 254 MB, y con A y B en memoria se pasaría del medio giga.

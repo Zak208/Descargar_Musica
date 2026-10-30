@@ -13,8 +13,18 @@ Cómo suena una canción A y cómo se pasa a la siguiente B (todo a precisión d
     `b_start_s + length_s * tempo_ratio_b` (en su tiempo original).
   * Un corte limpio (KIND_CUT, o una mezcla imposible) se encola igual, en dos piezas de 0,5 s: el final de A con su rampa de
     bajada de 5 ms y el principio de B con su rampa de subida (las hace `render_transition` con el plan de corte).
-  * Plan tardío: si cuando llega el plan el trozo que suena ya pasa del punto de mezcla, se hace un corte limpio en el primer
+  * Si cuando llega el plan el punto de mezcla cae dentro del trozo que ya suena y aún le faltan más de 0,25 s para llegar,
+    el motor acorta ese trozo justo en él (`MixEngine.truncate_current`): no hace falta que el trozo acabe antes (canciones
+    de 20 s, o `play(start_s)` cerca del final).
+  * Plan tardío: si cuando llega el plan lo que suena ya pasa del punto de mezcla, se hace un corte limpio en el primer
     comienzo de compás de A que deje sitio a la pieza de 0,5 s tras el final de ese trozo (o justo ahí si no hay rejilla).
+  * Una mezcla que no se puede hacer (el audio no cuadra con el análisis) pasa a corte limpio en el compás de donde la mezcla
+    habría acabado (A ya se habría ido), no en su principio: no se tira el final de A. El plan puede pasarse del final de A
+    hasta 50 ms (redondeos): lo que falta se rellena con silencio, con la rampa de `render_transition`.
+  * Canción más larga que el tope del cargador (`pcm_loader.MAX_SECONDS`, 8 min): se carga hasta el tope y su final no existe
+    en lo cargado. Si lo cargado llega al tope y el análisis dice que dura más (o no lo dice), se marca `truncated`, el final
+    se toma como «de golpe» y la transición es un corte limpio en el último compás antes del tope, con ese motivo. La barra
+    muestra la duración cargada (8:00).
   * Si A se acaba antes de que esté lista B (preparación lentísima), B entra con su rampa de subida en cuanto llega.
 
 Hilos: un solo hilo de trabajo con una cola de tareas («cargar A», «preparar B»). Cada tarea lleva la generación de la sesión
@@ -68,6 +78,9 @@ MIN_CHUNK_S = 1.0               # un último trozo más corto se junta con el an
 CUT_PIECE_S = 0.5               # piezas del corte limpio (A con rampa de bajada, B con rampa de subida)
 JOIN_S = 0.020                  # con tempo estirado, fundido lineal entre el final del tramo estirado y el cuerpo original de B
 MIN_GAP_FRAMES = 4096           # en un corte tardío, el trozo de A que queda antes no puede ser más corto que esto
+TRUNC_GUARD_S = 0.25            # el trozo que suena se acorta en el punto de mezcla solo si aún le faltan 0,25 s para llegar
+FIT_TOL_S = 0.05                # la mezcla puede pasarse del final de A hasta 50 ms (redondeos del plan): se rellena con silencio
+TRUNCATED_TOL_S = 0.05          # una canción cargada hasta el tope del cargador (menos esto) se ha truncado si dura más
 MAX_TRIES = 5                   # canciones seguidas que se intentan cargar como siguiente antes de rendirse
 INSTALL_TRIES = 8               # reintentos de cambiar la cola si la llamada de audio avanza a la vez
 
@@ -142,6 +155,19 @@ class _Ask:
         self.force = False              # «replan» que rehace la mezcla aunque la siguiente sea la misma (llegó un análisis)
 
 
+def _max_minutes():
+    from services import pcm_loader
+    return round(pcm_loader.MAX_SECONDS / 60)
+
+
+def _truncated(frames, known_s) -> bool:
+    """¿El cargador cortó la canción en su tope (`pcm_loader.MAX_SECONDS`)? Si lo cargado llega al tope y el análisis dice que
+    dura más (o no lo dice: una canción de justo 8:00 es rara)."""
+    from services import pcm_loader
+    top = pcm_loader.MAX_SECONDS
+    return frames >= (top - TRUNCATED_TOL_S) * SAMPLE_RATE and (known_s is None or known_s > frames / SAMPLE_RATE + 0.5)
+
+
 def _stored_lufs(path):
     """LUFS ya guardado, sin medir (para que A arranque ya). Importa loudness_service (trae Qt) solo cuando hace falta."""
     from services import deck_gain, loudness_service
@@ -162,7 +188,8 @@ def _gain_for(lufs, peak) -> float:
 class EngineSession:
     """Sesión del DJ sobre un `MixEngine` (ver la explicación del módulo). El dueño del motor hace start()/stop() del flujo."""
 
-    def __init__(self, engine, info_for, next_after, bars=16, loader=None, lead_s=45.0, lufs_stored=None, lufs_measure=None):
+    def __init__(self, engine, info_for, next_after, bars=16, loader=None, lead_s=45.0, lufs_stored=None, lufs_measure=None,
+                 typed=True):
         if loader is None:
             from services import pcm_loader
             loader = pcm_loader.load
@@ -171,6 +198,7 @@ class EngineSession:
         self._next_after = next_after
         self.bars = bars
         self.lead_s = lead_s
+        self.typed = bool(typed)        # tipos de transición (transition_types); False: solo mezcla larga o corte limpio
         self._loader = loader
         self._lufs_stored = lufs_stored or _stored_lufs
         self._lufs_measure = lufs_measure or _measured_lufs
@@ -485,7 +513,13 @@ class EngineSession:
             i = lab.idx + (1 if started else 0)
             return list(a.entry[i:]) + self._from_frame_locked(a.body_start)
         if lab.role == "body":
-            return self._from_frame_locked(lab.f1 if started else lab.f0)
+            if not started:
+                return self._from_frame_locked(lab.f0)
+            p = self._pair
+            if (p is not None and lab.f0 < p.a_mix < lab.f1
+                    and self._engine.truncate_current(cur[1], p.a_mix - lab.f0, round(TRUNC_GUARD_S * SAMPLE_RATE))):
+                lab.f1 = p.a_mix                                # el trozo que suena acaba ya en el punto de mezcla
+            return self._from_frame_locked(lab.f1)
         if lab.role == "x1" and not started:
             return self._from_frame_locked(lab.f0)
         return None                                             # la mezcla ya suena: no se toca
@@ -576,14 +610,20 @@ class EngineSession:
         with self._lock:
             if gen != self._gen:
                 return
-        data = self._load(path)
-        g = self._apply_gain(self._lufs_stored, path, data) if data is not None else 1.0
+        data, g, err = None, 1.0, None
+        try:
+            data = self._load(path)
+            if data is not None:
+                g = self._apply_gain(self._lufs_stored, path, data)
+        except Exception as e:                              # el volumen o el pico fallaron: no se queda «cargando» para siempre
+            log.exception("fallo al preparar %s", path)
+            data, err = None, f"no se pudo cargar {path}: {e}"
         with self._lock:
             if gen != self._gen:
                 return
             self._loading = None
             if data is None:
-                self._error = self._error or f"no se pudo cargar {path}"
+                self._error = err or self._error or f"no se pudo cargar {path}"
                 self._a = None
                 return
             a = self._a = _Track(path, data, g)
@@ -628,8 +668,14 @@ class EngineSession:
             log.warning("info_for falló con %s: %s", path, e)
             info = None
         info = dict(info) if isinstance(info, dict) else {}
+        known = mix_points.seconds(info, "duration")
         info["duration_s"] = frames / SAMPLE_RATE           # la duración de lo decodificado, no la del análisis (podría pasarse por una muestra)
         info.pop("duration_ms", None)
+        if _truncated(frames, known):
+            # el cargador la cortó en su tope: su final (outro) no está en lo cargado. Se marca y el final pasa a ser «de golpe»
+            info["truncated"] = True
+            info.pop("outro_ms", None)
+            info["outro_s"] = 0.0
         return info
 
     def _build_pair(self, a, b_path):
@@ -642,12 +688,31 @@ class EngineSession:
         info_a = self._info(a.path, a.frames)
         plan = mix_planner.plan_transition(info_a, self._info(b_path, b.frames), self.bars)
         grid_a = info_a.get("beatgrid") if isinstance(info_a.get("beatgrid"), BeatGrid) else None
+        if info_a.get("truncated"):
+            c = self._bar_before(a, grid_a, a.frames)
+            plan = mix_points.cut(c / SAMPLE_RATE, plan.b_start_s,
+                                  f"corte limpio al llegar al tope de {_max_minutes()} min que se carga de cada canción "
+                                  "(el resto de la que suena no se carga)")
         if plan.kind != KIND_CUT and plan.length_s > 0:
             pair, why = self._blend(a, b, plan, grid_a)
             if pair is not None:
                 return pair
-            plan = mix_points.cut(min(plan.a_start_s, a.frames / SAMPLE_RATE), plan.b_start_s, "corte limpio: " + why)
+            # donde A se habría ido del todo (su final, si la mezcla no cabía): no se tira el final de A
+            end = min(a.frames, round((plan.a_start_s + plan.length_s) * SAMPLE_RATE))
+            plan = mix_points.cut(self._bar_before(a, grid_a, end) / SAMPLE_RATE, plan.b_start_s, "corte limpio: " + why)
         return self._cut(a, b, plan, grid_a, round(plan.a_start_s * SAMPLE_RATE), round(plan.b_start_s * SAMPLE_RATE))
+
+    @staticmethod
+    def _bar_before(a, grid_a, end) -> int:
+        """Muestra del comienzo de compás de A más cercano antes de `end` (a menos de un compás), o `end` sin rejilla."""
+        if grid_a is None:
+            return int(end)
+        try:
+            bar = math.floor(grid_a.bar_at(end / SAMPLE_RATE) + 1e-9)
+            c = round(grid_a.bar_time(bar) * SAMPLE_RATE)
+        except (ValueError, ZeroDivisionError, OverflowError):
+            return int(end)
+        return c if 0 < c <= end and end - c <= grid_a.bar_s * SAMPLE_RATE + 1 else int(end)
 
     def _blend(self, a, b, plan, grid_a):
         """(_Pair, None) con la mezcla hecha, o (None, motivo) si no cabe (datos del análisis que no cuadran con el audio)."""
@@ -655,7 +720,7 @@ class EngineSession:
         ratio = float(plan.tempo_ratio_b or 1.0)
         a_mix, n = round(plan.a_start_s * sr), round(plan.length_s * sr)
         bs, b_body = round(plan.b_start_s * sr), round((plan.b_start_s + plan.length_s * ratio) * sr)
-        if a_mix < 0 or a_mix + n > a.frames:
+        if a_mix < 0 or a_mix + n > a.frames + round(FIT_TOL_S * sr):
             return None, "la mezcla no cabe en la canción que suena"
         if b_body + int(MIN_CHUNK_S * sr) > b.frames:
             return None, "la canción que entra es demasiado corta"
