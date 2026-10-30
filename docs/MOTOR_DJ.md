@@ -319,6 +319,30 @@ digital y algunos empiezan con un poco. Un corte en ese silencio dejaba un hueco
 
 Pruebas: `pruebas/prueba_motor_silencios.py`.
 
+### Medida con las 22 canciones reales (`pruebas/medir_calidad_mezcla.py`, 31-10-2026)
+
+Orden inteligente con 3 semillas (39 transiciones distintas tras fusionar el orden atento al tempo), cada una sonada con la
+sesión real en silencio y puntuada con `score_audio` entero. ANTES = `typed=False`, sin puntuador y sin limitador (los
+arreglos de las fases 0 y de silencios ya están en las dos columnas):
+
+| | ANTES | DESPUÉS |
+|---|---|---|
+| ok / dudosa / descartar | 11 / 13 / 15 | 13 / 16 / 10 |
+| con clic / recorte > 0,1 % / huecos >= 500 ms | 0 / 0 / 0 | 0 / 0 / 0 |
+| pico máximo / medio | 0,943 / 0,605 | 0,783 / 0,546 |
+| saltos de volumen >= 8 dB / >= 5 dB (máximo) | 6 / 7 (14,8 dB) | 8 / 13 (18,3 dB) |
+| tipos | blend 32, corte 7 | filter 10, blend 8, cut_bar 7, corte 7, corte con eco 7 |
+| mezclas que empiezan en frase de 8 | 85 % | 86 % |
+| duración media de la mezcla | 15,5 s | 15,7 s |
+| preparación media / máxima | 0,71 / 1,26 s | 0,70 / 1,62 s |
+
+Una pasada anterior, con el orden de antes y sin el arreglo de silencios, dio 44 transiciones con 6 huecos ANTES y 10
+DESPUÉS (cortes en el silencio final de los mp3) y un pico de 1,07 sin limitador: de ahí salió «Cortes que no caen en un
+silencio». Lo que empeora: los saltos de volumen. Los tipos que cortan (corte en el compás, eco) dejan oír el salto de nivel
+entre A y B que la mezcla larga tapaba; el puntuador solo cambia una mezcla por un corte, no al revés. Criterio de aceptación
+(sin clic, sin recorte de más del 0,1 % y sin huecos): cumplido. `pruebas/medir_mezcla_real.py` (ventana real, en silencio, 3
+transiciones): un solo cambio de canción en cada paso, la que tocaba, sin que suene a la vez el reproductor de siempre.
+
 ### Rampa de vuelta al tempo original (fase 6, `EngineSession(tempo_ramp=True)`, APAGADA por defecto)
 
 Hoy B, estirada hasta ±8 % en la mezcla, vuelve a su tempo de golpe tras ella (empalme de 20 ms). La rampa pone antes del
