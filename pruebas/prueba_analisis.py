@@ -212,5 +212,167 @@ else:
     stopped.cancel()
     stopped.start()
     check("se puede parar (al cerrar el programa)", wait(lambda: stopped.isFinished(), 10))
+    # ---- estructura (subidas, caídas y partes) guardada con el análisis
+    import numpy as np
+    from services import structure as structure_mod
+    from services import library_db
+
+    def write_structure_wav(path, seconds=60, drop_s=20):
+        """Un pad flojo y, desde el segundo `drop_s`, graves fuertes con pulso: una caída conocida."""
+        rate = 11025
+        t = np.arange(rate * seconds) / rate
+        x = 0.02 * np.sin(2 * np.pi * 880 * t) + 0.01 * np.sin(2 * np.pi * 1320 * t)
+        k = rate * drop_s
+        x[k:] += 0.5 * np.sin(2 * np.pi * 60 * t[k:]) * (0.6 + 0.4 * np.sin(2 * np.pi * 2 * t[k:])) + 0.2 * np.sin(2 * np.pi * 880 * t[k:])
+        with wave.open(path, "wb") as f:
+            f.setnchannels(1)
+            f.setsampwidth(2)
+            f.setframerate(rate)
+            f.writeframes((np.clip(x, -1, 1) * 30000).astype("<i2").tobytes())
+
+    if not structure_mod.available():
+        check("sin numpy no hay estructura (se salta esta parte)", structure_mod.analyse(None) == structure_mod.empty())
+    else:
+        song = os.path.join(folder, "estructura.wav")
+        write_structure_wav(song)
+        real_analyse, calls = structure_mod.analyse, []
+        structure_mod.analyse = lambda *a, **k: (calls.append(1), real_analyse(*a, **k))[1]
+        try:
+            full = track_analysis.analyze(song)
+            parsed = track_analysis.structure_from(full)
+            drops = [e for e in (parsed or {}).get("events", []) if e["type"] == "drop"]
+            check(f"el análisis completo trae la estructura en JSON ({len(full['structure'] or '')} caracteres)",
+                  isinstance(full.get("structure"), str) and full["structure"].startswith('{"v":%d,' % structure_mod.VERSION)
+                  and len(full["structure"]) < 20_000)
+            check(f"estructura parseable con la caída conocida (en 20 s; da {[e['t'] for e in drops]})",
+                  parsed is not None and len(drops) == 1 and abs(drops[0]["t"] - 20) <= 1.5
+                  and parsed["sections"][0]["kind"] == "intro" and len(parsed["energy"]) == 60)
+            check("structure_from da el mismo diccionario (en memoria) y None si no hay nada",
+                  track_analysis.structure_from(full) is parsed and track_analysis.structure_from({}) is None
+                  and track_analysis.structure_from(None) is None and track_analysis.structure_from({"structure": ""}) is None
+                  and track_analysis.structure_from({"structure": "esto no es JSON"}) is None
+                  and track_analysis.structure_from({"structure": '{"v":0,"energy":[]}'}) is None)
+            check("el índice guarda lo mismo que devolvió analyze",
+                  track_analysis.stored(song, need_audio=True) is not None
+                  and track_analysis.stored(song, need_audio=True)["structure"] == full["structure"])
+
+            # la segunda vez sale del índice: ni se decodifica ni se recalcula
+            calls.clear()
+            again2, steps3 = {}, []
+            worker3 = track_analysis.AnalysisWorker([song])
+            worker3.result.connect(lambda p, r: again2.__setitem__(p, r))
+            worker3.progress.connect(lambda d, t: steps3.append((d, t)))
+            worker3.start()
+            wait(lambda: worker3.isFinished(), 30)
+            app.processEvents()
+            check("la segunda vez entrega la estructura del índice sin recalcularla",
+                  again2.get(song) == full and calls == [] and steps3 == [(0, 0)])
+
+            # una fila antigua con structure NULL se reintenta, y se reutiliza el tono ya calculado
+            with library_db.connect() as con:
+                con.execute("UPDATE analysis SET structure=NULL WHERE path=?", (song,))
+            check("structure NULL cuenta como pendiente (pero vale si no se pide el audio)",
+                  track_analysis.stored(song, need_audio=True) is None and track_analysis.stored(song) is not None
+                  and track_analysis.stored(song)["structure"] is None)
+            calls.clear()
+            old_tone = dict(track_analysis.stored(song), tone="3B", tone_conf=0.7)
+            retried = track_analysis.analyze(song, previous=old_tone)
+            check("al reintentar se calcula la estructura (una vez), se reutiliza el tono y queda guardada",
+                  len(calls) == 1 and retried["structure"] == full["structure"] and retried["tone"] == "3B"
+                  and track_analysis.stored(song, need_audio=True)["structure"] == full["structure"])
+            # con la estructura ya buena (y rejilla ya hecha) en `previous`, no se recalcula
+            calls.clear()
+            kept = track_analysis.analyze(song, previous=track_analysis.stored(song))
+            check("si el análisis anterior ya la traía, se reutiliza sin calcular otra vez",
+                  calls == [] and kept["structure"] == full["structure"])
+            # `previous` incompleto: sin la rejilla intentada, se calcula de nuevo con la rejilla nueva
+            calls.clear()
+            incomplete = track_analysis.analyze(song, previous={"structure": full["structure"], "bpm": 120.0})
+            check("con un previous incompleto (sin rejilla) o vacío no falla y recalcula",
+                  len(calls) == 1 and track_analysis.structure_from(incomplete) is not None
+                  and track_analysis.analyze(song, previous={}) is not None)
+
+            # una versión vieja del JSON se recalcula
+            with library_db.connect() as con:
+                con.execute("UPDATE analysis SET structure=? WHERE path=?", ('{"v":0,"energy":[0.5],"events":[]}', song))
+            calls.clear()
+            check("un JSON de otra versión cuenta como pendiente", track_analysis.stored(song, need_audio=True) is None)
+            worker4 = track_analysis.AnalysisWorker([song])
+            emitted4 = []
+            worker4.result.connect(lambda p, r: emitted4.append(dict(r)))
+            worker4.start()
+            wait(lambda: worker4.isFinished(), 120)
+            app.processEvents()
+            check("el trabajador lo recalcula y entrega la versión nueva (primero la vieja, luego la buena)",
+                  len(calls) == 1 and len(emitted4) == 2 and emitted4[-1]["structure"] == full["structure"]
+                  and track_analysis.structure_from(emitted4[0]) is None
+                  and track_analysis.stored(song, need_audio=True)["structure"] == full["structure"])
+
+            # un fallo al calcular no rompe el análisis ni se reintenta eternamente
+            structure_mod.analyse = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("fallo de prueba"))
+            broken = track_analysis.analyze(song)
+            check("si falla la estructura, el resto del análisis sigue y queda como intentada sin resultado",
+                  broken is not None and broken["structure"] == "" and broken["loudness_db"] is not None
+                  and broken["tone"] is not None and track_analysis.structure_from(broken) is None
+                  and track_analysis.stored(song, need_audio=True) is not None)
+
+            # sin numpy para la estructura (available False) no se pide: no se reanaliza en bucle
+            structure_mod.analyse = real_analyse
+            with library_db.connect() as con:
+                con.execute("UPDATE analysis SET structure=NULL WHERE path=?", (song,))
+            real_available = structure_mod.available
+            structure_mod.available = lambda: False
+            try:
+                check("si no se puede calcular la estructura, su ausencia no cuenta como pendiente",
+                      track_analysis.stored(song, need_audio=True) is not None)
+                skipped = track_analysis.analyze(song)
+                check("y el análisis la deja sin intentar (None)", skipped is not None and skipped["structure"] is None)
+            finally:
+                structure_mod.available = real_available
+
+            # audio corto (menos de lo necesario): intentado y sin resultado, no se reintenta
+            short = os.path.join(folder, "corta.wav")
+            write_structure_wav(short, seconds=4, drop_s=2)
+            quick = track_analysis.analyze(short)
+            check("audio demasiado corto: structure es «» (intentado y sin nada) y no queda pendiente",
+                  quick is not None and quick["structure"] == "" and track_analysis.stored(short, need_audio=True) is not None)
+        finally:
+            structure_mod.analyse = real_analyse
+
+# ---- una base con la tabla `analysis` anterior (sin la columna structure) y con filas se actualiza
+import sqlite3
+from services import library_db as ldb, structure as structure_mod2
+
+for suffix in ("", "-wal", "-shm"):
+    try:
+        os.remove(str(ldb.DB_FILE) + suffix)
+    except OSError:
+        pass
+ldb._ready = False
+legacy = os.path.join(folder, "anterior.mp3")
+with open(legacy, "wb") as fh:
+    fh.write(b"x")
+cols = ("path TEXT PRIMARY KEY, mtime REAL NOT NULL, version INTEGER NOT NULL, bpm REAL, confidence REAL DEFAULT 0, "
+        "energy REAL DEFAULT 0, intro_ms INTEGER DEFAULT 0, outro_ms INTEGER DEFAULT 0, duration_ms INTEGER DEFAULT 0, tone TEXT, "
+        "tone_conf REAL DEFAULT 0, genre TEXT, artist TEXT, loudness_db REAL, brightness_hz REAL, flux REAL, beat_first_s REAL, "
+        "beat_bpm REAL, beat_downbeat INTEGER, beat_conf REAL")
+db = sqlite3.connect(str(ldb.DB_FILE))
+db.executescript(f"CREATE TABLE analysis ({cols}); PRAGMA user_version=2;")
+db.execute("INSERT INTO analysis(path, mtime, version, bpm, tone, tone_conf, loudness_db, energy, beat_conf) "
+           "VALUES (?, ?, ?, 126.0, '8A', 0.8, -8.0, 0.6, 0.0)", (legacy, os.path.getmtime(legacy), track_analysis.VERSION))
+db.commit()
+db.close()
+with ldb.connect() as con:
+    names = {row[1] for row in con.execute("PRAGMA table_info(analysis)")}
+    row = con.execute("SELECT bpm, tone, structure FROM analysis WHERE path=?", (legacy,)).fetchone()
+check("una base anterior gana la columna structure sin perder la fila (126 BPM, 8A, structure sin intentar)",
+      "structure" in names and row["bpm"] == 126.0 and row["tone"] == "8A" and row["structure"] is None)
+check("la fila vale si no se pide el audio y se reintenta si se puede calcular la estructura",
+      track_analysis.stored(legacy) is not None and track_analysis.stored(legacy)["structure"] is None
+      and (track_analysis.stored(legacy, need_audio=True) is None) == structure_mod2.available())
+ldb._ready = False
+with ldb.connect() as con:
+    check("repetir la migración no da error ni duplica columnas",
+          len([r for r in con.execute("PRAGMA table_info(analysis)") if r[1] == "structure"]) == 1)
 
 print("FIN")

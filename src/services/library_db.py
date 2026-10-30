@@ -60,7 +60,8 @@ CREATE TABLE IF NOT EXISTS analysis (
     beat_first_s REAL,
     beat_bpm REAL,
     beat_downbeat INTEGER,
-    beat_conf REAL
+    beat_conf REAL,
+    structure TEXT
 );
 CREATE TABLE IF NOT EXISTS transition_votes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -101,7 +102,8 @@ def _migrate(con) -> None:
     analysis_cols = {row[1] for row in con.execute("PRAGMA table_info(analysis)")}
     for name, definition in (("tone", "TEXT"), ("tone_conf", "REAL DEFAULT 0"), ("genre", "TEXT"), ("artist", "TEXT"),
                              ("loudness_db", "REAL"), ("brightness_hz", "REAL"), ("flux", "REAL"),
-                             ("beat_first_s", "REAL"), ("beat_bpm", "REAL"), ("beat_downbeat", "INTEGER"), ("beat_conf", "REAL")):
+                             ("beat_first_s", "REAL"), ("beat_bpm", "REAL"), ("beat_downbeat", "INTEGER"), ("beat_conf", "REAL"),
+                             ("structure", "TEXT")):
         if name not in analysis_cols:
             con.execute(f"ALTER TABLE analysis ADD COLUMN {name} {definition}")
     # v2: tabla transition_votes (votos de las transiciones del DJ). Se crea con el SCHEMA de arriba (IF NOT EXISTS), así que

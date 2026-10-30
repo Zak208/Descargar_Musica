@@ -1,17 +1,19 @@
 """Análisis de cada canción para el modo DJ: tempo (y lo fiable que es), cuánto dura la intro y cuánto el final, el tono
-(rueda Camelot, ver `key_detect`), la energía (ver `audio_features`), la rejilla de golpes (ver `beatgrid`) y el género y
-el artista de las etiquetas.
+(rueda Camelot, ver `key_detect`), la energía (ver `audio_features`), la rejilla de golpes (ver `beatgrid`), la estructura
+(subidas, caídas, parones, partes y voz estimada; ver `structure`) y el género y el artista de las etiquetas.
 
 El tempo, la intro y el final salen de la envolvente que ya se guarda para el visualizador (graves, medios y agudos cada
 0,1 s), así que no se vuelve a escuchar el audio si la canción ya sonó alguna vez; el tono, la energía y la rejilla de golpes sí
-necesitan decodificar la canción (una sola vez para los tres). Se calcula una vez por canción, en segundo plano, y se guarda en el
+necesitan decodificar la canción (una sola vez para los cuatro). Se calcula una vez por canción, en segundo plano, y se guarda en el
 índice de tu música; solo se repite si el archivo cambia (o si sube VERSION)."""
 import logging
 import os
+from functools import lru_cache
 
 from PySide6.QtCore import QThread, Signal
 
 from services import audio_features, beatgrid, envelope, key_detect, library_db, tempo
+from services import structure as structure_mod
 from services.mix_types import BeatGrid
 
 logger = logging.getLogger(__name__)
@@ -42,7 +44,8 @@ def analyze_envelope(data: bytes, genre: str = "") -> dict:
     La envolvente está normalizada canción a canción, así que no sirve para medir la energía: eso lo hace `audio_features`."""
     result = {"bpm": None, "confidence": 0.0, "energy": None, "intro_ms": 0, "outro_ms": 0, "duration_ms": 0,
               "tone": None, "tone_conf": 0.0,              # None = todavía no se ha intentado sacar el tono / medir el audio
-              "genre": "", "artist": "", "loudness_db": None, "brightness_hz": None, "flux": None}
+              "genre": "", "artist": "", "loudness_db": None, "brightness_hz": None, "flux": None,
+              "structure": None}                           # JSON de `structure` (None = sin intentar, "" = intentado y sin nada)
     if not data:
         return result
     energy = _smoothed_energy(data)
@@ -67,25 +70,51 @@ def analyze_envelope(data: bytes, genre: str = "") -> dict:
 
 
 FIELDS = ("bpm", "confidence", "energy", "intro_ms", "outro_ms", "duration_ms", "tone", "tone_conf", "genre", "artist",
-          "loudness_db", "brightness_hz", "flux", "beat_first_s", "beat_bpm", "beat_downbeat", "beat_conf")
+          "loudness_db", "brightness_hz", "flux", "beat_first_s", "beat_bpm", "beat_downbeat", "beat_conf", "structure")
 MIN_GRID_CONFIDENCE = 0.4       # por debajo, la rejilla de golpes no es de fiar: el planificador mezcla sin cuadrar compases
 
 
 def stored(path: str, mtime: float = None, need_audio: bool = False):
     """Análisis ya guardado (si el archivo no cambió), o None. Con `need_audio`, un análisis al que le falta el tono o las
     medidas de energía (se guardó cuando no se podían calcular: sin numpy o sin FFmpeg, o antes de que existieran) se da
-    por no hecho, para volver a intentarlo."""
+    por no hecho, para volver a intentarlo. Lo mismo con la rejilla y con la estructura (esta, también si es de una versión
+    vieja del cálculo)."""
     try:
         mtime = os.path.getmtime(path) if mtime is None else mtime
         with library_db.connect() as con:
             row = con.execute("SELECT * FROM analysis WHERE path=?", (path,)).fetchone()
         if row and abs(row["mtime"] - mtime) < 1 and row["version"] == VERSION:
-            if need_audio and (row["tone"] is None or row["loudness_db"] is None or row["beat_conf"] is None):
+            if need_audio and (row["tone"] is None or row["loudness_db"] is None or row["beat_conf"] is None
+                               or (structure_mod.available() and not _structure_current(row["structure"]))):
                 return None
             return {k: row[k] for k in FIELDS}
     except Exception:
         pass
     return None
+
+
+def _structure_current(text) -> bool:
+    """¿Está la estructura guardada hecha y con la versión actual del cálculo? (`""` vale: se intentó y no había nada). Mira solo
+    el comienzo del texto (`{"v":N,`, como lo escribe `structure.to_json`) para no leer miles de JSON al arrancar."""
+    return text == "" or (isinstance(text, str) and text.startswith(f'{{"v":{structure_mod.VERSION},'))
+
+
+@lru_cache(maxsize=128)
+def _parse_structure(text: str):
+    return structure_mod.from_json(text)
+
+
+def structure_from(result):
+    """La estructura de un análisis ya leída ({"energy", "bass", "vocal", "events", "sections"}; ver `structure.analyse`), o
+    None si no se calculó, no hay nada (audio corto o en silencio) o es de otra versión. Se guardan en memoria los últimos
+    resultados: es el mismo diccionario cada vez, así que quien lo use no debe modificarlo."""
+    try:
+        text = (result or {}).get("structure")
+        if not text or not isinstance(text, str):
+            return None
+        return _parse_structure(text)
+    except Exception:
+        return None
 
 
 def grid_from(result: dict):
@@ -160,6 +189,25 @@ def _add_audio_analysis(path: str, result: dict, previous: dict = None) -> None:
     result.update(features)
     result["energy"] = audio_features.energy_score(features)
     _add_beatgrid(samples, result)
+    _add_structure(samples, result, previous)
+
+
+def _add_structure(samples, result: dict, previous: dict = None) -> None:
+    """La estructura (fases 18 y 19 ligeras) con las mismas muestras y la rejilla recién calculada. Queda `""` si se intentó y
+    no hay nada (audio corto o en silencio) y None si no se pudo intentar (sin numpy). Si el análisis anterior ya la traía (con
+    la versión actual y con la rejilla ya hecha entonces) se reutiliza."""
+    if not structure_mod.available():
+        return
+    if previous and previous.get("beat_conf") is not None and previous.get("structure") is not None \
+            and _structure_current(previous["structure"]):
+        result["structure"] = previous["structure"]
+        return
+    try:
+        found = structure_mod.analyse(samples, grid_from(result))
+        result["structure"] = structure_mod.to_json(found) if found.get("energy") else ""
+    except Exception as e:                    # fallaría igual cada vez: se apunta como intentado, sin romper el análisis
+        logger.warning(f"No se pudo calcular la estructura: {e}")
+        result["structure"] = ""
 
 
 def _add_beatgrid(samples, result: dict) -> None:

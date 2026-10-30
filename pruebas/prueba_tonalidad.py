@@ -238,7 +238,7 @@ with open(fake, "wb") as fh:
     fh.write(b"x")
 base = {"bpm": 120.0, "confidence": 2.0, "energy": 0.5, "intro_ms": 1000, "outro_ms": 2000, "duration_ms": 180000,
         "genre": "Reggaeton", "artist": "Artista", "loudness_db": -7.0, "brightness_hz": 1500.0, "flux": 0.3,
-        "beat_conf": 0.0}
+        "beat_conf": 0.0, "structure": ""}
 track_analysis.save(fake, dict(base, tone=None, tone_conf=0.0))
 check("sin tono intentado: se da por hecho si no se pide el tono", track_analysis.stored(fake)["tone"] is None)
 check("y por no hecho si se puede calcular el tono (para reintentar)", track_analysis.stored(fake, need_audio=True) is None)
