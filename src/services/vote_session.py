@@ -12,7 +12,10 @@ Pasos (sin Qt; la ventana está en ui/vote_dialog.py):
     `epsilon` (10 %) de elección al azar para no encerrarse en una zona.
   * `render_clip(candidata)`: el clip con `mix_recorder.render_transition_clip` (la misma sesión del motor que toca en
     directo) y, si el tipo no es blend, la mezcla se rehace con `transition_types.render_typed` sobre los MISMOS trozos que
-    usó el motor (con su volumen igualado y su estiramiento: se recogen con un cargador espía). Se mide con
+    usó el motor (con su volumen igualado y su estiramiento: se recogen con un cargador espía) y con su mismo limitador
+    suave de salida. El motor del clip va con `typed=False` y sin puntuador, para que no cambie el tipo por su cuenta.
+    Diferencias con lo que tocaría el motor en directo con ese tipo: el plan no se retoca por tipo (`_audible_plan`) y la
+    cola del eco se apaga dentro de la mezcla en vez de seguir sobre el cuerpo de B. Se mide con
     `transition_scorer.score_audio` y se guarda en un wav temporal (caché pequeña: se borran los viejos).
   * `record_vote(candidata, voto, motivos)`: `transition_votes.add_vote(..., source="clip")` más el detalle para el modelo.
 
@@ -243,6 +246,19 @@ def prune_cache(cache_dir=None, keep: int = CACHE_KEEP, protect=()):
             pass
 
 
+def _soft_limit(np, x):
+    """El mismo limitador suave de salida que `audio_engine.MixEngine` (rodilla tanh desde 0,9): lo que se rehace fuera del
+    motor suena con la misma etapa final que el resto del clip."""
+    from services.audio_engine import LIMIT_THRESHOLD as t
+    x = np.nan_to_num(np.asarray(x, dtype=np.float32), nan=0.0, posinf=1.0, neginf=-1.0)
+    mag = np.abs(x)
+    over = mag > t
+    if over.any():
+        k = np.float32(1.0 - t)
+        x[over] = np.copysign(np.float32(t) + k * np.tanh((mag[over] - np.float32(t)) / k), x[over])
+    return x
+
+
 def render_clip(candidate: dict, cache_dir=None, context_s: float = CLIP_CONTEXT_S, protect=()) -> dict:
     """El clip de una candidata en un wav temporal. Devuelve una copia de la candidata con `clip_path`, `clip_s`, `plan` (el
     que usó el motor de verdad), `kind` (el tipo que suena: «cut» si el motor acabó cortando), `mix_start_s` / `mix_end_s`
@@ -265,8 +281,10 @@ def render_clip(candidate: dict, cache_dir=None, context_s: float = CLIP_CONTEXT
 
     a_path, b_path = candidate["a_path"], candidate["b_path"]
     a_info, b_info = candidate.get("a_info") or {}, candidate.get("b_info") or {}
+    # typed=False y sin puntuador: el motor hace la mezcla larga (o el corte) tal cual, sin elegir otro tipo por su cuenta;
+    # el tipo de la candidata se pone después sobre los mismos trozos
     clip = mix_recorder.render_transition_clip(a_path, b_path, a_info, b_info, context_s=context_s,
-                                               bars=int(candidate.get("bars") or 16), loader=spy)
+                                               bars=int(candidate.get("bars") or 16), loader=spy, typed=False, audio_check=None)
     audio = np.array(clip.audio, dtype=np.float32, copy=True)
     plan, sr = clip.plan, clip.sample_rate
     kind = candidate.get("kind") or transition_types.TYPE_BLEND
@@ -293,7 +311,7 @@ def render_clip(candidate: dict, cache_dir=None, context_s: float = CLIP_CONTEXT
             b_part = pieces[-1][:n]
         start = int(round(clip.mix_start_s * sr))
         if kind != transition_types.TYPE_BLEND:
-            mix = transition_types.render_typed(a_part, b_part, plan, kind, bpm=_bpm(a_info))
+            mix = _soft_limit(np, transition_types.render_typed(a_part, b_part, plan, kind, bpm=_bpm(a_info)))
             k = max(0, min(len(mix), len(audio) - start))
             audio[start:start + k] = mix[:k]
         mix_now = audio[start:start + n]
