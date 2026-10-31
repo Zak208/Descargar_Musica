@@ -1,0 +1,249 @@
+"""Diagnóstico (no es una prueba): calidad de las transiciones del motor del DJ con canciones REALES, antes y después de la
+integración (limitador, tipos de transición y puntuador). Analiza las canciones de la carpeta (solo lectura; datos aislados con
+_aislar), ordena la sesión con el orden inteligente (`dj_planner.plan`, varias semillas), hace sonar cada transición con la
+`EngineSession` real en silencio (`MixEngine.pull`, sin dispositivo) y la puntúa con `transition_scorer.score_audio`.
+
+Configuraciones:
+  ANTES    EngineSession(typed=False, audio_check=None) sobre MixEngine(limit=False): solo mezcla larga o corte limpio, sin
+           limitador (los arreglos de la fase 0 ya están y no se pueden quitar).
+  DESPUÉS  lo que hay por defecto: tipos de transición, puntuador ligero y limitador (bucles apagados).
+
+Cuenta: veredictos (ok, dudosa, descartar), clics, recorte (muestras > 1,0 en lo que sale), huecos de silencio, saltos de
+volumen, pico, muestras que tocó el limitador (> 0,9), tipos elegidos, % de mezclas que empiezan en un comienzo de frase de A
+(8 compases), duración media de la mezcla y tiempo de preparación (de que suena A a que la transición está lista).
+Criterio de aceptación (DESPUÉS): ninguna transición con clic, recorte > 0,1 % o hueco de silencio.
+
+Uso:  python pruebas/medir_calidad_mezcla.py [carpeta] [semillas]      (por omisión ~/Music/Canciones_YouTube y 3 semillas)"""
+import os
+import random
+import sys
+import time
+from collections import Counter
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+import _aislar  # noqa: F401  (datos temporales: no se tocan los del usuario)
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
+
+import numpy as np  # noqa: E402
+
+from services import dj_planner, mix_planner, pcm_loader, track_analysis, transition_scorer as ts, transition_types  # noqa: E402
+from services.audio_engine import MixEngine  # noqa: E402
+from services.dj_engine import EngineSession  # noqa: E402
+from services.mix_types import KIND_CUT, SAMPLE_RATE, BeatGrid, TransitionPlan  # noqa: E402
+
+SR = SAMPLE_RATE
+CONTEXT_S = 4.0                 # segundos antes y después de la mezcla que se sacan
+CUT_PIECE = int(0.5 * SR)
+
+
+def norm(p):
+    return os.path.normcase(os.path.normpath(p))
+
+
+def analyse_folder(folder):
+    names = sorted(f for f in os.listdir(folder) if f.lower().endswith((".mp3", ".m4a", ".flac", ".wav", ".ogg", ".opus")))
+    infos = {}
+    t0 = time.monotonic()
+    for name in names:
+        path = os.path.join(folder, name)
+        res = track_analysis.analyze(path)
+        if not res:
+            print(f"   (sin análisis: {name})", flush=True)
+            continue
+        info = dict(res)
+        info["beatgrid"] = track_analysis.grid_from(res)
+        info["structure"] = track_analysis.structure_from(res)
+        info["path"] = path
+        infos[norm(path)] = info
+    print(f"analizadas {len(infos)} de {len(names)} canciones en {time.monotonic() - t0:.0f} s", flush=True)
+    return infos
+
+
+def smart_orders(infos, seeds):
+    tracks = [dj_planner.Track(i, i.get("bpm"), i.get("tone") or None, i.get("tone_conf") or 0.0,
+                               i.get("energy") if i.get("loudness_db") is not None else None, i.get("genre") or "",
+                               i.get("artist") or "") for i in infos.values()]
+    pairs = []
+    for seed in seeds:
+        order = [t.ref["path"] for t in dj_planner.plan(tracks, rng=random.Random(seed))]
+        pairs += list(zip(order, order[1:]))
+    seen, out = set(), []
+    for a, b in pairs:                                      # las parejas repetidas entre semillas se miden una vez
+        if (norm(a), norm(b)) not in seen:
+            seen.add((norm(a), norm(b)))
+            out.append((a, b))
+    return out, len(pairs)
+
+
+def run_pair(a_path, b_path, infos, limit, **session_kw):
+    """Hace sonar la transición de A a B con la sesión real y devuelve un dict con lo medido (o None si no hubo plan)."""
+    eng = MixEngine(limit=limit)
+    sess = EngineSession(eng, lambda p: infos.get(norm(p), {}), lambda p: b_path if norm(p) == norm(a_path) else None,
+                         **session_kw)
+    try:
+        sess.play(a_path)
+        t0 = time.monotonic()
+        st = None
+        while time.monotonic() - t0 < 120:
+            st = sess.tick()
+            if st["plan"] is not None or (st["state"] == "stopped" and st["error"]):
+                break
+            time.sleep(0.01)
+        if st is None or st["plan"] is None:
+            return None
+        prep = sess.timings.get("ready", 0.0) - sess.timings.get("sound", 0.0)
+        with sess._lock:
+            p, a = sess._pair, sess._a
+            plan, kind, a_data, b_tr = p.plan, p.kind, a.data, p.b
+            a_mix, check = p.a_mix, dict(p.check)
+        cut = plan.kind == KIND_CUT
+        n = (len(p.x1) if p.x1 is not None else 0) + len(p.entry[0][0]) if cut else round(plan.length_s * SR)
+        # trozos de A y B que entraron en la mezcla (B estirada como la estira el motor)
+        ratio = float(plan.tempo_ratio_b or 1.0)
+        if cut:
+            k = len(p.x1) if p.x1 is not None else 0
+            a_part = a_data[a_mix:a_mix + k]
+            bs = p.b_cut
+            b_part = b_tr.data[bs:bs + n - k]
+            split = k
+        else:
+            a_part = a_data[a_mix:a_mix + n]
+            bs = round(plan.b_start_s * SR)
+            if abs(ratio - 1.0) < 1e-6:
+                b_part = b_tr.data[bs:bs + n]
+            else:
+                b_part = pcm_loader.load(b_path, tempo_ratio=ratio, start_s=plan.b_start_s, duration_s=plan.length_s * ratio)[:n]
+                b_part = b_part * np.float32(b_tr.gain)
+            split = (transition_types._cut_point(plan, n, SR) if kind in (transition_types.TYPE_CUT_BAR, transition_types.TYPE_ECHO_OUT)
+                     else n // 2)
+        # sonar desde unos segundos antes de la mezcla hasta unos segundos después
+        start = max(0, a_mix - int(CONTEXT_S * SR))
+        sess.seek(start / SR)
+        sess.tick()
+        total = (a_mix - start) + n + int(CONTEXT_S * SR)
+        parts, got = [], 0
+        while got < total:
+            before = eng.position_frames
+            chunk = eng.pull(min(4096, total - got))
+            k_ = eng.position_frames - before
+            if k_ <= 0:
+                break
+            parts.append(chunk[:k_])
+            got += k_
+            sess.tick()
+        audio = np.concatenate(parts) if parts else np.zeros((0, 2), np.float32)
+        m0 = a_mix - start
+        mix = audio[m0:m0 + n]
+        a_before, b_after = audio[max(0, m0 - 2 * SR):m0], audio[m0 + n:m0 + n + 2 * SR]
+        # se mide como lo que es: con corte en el compás o eco, un corte en `split`
+        grid_b = infos.get(norm(b_path), {}).get("beatgrid")
+        plan_s, ap, bp = plan, a_part, b_part
+        if cut or kind in (transition_types.TYPE_CUT_BAR, transition_types.TYPE_ECHO_OUT):
+            ap, bp = a_part[:split], b_part[split:] if not cut else b_part
+            plan_s = TransitionPlan(plan.a_start_s, plan.b_start_s, 0.0, 1.0, None, KIND_CUT, plan.reason)
+        ia, ib = infos.get(norm(a_path), {}), infos.get(norm(b_path), {})
+        res = ts.score_audio(mix, ap, bp, plan_s, ia.get("beatgrid"), grid_b if isinstance(grid_b, BeatGrid) else None,
+                             tone_a=ia.get("tone"), tone_b=ib.get("tone"), tone_conf_a=ia.get("tone_conf"),
+                             tone_conf_b=ib.get("tone_conf"), a_before=a_before, b_after=b_after)
+        m = res["metrics"]
+        whole = audio[max(0, m0 - SR):m0 + n + 3 * SR]       # lo que sale alrededor de la mezcla (con la cola del eco)
+        grid_a = ia.get("beatgrid")
+        on_phrase = None
+        if not cut and isinstance(grid_a, BeatGrid):
+            bar_f = grid_a.bar_at(plan.a_start_s)
+            on_phrase = abs(bar_f - round(bar_f)) < 0.05 and round(bar_f) % 8 == 0
+        return {"verdict": res["verdict"], "reasons": res["reasons"], "kind": kind if not cut else f"corte/{kind}",
+                "plan_kind": plan.kind, "length": 0.0 if cut else plan.length_s, "prep": prep,
+                "click": (m.get("click") or {}).get("note") == 0.0, "click_ratio": (m.get("click") or {}).get("value"),
+                "clip_frac": float((np.abs(whole) > 1.0).mean()) if len(whole) else 0.0,
+                "limited_frac": float((np.abs(whole) > 0.9).mean()) if len(whole) else 0.0,
+                "peak": float(np.abs(whole).max()) if len(whole) else 0.0,
+                "gap_ms": (m.get("silence_gap_ms") or {}).get("value") or 0.0,
+                "loud_db": (m.get("loudness_step_db") or {}).get("value"), "on_phrase": on_phrase, "check": check,
+                "reason": plan.reason, "a": os.path.basename(a_path), "b": os.path.basename(b_path)}
+    finally:
+        sess.stop(wait=True)
+
+
+def summary(name, rows):
+    n = len(rows)
+    if not n:
+        print(f"{name}: sin transiciones", flush=True)
+        return {}
+    v = Counter(r["verdict"] for r in rows)
+    kinds = Counter(r["kind"] for r in rows)
+    mixes = [r for r in rows if r["plan_kind"] != KIND_CUT]
+    phrased = [r["on_phrase"] for r in mixes if r["on_phrase"] is not None]
+    louds = [r["loud_db"] for r in rows if r["loud_db"] is not None]
+    out = {
+        "transiciones": n,
+        "ok / dudosa / descartar": f"{v['ok']} / {v['dudosa']} / {v['descartar']}",
+        "con clic (puntuador)": sum(r["click"] for r in rows),
+        "recorte > 0,1 % de muestras": sum(r["clip_frac"] > 1e-3 for r in rows),
+        "recorte medio (% muestras > 1,0)": f"{100 * np.mean([r['clip_frac'] for r in rows]):.3f}",
+        "limitador tocó (% muestras > 0,9)": f"{100 * np.mean([r['limited_frac'] for r in rows]):.2f}",
+        "pico máximo / medio": f"{max(r['peak'] for r in rows):.3f} / {np.mean([r['peak'] for r in rows]):.3f}",
+        "huecos >= 500 ms": sum(r["gap_ms"] >= 500 for r in rows),
+        "saltos de volumen >= 8 dB / >= 5 dB": f"{sum(x >= 8 for x in louds)} / {sum(x >= 5 for x in louds)}",
+        "salto de volumen máximo (dB)": f"{max(louds):.1f}" if louds else "-",
+        "tipos": ", ".join(f"{k} {c}" for k, c in kinds.most_common()),
+        "mezclas (no corte)": len(mixes),
+        "% mezclas que empiezan en frase de 8": f"{100 * sum(phrased) / len(phrased):.0f} %" if phrased else "-",
+        "duración media de la mezcla (s)": f"{np.mean([r['length'] for r in mixes]):.1f}" if mixes else "-",
+        "preparación media / máxima (s)": f"{np.mean([r['prep'] for r in rows]):.2f} / {max(r['prep'] for r in rows):.2f}",
+        "cambiadas por el puntuador": sum(bool(r["check"].get("swapped")) for r in rows),
+    }
+    return out
+
+
+def main():
+    folder = sys.argv[1] if len(sys.argv) > 1 else os.path.expanduser("~/Music/Canciones_YouTube")
+    seeds = list(range(1, 1 + (int(sys.argv[2]) if len(sys.argv) > 2 else 3)))
+    print(f"carpeta: {folder} (solo lectura); semillas: {seeds}", flush=True)
+    infos = analyse_folder(folder)
+    if len(infos) < 2:
+        print("no hay al menos dos canciones analizadas (¿FFmpeg?): no se puede medir", flush=True)
+        print("FIN", flush=True)
+        return
+    pairs, total = smart_orders(infos, seeds)
+    tempo_ok = sum(1 for a, b in pairs if (lambda r: r is not None and abs(r - 1) <= mix_planner.MAX_TEMPO_CHANGE)(
+        mix_planner.tempo_ratio(infos[norm(a)].get("bpm"), infos[norm(b)].get("bpm"))))
+    print(f"{len(pairs)} transiciones distintas ({total} con las repetidas); {tempo_ok} con tempos a menos del 8 %", flush=True)
+    configs = (("ANTES", dict(limit=False, typed=False, audio_check=None)), ("DESPUÉS", dict(limit=True)))
+    tables = {}
+    for name, kw in configs:
+        rows, t0 = [], time.monotonic()
+        for i, (a, b) in enumerate(pairs, 1):
+            try:
+                row = run_pair(a, b, infos, **kw)
+            except Exception as e:
+                print(f"   {name} {i}: error {type(e).__name__}: {e}", flush=True)
+                continue
+            if row is None:
+                print(f"   {name} {i}: sin plan", flush=True)
+                continue
+            rows.append(row)
+            flag = " CLIC" if row["click"] else ""
+            print(f"   {name} {i:2}/{len(pairs)} {row['a'][:26]:26} -> {row['b'][:26]:26} {row['kind']:16} {row['verdict']:9} "
+                  f"pico {row['peak']:.2f} salto {row['loud_db'] if row['loud_db'] is not None else '-'} dB{flag}", flush=True)
+        print(f"{name}: {len(rows)} transiciones en {time.monotonic() - t0:.0f} s", flush=True)
+        tables[name] = (summary(name, rows), rows)
+    keys = list(tables["ANTES"][0])
+    print("\n" + f"{'':42} {'ANTES':>22} {'DESPUÉS':>22}", flush=True)
+    for k in keys:
+        print(f"{k:42} {str(tables['ANTES'][0].get(k, '-')):>22} {str(tables['DESPUÉS'][0].get(k, '-')):>22}", flush=True)
+    after = tables["DESPUÉS"][1]
+    bad = [r for r in after if r["click"] or r["clip_frac"] > 1e-3 or r["gap_ms"] >= 500]
+    print("\nmotivos de «descartar» DESPUÉS:", flush=True)
+    for r in after:
+        if r["verdict"] == "descartar":
+            print(f"   {r['a'][:30]} -> {r['b'][:30]} ({r['kind']}): {'; '.join(r['reasons'])[:150]}", flush=True)
+    verdict = "NO (no se midió ninguna transición)" if not after else "SÍ" if not bad else f"NO ({len(bad)})"
+    print("\nACEPTACIÓN (DESPUÉS: sin clic, sin recorte > 0,1 % y sin huecos):", verdict, flush=True)
+    for r in bad:
+        print(f"   {r['a']} -> {r['b']}: clic={r['click']} recorte={r['clip_frac']:.4f} hueco={r['gap_ms']} ms", flush=True)
+    print("FIN", flush=True)
+
+
+if __name__ == "__main__":
+    main()

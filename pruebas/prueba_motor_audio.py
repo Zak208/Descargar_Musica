@@ -50,7 +50,7 @@ FADE = round(SAMPLE_RATE * audio_engine.FADE_MS / 1000.0)
 SINE_STEP = 2 * math.pi * 440.0 / SAMPLE_RATE * 0.8          # salto máximo natural entre muestras de la senoide de prueba
 
 # ---- concatenación exacta ----------------------------------------------------------------------------------------------
-eng = MixEngine()
+eng = MixEngine(limit=False)     # muestras numeradas (>1): sin limitador, para comparar exacto
 lengths = [5000, 1, 2, 3, 777, 1, 4096, 1024, 1, 9999]
 expected, start, ids = [], 0, []
 for i, n in enumerate(lengths):
@@ -82,7 +82,7 @@ check("lo que se encola con el motor ya en silencio entra en el siguiente bloque
       np.array_equal(late[:10], numbered(total, 10)) and not late[10:].any() and eng.position_frames == total + 10)
 
 # segmentos de 1 muestra uno detrás de otro, sacados de uno en uno
-e1 = MixEngine()
+e1 = MixEngine(limit=False)     # muestras numeradas (>1): sin limitador, para comparar exacto
 for i in range(50):
     e1.queue(numbered(i, 1))
 e1.play(fade=False)
@@ -101,7 +101,7 @@ except ValueError:
 check("pull(0) devuelve un array vacío sin fallar", mono.pull(0).shape == (0, 2))
 
 # ---- sustitución de la cola y salto ---------------------------------------------------------------------------------------
-q = MixEngine()
+q = MixEngine(limit=False)     # muestras numeradas (>1): sin limitador, para comparar exacto
 q.queue(numbered(0, 3000), "A")
 q.queue(numbered(100000, 3000), "B")
 q.play(fade=False)
@@ -111,7 +111,7 @@ rest = q.pull(5000)
 check("replace_queue: lo que suena sigue entero y después viene lo nuevo, sin hueco (B ya no suena)",
       np.array_equal(np.concatenate([first, rest[:4000]]), np.concatenate([numbered(0, 3000), numbered(200000, 2000)]))
       and not rest[4000:].any() and len(new_ids) == 1)
-q2 = MixEngine()
+q2 = MixEngine(limit=False)     # muestras numeradas (>1): sin limitador, para comparar exacto
 q2.queue(numbered(0, 3000))
 q2.queue(numbered(9000, 3000))
 q2.play(fade=False)
@@ -178,7 +178,7 @@ mid = p.pull(2000)
 check("pausar y reanudar a mitad de fundido tampoco hace clic", np.abs(np.diff(mid[:, 0])).max() <= SINE_STEP * 1.05)
 
 # ---- ganancia maestra con rampa ----------------------------------------------------------------------------------------
-g = MixEngine()
+g = MixEngine(limit=False)     # unos (>0,9): sin limitador, para ver la rampa exacta
 g.queue(np.ones((SAMPLE_RATE, 2), np.float32))
 g.play(fade=False)
 g.pull(100)
@@ -202,7 +202,7 @@ class _Status:
         return True
 
 
-c = MixEngine()
+c = MixEngine(limit=False)     # muestras numeradas (>1): sin limitador, para comparar exacto
 c.queue(numbered(0, 3000))
 c.play(fade=False)
 buf = np.empty((1024, 2), np.float32)
@@ -238,7 +238,7 @@ check("una notificación que falla no rompe las demás", n.dispatch_events() == 
 logging.getLogger("services.audio_engine").setLevel(logging.NOTSET)
 
 # ---- dos hilos a la vez: uno encola mientras el otro saca ------------------------------------------------------------------
-t = MixEngine()
+t = MixEngine(limit=False)     # muestras numeradas (>1): sin limitador, para comparar exacto
 t.play(fade=False)
 TOTAL = 400000
 feed_done = threading.Event()
@@ -272,7 +272,7 @@ saved = (audio_engine._sd_module, audio_engine._sd_checked, sys.modules.get("sou
 sys.modules["sounddevice"] = None            # hace que `import sounddevice` lance ImportError
 audio_engine._sd_module, audio_engine._sd_checked = None, False
 check("sin sounddevice, _sounddevice() devuelve None sin excepción", audio_engine._sounddevice() is None)
-nos = MixEngine()
+nos = MixEngine(limit=False)     # muestras numeradas (>1): sin limitador, para comparar exacto
 check("available() es False y start() devuelve False con el motivo", not audio_engine.available() and not nos.start()
       and "sounddevice" in nos.last_error)
 nos.queue(numbered(0, 10))
@@ -317,5 +317,58 @@ else:
               st["max_ms"] < st["budget_ms"] / 2)
         check(f"bloque {bs}: no ha salido ni una muestra con sonido (pico {st['peak_out']})", st["peak_out"] == 0.0)
         check(f"bloque {bs}: la posición avanzó unos 3 s", 2.5 < dev.position_s < 4.0)
+
+# ---- limitador suave de salida ---------------------------------------------------------------------------------------------
+lim = MixEngine()
+loud = sine(SAMPLE_RATE, freq=97.0, amp=1.8)                 # picos de 1,8 (dos canciones sumadas al límite)
+loud[1000:1010] = np.nan                                     # y algo roto
+lim.queue(loud)
+lim.play(fade=False)
+lo = lim.pull(SAMPLE_RATE)
+check(f"limitador: picos de 1,8 salen con |x| <= 1,0 y sin NaN (pico {np.nanmax(np.abs(lo)):.4f})",
+      np.isfinite(lo).all() and np.abs(lo).max() <= 1.0)
+ref = sine(SAMPLE_RATE, freq=97.0, amp=1.8)[:, 0].astype(np.float64)
+y = lo[:, 0].astype(np.float64)
+ok_idx = np.r_[2000:SAMPLE_RATE]
+check("limitador: la forma sigue a la original (mismo signo, crece con ella y sin saltos)",
+      np.all(np.sign(y[ok_idx]) == np.sign(ref[ok_idx]))
+      and np.all(np.diff(y[ok_idx])[np.diff(ref[ok_idx]) > 0] >= -1e-6)
+      and np.abs(np.diff(y[ok_idx])).max() <= np.abs(np.diff(ref[ok_idx])).max() + 1e-6)
+t_ = audio_engine.LIMIT_THRESHOLD
+check("limitador: por debajo del umbral no toca nada (muestras de hasta 0,9 idénticas)",
+      np.array_equal(y[ok_idx][np.abs(ref[ok_idx]) <= t_ - 1e-3], ref[ok_idx][np.abs(ref[ok_idx]) <= t_ - 1e-3].astype(np.float32)))
+small = MixEngine()
+quiet_sig = sine(SAMPLE_RATE, freq=440.0, amp=0.89)
+small.queue(quiet_sig)
+small.play(fade=False)
+check("limitador: una señal de 0,89 sale idéntica muestra a muestra", np.array_equal(small.pull(SAMPLE_RATE), quiet_sig)
+      and small.stats()["limited_blocks"] == 0)
+# continuidad en las uniones de bloques (bloques irregulares): el limitador no tiene memoria, así que da lo mismo
+lim2 = MixEngine()
+lim2.queue(sine(SAMPLE_RATE, freq=97.0, amp=1.8))
+lim2.play(fade=False)
+irregular = pull_irregular(lim2, SAMPLE_RATE, rng)
+check("limitador: igual con bloques irregulares que con uno solo (sin saltos en las uniones de bloques)",
+      np.allclose(irregular[2000:], lo[2000:], atol=1e-7))
+# coste en la llamada de audio: con señal que no pasa del umbral y con señal que pasa todo el rato
+costs = {}
+for name, amp in (("bajo el umbral", 0.5), ("todo por encima", 1.8)):
+    e = MixEngine()
+    e.queue(sine(SAMPLE_RATE * 20, freq=97.0, amp=amp))
+    e.play(fade=False)
+    buf = np.empty((1024, 2), np.float32)
+    for _ in range(400):
+        e._callback(buf, 1024, None, None)
+    costs[name] = e.stats()
+e = MixEngine(limit=False)
+e.queue(sine(SAMPLE_RATE * 20, freq=97.0, amp=1.8))
+e.play(fade=False)
+for _ in range(400):
+    e._callback(buf, 1024, None, None)
+costs["sin limitador"] = e.stats()
+print("INFO coste de la llamada de audio (bloque 1024, sin dispositivo): " + "; ".join(
+    f"{k}: media {v['mean_ms']:.4f} ms, máxima {v['max_ms']:.3f} ms" for k, v in costs.items()), flush=True)
+check("limitador: la llamada de audio sigue muy por debajo del presupuesto (media < 0,2 ms de 23,2 ms)",
+      all(v["mean_ms"] < 0.2 for v in costs.values()))
 
 print("FIN", flush=True)
