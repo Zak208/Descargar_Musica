@@ -372,6 +372,7 @@ def _polish(ordered, previous, wanted, rank, rng) -> list:
 RETARGET_SHIFT = 0.30           # «más / menos energía»: cuánto se mueve la posición de energía pedida respecto a la que suena
 RETARGET_RAMP = 3               # canciones en las que se llega a esa energía (subida o bajada gradual, no de golpe)
 RETARGET_HORIZON = 12           # canciones que se reordenan (unos 40 minutos); las demás siguen en el orden que tenían
+RETARGET_WEIGHT = 0.6           # peso extra de la energía pedida (si no, el azar de `_score` la tapa dentro del mismo escalón)
 
 
 def retarget(tracks, current, direction: int, rng=None, horizon: int = RETARGET_HORIZON, shift: float = RETARGET_SHIFT,
@@ -383,7 +384,8 @@ def retarget(tracks, current, direction: int, rng=None, horizon: int = RETARGET_
     La energía que se pide sale de la posición de `current` entre todas (la que suena y las que quedan): se desplaza `shift`
     hacia arriba o hacia abajo y se llega a ella en `ramp` canciones; luego se mantiene. Cada puesto se elige como en `plan`
     (los mismos escalones: primero las que se pueden mezclar sin cortar por tempo y de otro artista, y entre ellas por tempo,
-    tono, género y energía). Aquí no se pasa el repaso de `plan` (`_polish`): cambia energía por tono y aquí lo que se ha pedido
+    tono, género y energía), con dos cambios para que lo pedido se note: la energía pesa `RETARGET_WEIGHT` más, y una canción
+    que va al revés (más suave que la actual cuando se pide más) no entra en el primer escalón. Aquí no se pasa el repaso de `plan` (`_polish`): cambia energía por tono y aquí lo que se ha pedido
     es la energía; los escalones ya evitan los cortes por tempo mientras haya alguna que se pueda mezclar. Las canciones sin
     energía conocida van detrás de las que sí la tienen (no se sabe si suben o bajan). Lo que no entra en las `horizon`
     primeras se queda en su orden de antes, detrás. Con `direction` 0, sin canciones o sin `current`, devuelve la lista tal
@@ -414,7 +416,13 @@ def retarget(tracks, current, direction: int, rng=None, horizon: int = RETARGET_
             change = tempo_step(previous.bpm, candidate.bpm)
             score = _score(previous, candidate, target, rank, recent, rng, change)
             energy = rank(candidate.energy)
-            distance = WIDE_WINDOW + 0.01 if energy is None else abs(energy - target)
+            if energy is None:
+                distance = WIDE_WINDOW + 0.01
+            else:
+                distance = abs(energy - target)
+                if sign * (energy - start) < 0:          # va al revés de lo pedido: como mucho, en la ventana ancha
+                    distance = max(distance, ENERGY_WINDOW + 0.001)
+                score += RETARGET_WEIGHT * (1.0 - min(1.0, distance / 0.5))
             artist = _artist(candidate.artist)
             ok = change is None or -_STEP_UP <= change <= _STEP_DOWN
             tier = _tier(distance, ok, bool(artist and artist == last_artist))
