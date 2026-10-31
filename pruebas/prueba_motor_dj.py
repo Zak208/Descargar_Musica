@@ -98,6 +98,7 @@ class Rig:
         self.fake = FakeLoader(songs)
         self.eng = MixEngine()
         self.asked = []                 # (ruta pedida, ruta actual de la sesión, número de tick, hilo)
+        kw.setdefault("entry_gain", False)  # sin ganancia de entrada (prueba_motor_ganancia.py), para comparar exacto
         kw.setdefault("typed", False)  # la mezcla clásica, comparada muestra a muestra; los tipos: prueba_motor_tipos.py
         self.sess = EngineSession(self.eng, lambda p: info_of(songs, p), self._next_after, loader=self.fake,
                                   lufs_stored=lambda p: LUFS.get(p), lufs_measure=lambda p: LUFS.get(p), **kw)

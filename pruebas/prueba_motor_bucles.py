@@ -13,6 +13,7 @@ from services import dj_dsp, loops
 from services.mix_types import BeatGrid
 
 logging.getLogger("services.dj_engine").setLevel(logging.CRITICAL)
+bd.DEFAULTS["entry_gain"] = False     # se compara muestra a muestra; la ganancia de entrada: prueba_motor_ganancia.py
 
 
 def song(dur, freq, bpm, **kw):

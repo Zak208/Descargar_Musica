@@ -343,6 +343,51 @@ entre A y B que la mezcla larga tapaba; el puntuador solo cambia una mezcla por 
 (sin clic, sin recorte de más del 0,1 % y sin huecos): cumplido. `pruebas/medir_mezcla_real.py` (ventana real, en silencio, 3
 transiciones): un solo cambio de canción en cada paso, la que tocaba, sin que suene a la vez el reproductor de siempre.
 
+### Ganancia de entrada: saltos de volumen (`EngineSession(entry_gain=True)`, activa por defecto)
+
+`deck_gain` iguala el LUFS de la canción entera, pero lo último que suena de A (su final, a veces ya apagándose) y lo primero
+de B (su arranque) pueden diferir mucho, y los cortes, el corte en el compás y el eco lo dejan oír (hasta 18 dB). La sesión
+hace lo que un DJ con el mando de ganancia:
+
+- Mide el nivel de 400 ms a cada lado del momento en que entra B (sin contar los bloques de 50 ms por debajo de -50 dBFS) y
+  sube o baja B (de -12 a +6 dB, sin que su pico pase de 0,98). En un corte, lo que falte lo pone el final de A, llevado a su
+  ganancia (de -12 a +6 dB) en sus últimos 2 s con una curva de coseno en dB; para eso la pieza de A del corte pasa de 0,5 a
+  2 s. En una mezcla solo se sube B y solo desde 6 dB de diferencia: bajarla destaparía el final de A.
+- La ganancia de B vuelve a 1,0 en 8 s desde que B domina (coseno en dB). Se aplica a copias: el trozo de B de la mezcla y un
+  trozo «entry» con el principio del cuerpo de B (como la cola del eco). El cuerpo de B no se toca y la ganancia de volumen
+  igualado de la canción no cambia.
+- El corte no cae cuando A se está apagando (sus últimos 400 ms, 6 dB o más por debajo de los 6 s de antes): se adelanta
+  hasta donde A aún sonaba a su nivel. Y B no entra por una arrancada muy callada (sus primeros 400 ms, 6 dB por debajo de lo
+  que sigue): entra donde ya suena.
+- Una mezcla que pisaría el silencio digital del final de A (más de 0,5 s) se adelanta en frases de 8 compases (si no caben,
+  de 4, y si no, compases), para acabar donde A deja de sonar.
+- Lo que se aplicó queda en `_Pair.check` (`entry_gain_db`, `a_end_gain_db`). `entry_gain=False`: como antes.
+
+Medida (`pruebas/medir_calidad_mezcla.py`, 22 canciones reales, 3 semillas, 39 transiciones). BASE: `typed=False`, sin
+puntuador, sin limitador y sin ganancia. ANTES: todo lo de por defecto salvo la ganancia de entrada. Las dos columnas llevan ya
+el adelanto de la mezcla ante el silencio final de A, que no depende de `entry_gain`. Antes de este cambio, la tabla publicada
+daba 8 saltos de 8 dB o más y un máximo de 18,3 dB.
+
+| | BASE | ANTES | DESPUÉS |
+|---|---|---|---|
+| saltos de volumen >= 8 / >= 6 / >= 5 dB | 2 / 4 / 5 | 1 / 5 / 7 | 0 / 0 / 0 |
+| salto máximo | 14,8 dB | 12,2 dB | 4,0 dB |
+| (puntuador tal cual: >= 8 dB / máximo) | 4 / 14,8 dB | 7 / 18,3 dB | 0 / 6,4 dB |
+| con ganancia de entrada (media) | 0 | 0 | 17 (+3,7 dB) |
+| ok / dudosa / descartar | 12 / 12 / 15 | 14 / 15 / 10 | 24 / 12 / 3 |
+| clics / recorte > 0,1 % / huecos | 0 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 |
+| pico máximo | 0,943 | 0,838 | 0,868 |
+| mezclas que empiezan en frase de 8 | 85 % | 86 % | 86 % |
+| preparación media / máxima | 0,73 / 1,28 s | 0,68 / 1,61 s | 0,72 / 1,75 s |
+
+Cómo se mide el salto en un corte. El puntuador cuenta entero el cambio entre las ventanas de 400 ms que pisan el corte, y
+ahí entra también la dinámica propia de A: un golpe y su caída llegan a 9 dB entre dos ventanas del mismo compás (medido en
+un caso real, con niveles de 50 ms). El diagnóstico separa las dos cosas y da la mayor: el salto de A a B (nivel de 1 s a cada
+lado, sin silencio) y lo brusco que no sea ese cambio (el puntuador con el cambio de A a B ya contado como esperado). La fila
+«puntuador tal cual» da también la cifra sin esa separación. Además, el puntuador recibe los trozos tal como entraron en la
+mezcla, con su ganancia, que es lo que pide su documentación. Pruebas: `pruebas/prueba_motor_ganancia.py`. Que la vuelta
+de 8 s no se note es una hipótesis: no se ha oído.
+
 ### Rampa de vuelta al tempo original (fase 6, `EngineSession(tempo_ramp=True)`, APAGADA por defecto)
 
 Hoy B, estirada hasta ±8 % en la mezcla, vuelve a su tempo de golpe tras ella (empalme de 20 ms). La rampa pone antes del

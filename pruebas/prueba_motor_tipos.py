@@ -16,6 +16,7 @@ from services.deck_gain import deck_gain
 from services.mix_types import KIND_BLEND, KIND_CUT
 
 logging.getLogger("services.dj_engine").setLevel(logging.CRITICAL)
+bd.DEFAULTS["entry_gain"] = False     # se compara muestra a muestra; la ganancia de entrada: prueba_motor_ganancia.py
 T = transition_types
 
 

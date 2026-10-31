@@ -33,6 +33,13 @@ Cómo suena una canción A y cómo se pasa a la siguiente B (todo a precisión d
   * Silencios: un corte limpio no corta A cuando ya calla (se adelanta a donde deja de sonar) ni hace entrar B donde aún
     calla (entra donde empieza a sonar); con corte en el compás o eco, el corte se mueve al compás más cercano en que suenan
     las dos. Si aun así el corte en el compás deja un hueco, se cambia por la mezcla (la otra canción lo tapa).
+  * Ganancia de entrada (`entry_gain=True`, lo normal; ver docs/MOTOR_DJ.md): el volumen igualado es el de la canción entera,
+    pero lo último de A y lo primero de B pueden sonar muy distintos. Se mide el nivel de 400 ms a cada lado del momento en
+    que entra B (sin contar el silencio) y B se sube o se baja (de -12 a +6 dB); en un corte, lo que falte lo pone el final de
+    A, llevado en sus últimos 2 s. La ganancia de B vuelve a 1,0 en 8 s (coseno en dB), sobre copias: el cuerpo de B no se
+    toca. En una mezcla solo se sube B y solo desde 6 dB de diferencia. Un corte tampoco cae cuando A se está apagando (va
+    antes del apagado) ni hace entrar a B por una arrancada muy callada; y una mezcla que pisaría el silencio final de A se
+    adelanta.
   * Rampa de tempo (`tempo_ramp=True`; APAGADA por defecto, ver docs/MOTOR_DJ.md): tras una mezcla con B estirada, 3 tramos
     de 2 s con el tempo cada vez más cerca de 1,0 antes del cuerpo original, en vez del empalme directo de 20 ms.
   * Si cuando llega el plan el punto de mezcla cae dentro del trozo que ya suena y aún le faltan más de 0,25 s para llegar,
@@ -104,12 +111,24 @@ MIN_GAP_FRAMES = 4096           # en un corte tardío, el trozo de A que queda a
 TRUNC_GUARD_S = 0.25            # el trozo que suena se acorta en el punto de mezcla solo si aún le faltan 0,25 s para llegar
 FIT_TOL_S = 0.05                # la mezcla puede pasarse del final de A hasta 50 ms (redondeos del plan): se rellena con silencio
 TRUNCATED_TOL_S = 0.05          # una canción cargada hasta el tope del cargador (menos esto) se ha truncado si dura más
+SILENCE_SHIFT_MIN_S = 0.5       # una mezcla que pisa más de esto del silencio final de A se adelanta
 CHECK_CONTEXT_S = 2.0           # el puntuador mira también los 2 s de antes y de después de la mezcla (saltos de volumen)
 CHECK_CLICK_S = 0.05            # y busca clics en ±50 ms alrededor de cada unión de la mezcla
 AUDIO_CHECKS = ("light", "full")
 SILENCE_DB = -50.0              # 100 ms más flojos que esto (dBFS) son silencio: ni se corta A ni entra B en él
 SOUND_WIN_S = 0.1               # ventana con la que se mira si algo suena justo antes o justo después de un corte
 SOUND_SEARCH_S = 30.0           # hasta dónde se busca sonido antes del corte (A) o después de la entrada (B)
+TRIM_LEVEL_S = 0.4              # ganancia de entrada: nivel de lo último de A y de lo primero de B, 400 ms a cada lado del corte
+FADE_REF_S = 6.0                # A «se apaga» o B «empieza callada» frente a lo que suena en los 6 s de antes (A) o después (B)
+FADE_REL_DB = 6.0               # si queda 6 dB o más por debajo: el corte va antes del apagado / B entra donde ya suena
+TRIM_BLOCK_S = 0.05             # en bloques de 50 ms; los que están por debajo de SILENCE_DB no cuentan (silencio)
+TRIM_RAMP_S = 8.0               # la ganancia de B vuelve a 1,0 en 8 s desde que B domina (coseno en dB, sin escalón)
+TRIM_B_DB = (-12.0, 6.0)        # lo que se puede bajar o subir B
+TRIM_A_DB = (-12.0, 6.0)        # y lo que falte, el final de A (en un corte; en una mezcla A no se toca)
+TRIM_A_FADE_S = 2.0             # el final de A se lleva a su ganancia en los 2 s de antes del corte (coseno en dB)
+TRIM_MIN_DB = 1.0               # diferencias más pequeñas no se tocan
+TRIM_BLEND_DB = 6.0             # en una mezcla (las dos suenan a la vez) solo si la diferencia es grande, y solo B
+TRIM_PEAK = 0.98                # al subir B o A, que su pico no pase de esto (el limitador queda para lo excepcional)
 MAX_TRIES = 5                   # canciones seguidas que se intentan cargar como siguiente antes de rendirse
 INSTALL_TRIES = 8               # reintentos de cambiar la cola si la llamada de audio avanza a la vez
 
@@ -220,32 +239,102 @@ def _sounds(x) -> bool:
     return float(np.mean(np.square(x, dtype=np.float64))) > 10 ** (SILENCE_DB / 10.0)
 
 
-def _block_loud(x, block):
-    """Por cada bloque de `block` muestras de x: ¿suena (RMS por encima de `SILENCE_DB`)?"""
+def _gated_rms(x):
+    """RMS de x contando solo los bloques de 50 ms que suenan (por encima de `SILENCE_DB`), o None si nada suena."""
+    np = dj_dsp._np()
+    block = int(TRIM_BLOCK_S * SAMPLE_RATE)
+    k = len(x) // block
+    if k < 1:
+        return None
+    p = np.square(x[:k * block], dtype=np.float64).mean(axis=1).reshape(k, block).mean(axis=1)
+    p = p[p > 10 ** (SILENCE_DB / 10.0)]
+    return float(np.sqrt(p.mean())) if len(p) else None
+
+
+def _trim_curve(g0, split, total):
+    """Ganancia de entrada de B en la línea de la transición (muestra 0 = principio de la mezcla): `g0` hasta `split` (donde
+    B empieza a dominar) y de ahí a 1,0 en `TRIM_RAMP_S` (coseno en dB), y 1,0 después. float32 de `total` muestras."""
+    np = dj_dsp._np()
+    r = int(TRIM_RAMP_S * SAMPLE_RATE)
+    t = np.arange(total, dtype=np.float64) - split
+    u = np.clip(t / r, 0.0, 1.0)
+    db0 = 20.0 * math.log10(g0)
+    return (10.0 ** (db0 * (0.5 + 0.5 * np.cos(np.pi * u)) / 20.0)).astype(np.float32)
+
+
+def _fade_to(g, n):
+    """Ganancia de A en sus últimas n muestras antes del corte: de 1,0 a g (coseno en dB). float32."""
+    np = dj_dsp._np()
+    u = (np.arange(n, dtype=np.float64) + 1.0) / max(1, n)
+    db = 20.0 * math.log10(g)
+    return (10.0 ** (db * (0.5 - 0.5 * np.cos(np.pi * u)) / 20.0)).astype(np.float32)
+
+
+def _peak(*parts) -> float:
+    np = dj_dsp._np()
+    return max([float(np.abs(x).max()) for x in parts if len(x)] or [0.0])
+
+
+def _block_loud(x, block, thr_db=SILENCE_DB):
+    """Por cada bloque de `block` muestras de x: ¿suena (RMS por encima de `thr_db` dBFS)?"""
     np = dj_dsp._np()
     k = len(x) // block
     if k < 1:
         return np.zeros(0, dtype=bool)
     p = np.square(x[:k * block], dtype=np.float64).mean(axis=1).reshape(k, block).mean(axis=1)
-    return p > 10 ** (SILENCE_DB / 10.0)
+    return p > 10 ** (thr_db / 10.0)
 
 
-def _last_sound(data, end, search_s=SOUND_SEARCH_S):
-    """Muestra donde acaba el último bloque de 10 ms que suena antes de `end` (buscando `search_s` hacia atrás), o None."""
-    block = int(0.01 * SAMPLE_RATE)
+def _last_sound(data, end, search_s=SOUND_SEARCH_S, thr_db=SILENCE_DB, block_s=0.01):
+    """Muestra donde acaba el último bloque (10 ms) que suena por encima de `thr_db` antes de `end` (buscando `search_s`
+    hacia atrás), o None."""
+    block = int(block_s * SAMPLE_RATE)
     lo = max(0, end - int(search_s * SAMPLE_RATE))
     lo = end - (end - lo) // block * block
-    loud = _block_loud(data[lo:end], block)
+    loud = _block_loud(data[lo:end], block, thr_db)
     hits = loud.nonzero()[0]
     return None if not len(hits) else lo + (int(hits[-1]) + 1) * block
 
 
-def _first_sound(data, start, search_s=SOUND_SEARCH_S):
-    """Muestra donde empieza el primer bloque de 10 ms que suena desde `start` (buscando `search_s`), o None."""
-    block = int(0.01 * SAMPLE_RATE)
-    loud = _block_loud(data[start:start + int(search_s * SAMPLE_RATE)], block)
+def _first_sound(data, start, search_s=SOUND_SEARCH_S, thr_db=SILENCE_DB, block_s=0.01):
+    """Muestra donde empieza el primer bloque (10 ms) que suena por encima de `thr_db` desde `start` (buscando `search_s`),
+    o None."""
+    block = int(block_s * SAMPLE_RATE)
+    loud = _block_loud(data[start:start + int(search_s * SAMPLE_RATE)], block, thr_db)
     hits = loud.nonzero()[0]
     return None if not len(hits) else start + int(hits[0]) * block
+
+
+def _rms(x) -> float:
+    np = dj_dsp._np()
+    return float(np.sqrt(np.mean(np.square(x, dtype=np.float64)))) if len(x) else 0.0
+
+
+def _db(v):
+    return 20.0 * math.log10(v) if v else -120.0
+
+
+def _fading_end(data, c):
+    """Si A se apaga justo antes de c (sus últimos `TRIM_LEVEL_S` quedan más de `FADE_REL_DB` por debajo de lo que sonaba en
+    los segundos de antes), la muestra donde aún sonaba a su nivel (fin del último bloque de 50 ms a menos de `FADE_REL_DB`
+    de él); si no, None."""
+    lvl = int(TRIM_LEVEL_S * SAMPLE_RATE)
+    ref = _gated_rms(data[max(0, c - int(FADE_REF_S * SAMPLE_RATE)):max(0, c - lvl)])
+    last = _rms(data[max(0, c - lvl):c])                    # sin puerta: un silencio corto al final también cuenta
+    if ref is None or _db(last) >= _db(ref) - FADE_REL_DB:
+        return None
+    return _last_sound(data, c, FADE_REF_S, _db(ref) - FADE_REL_DB, TRIM_BLOCK_S)
+
+
+def _quiet_start(data, s):
+    """Si B empieza mucho más callada que lo que suena justo después (sus primeros `TRIM_LEVEL_S` más de `FADE_REL_DB` por
+    debajo de los segundos siguientes), la muestra donde llega a su nivel; si no, None."""
+    lvl = int(TRIM_LEVEL_S * SAMPLE_RATE)
+    ref = _gated_rms(data[s + lvl:s + int(FADE_REF_S * SAMPLE_RATE)])
+    first = _rms(data[s:s + lvl])                           # sin puerta: un silencio corto al principio también cuenta
+    if ref is None or _db(first) >= _db(ref) - FADE_REL_DB:
+        return None
+    return _first_sound(data, s, FADE_REF_S, _db(ref) - FADE_REL_DB, TRIM_BLOCK_S)
 
 
 def _max_minutes():
@@ -282,7 +371,7 @@ class EngineSession:
     """Sesión del DJ sobre un `MixEngine` (ver la explicación del módulo). El dueño del motor hace start()/stop() del flujo."""
 
     def __init__(self, engine, info_for, next_after, bars=16, loader=None, lead_s=45.0, lufs_stored=None, lufs_measure=None,
-                 typed=True, audio_check="light", loops=False, tempo_ramp=False):
+                 typed=True, audio_check="light", loops=False, tempo_ramp=False, entry_gain=True):
         if loader is None:
             from services import pcm_loader
             loader = pcm_loader.load
@@ -297,6 +386,7 @@ class EngineSession:
         self.audio_check = audio_check if audio_check in AUDIO_CHECKS else None
         self.loops = bool(loops)        # bucles de 4 u 8 compases antes de la mezcla (loops.needs_loop); ver docs/MOTOR_DJ.md
         self.tempo_ramp = bool(tempo_ramp)  # B vuelve a su tempo en 3 tramos de 2 s en vez de en el empalme de 20 ms
+        self.entry_gain = bool(entry_gain)  # ganancia de entrada de B igualada a lo último de A (ver docs/MOTOR_DJ.md)
         self._loader = loader
         self._lufs_stored = lufs_stored or _stored_lufs
         self._lufs_measure = lufs_measure or _measured_lufs
@@ -817,6 +907,8 @@ class EngineSession:
             plan = mix_points.cut(c / SAMPLE_RATE, plan.b_start_s,
                                   f"corte limpio al llegar al tope de {_max_minutes()} min que se carga de cada canción "
                                   "(el resto de la que suena no se carga)")
+        if plan.kind != KIND_CUT and plan.length_s > 0:
+            plan = self._before_silence(a, plan, grid_a)
         verdict = None
         if plan.kind != KIND_CUT and plan.length_s > 0 and self.audio_check:
             verdict = transition_scorer.score_plan(info_a, info_b, plan)
@@ -860,6 +952,31 @@ class EngineSession:
         pair.plan = dataclasses.replace(pair.plan, reason=f"{pair.plan.reason}; {why}")
 
     @staticmethod
+    def _before_silence(a, plan, grid_a):
+        """Si A se queda en silencio digital dentro de la mezcla (muchos mp3 acaban con segundos de silencio y el final del
+        análisis lo incluye), la mezcla se adelanta (compases enteros con rejilla) para que acabe donde A deja de sonar: si no,
+        la mitad de la mezcla sería B entrando sola y floja sobre un silencio (un bajón de volumen)."""
+        sr = SAMPLE_RATE
+        a_mix, n = round(plan.a_start_s * sr), round(plan.length_s * sr)
+        end = min(a_mix + n, a.frames)
+        last = _last_sound(a.data, end, plan.length_s)
+        if last is None or end - last < int(SILENCE_SHIFT_MIN_S * sr):
+            return plan
+        need = (end - last) / sr
+        low = max(0.0, a.frames / sr / 2.0)
+        shift = need
+        if grid_a is not None:                                  # frases de 8 compases si cabe, si no de 4, si no compases
+            for bars in (8, 4, 1):
+                shift = math.ceil(need / (bars * grid_a.bar_s) - 1e-9) * bars * grid_a.bar_s
+                if plan.a_start_s - shift >= low:
+                    break
+        start = plan.a_start_s - shift
+        if start < low:
+            return plan
+        return dataclasses.replace(plan, a_start_s=round(start, 3),
+                                   reason=f"{plan.reason}; adelantada {mix_points.fmt_seconds(shift)}: la que suena acaba en silencio")
+
+    @staticmethod
     def _bar_before(a, grid_a, end) -> int:
         """Muestra del comienzo de compás de A más cercano antes de `end` (a menos de un compás), o `end` sin rejilla."""
         if grid_a is None:
@@ -897,22 +1014,27 @@ class EngineSession:
         return dataclasses.replace(plan, reason=f"{plan.reason}; tipo: {why}") if why else plan
 
     @staticmethod
-    def _tail_entry(b, b_body, join, tail, t0, ratio):
+    def _tail_entry(b, b_body, join, tail, t0, ratio, gain=None):
         """Lo que suena tras la mezcla antes del cuerpo normal de B: el empalme del tramo estirado (`join`) y, si el tipo deja
-        cola (eco de salida), el principio del cuerpo de B con la cola SUMADA (copia: el cuerpo de B no se toca). Devuelve
+        cola (eco de salida) o hay ganancia de entrada (`gain`, una por muestra desde el final de la mezcla), el principio del
+        cuerpo de B con la ganancia aplicada y la cola SUMADA (copia: el cuerpo de B no se toca). Devuelve
         ([(array, etiqueta)], muestra de B donde sigue su cuerpo)."""
         np = dj_dsp._np()
         k_join = len(join) if join is not None else 0
         m = len(tail)
+        k_gain = len(gain) if gain is not None else 0
         only_join = ([(join, _Label(b.id, "entry", t0, ratio))], b_body + k_join) if k_join else ([], b_body)
-        length = min(max(m, k_join), b.frames - b_body)
-        if not m or length <= 0:
+        length = min(max(m, k_join, k_gain), b.frames - b_body)
+        if (not m and not k_gain) or length <= 0:
             return only_join
         post = np.empty((length, 2), dtype=np.float32)
         kj = min(k_join, length)
         if kj:
             post[:kj] = join[:kj]
         post[kj:] = b.data[b_body + kj:b_body + length]
+        kg = min(k_gain, length)
+        if kg:
+            post[:kg] *= gain[:kg, None]
         k = min(m, length)
         add = tail[:k]
         if k < m:                                               # B se acaba antes que el eco: que la cola baje a cero
@@ -944,17 +1066,40 @@ class EngineSession:
         kind, why = self._choose(ctx, plan)
         a_part = a.data[a_mix:a_mix + n]
         base_plan = plan
-        plan = self._audible_plan(base_plan, kind, a_part, piece, ctx)
-        x, tail = self._render(a_part, piece, plan, kind, ctx)
-        split = self._split(kind, plan, len(x))
+        raw_piece = piece
+
+        def make(kind):
+            """(plan, A y B en la mezcla con sus ganancias de entrada, mezcla, cola, split, (ganancia de B, de A), curva de B
+            tras la mezcla)."""
+            plan_k = self._audible_plan(base_plan, kind, a_part, raw_piece, ctx)
+            split_k = self._split(kind, plan_k, n)
+            lvl, fade = int(TRIM_LEVEL_S * sr), int(TRIM_A_FADE_S * sr)
+            together = kind in (transition_types.TYPE_BLEND, transition_types.TYPE_FILTER)
+            gains = self._entry_trim(a_part[max(0, split_k - lvl):split_k], raw_piece[split_k:split_k + lvl], together,
+                                     (raw_piece[split_k:], b.data[b_body:b_body + int(TRIM_RAMP_S * sr)]),
+                                     (a_part[max(0, split_k - fade):split_k],))
+            a_k, piece_k, post_gain = a_part, raw_piece, None
+            if gains[0] != 1.0:
+                curve = _trim_curve(gains[0], split_k, max(n, split_k + int(TRIM_RAMP_S * sr)))
+                piece_k = raw_piece * curve[:len(raw_piece), None]
+                post_gain = curve[n:] if len(curve) > n else None
+            if gains[1] != 1.0:                                 # el final de A, en los 2 s de antes del corte, y luego nada
+                lo_f = max(0, split_k - fade)
+                a_k = a_part.copy()
+                a_k[lo_f:split_k] *= _fade_to(gains[1], split_k - lo_f)[:, None]
+                a_k[split_k:] *= np.float32(gains[1])
+            x_k, tail_k = self._render(a_k, piece_k, plan_k, kind, ctx)
+            return plan_k, a_k, piece_k, x_k, tail_k, split_k, gains, post_gain
+
+        np = dj_dsp._np()
+        plan, a_used, piece, x, tail, split, gains, post_gain = make(kind)
         check = {}
         if self.audio_check:
             t0 = time.perf_counter()
             k = int(CHECK_CONTEXT_S * sr)
-            after = b.data[b_body:b_body + k]
-            if join is not None:                                # lo que suena de verdad tras la mezcla: el empalme y el cuerpo
-                after = dj_dsp._np().concatenate((join, b.data[b_body + len(join):b_body + k]))
-            bad = self._audio_problems(x, a_part, piece, plan, kind, split, ctx, a.data[max(0, a_mix - k):a_mix], after)
+            # lo que suena de verdad tras la mezcla: el empalme y el cuerpo, con la ganancia de entrada
+            after = self._after_mix(b, b_body, join, k, post_gain)
+            bad = self._audio_problems(x, a_used, piece, plan, kind, split, ctx, a.data[max(0, a_mix - k):a_mix], after)
             check = {"audio": bad}
             new = None
             if bad and kind != transition_types.TYPE_CUT_BAR:
@@ -965,22 +1110,21 @@ class EngineSession:
                 old, kind = kind, new
                 what = "corte en el compás" if new == transition_types.TYPE_CUT_BAR else "mezcla"
                 why = f"{what}: el puntuador descartó «{old}» ({'; '.join(bad)})"
-                plan = self._audible_plan(base_plan, kind, a_part, piece, ctx)
-                x, tail = self._render(a_part, piece, plan, kind, ctx)
-                split = self._split(kind, plan, len(x))
+                plan, a_used, piece, x, tail, split, gains, post_gain = make(kind)
                 check["swapped"] = old
             check["seconds"] = round(time.perf_counter() - t0, 4)
-        del piece, a_part
+        piece = a_part = raw_piece = a_used = None             # se sueltan (make los usa por cierre)
+        self._note_gains(check, gains)
         x1_label = _Label(a.id, "x1", a_mix / sr, 1.0, a_mix)
         entry = [(x[split:], _Label(b.id, "entry", plan.b_start_s + split * ratio / sr, ratio))]
         ramp = None
-        if join is not None and self.tempo_ramp and not len(tail):
+        if join is not None and self.tempo_ramp and not len(tail) and post_gain is None:
             ramp = self._ramp_entry(b, join_tail, plan.b_start_s + plan.length_s * ratio, ratio)
         if ramp is not None:
             entry += ramp[0]
             b_body = ramp[1]
         else:
-            more, b_body = self._tail_entry(b, b_body, join, tail, plan.b_start_s + n * ratio / sr, ratio)
+            more, b_body = self._tail_entry(b, b_body, join, tail, plan.b_start_s + n * ratio / sr, ratio, post_gain)
             entry += more
         for i, (_, lab) in enumerate(entry):
             lab.idx = i
@@ -988,6 +1132,52 @@ class EngineSession:
         pair = _Pair(b, plan, a_mix, x[:split], x1_label, entry, b_body, bs, ctx.grid_a, ctx, kind)
         pair.check = check
         return pair, None
+
+    def _entry_trim(self, a_end, b_start, together, b_parts, a_parts):
+        """(ganancia de B, ganancia del final de A), como el mando de ganancia de un DJ: el nivel de lo último que suena de A
+        (`a_end`) y el de lo primero de B (`b_start`, ya con su volumen igualado), sin contar el silencio, deben quedar iguales.
+        Primero se mueve B (entre -12 y +6 dB, sin que su pico en `b_parts` pase de `TRIM_PEAK`) y lo que falte, el final de A
+        (entre -12 y +6 dB, con el mismo tope en `a_parts`). En una mezcla (`together`, las dos suenan a la vez) solo B y solo
+        desde `TRIM_BLEND_DB`. (1, 1) si está apagada, si A ya calla, si B calla o si la diferencia es pequeña."""
+        if not self.entry_gain:
+            return 1.0, 1.0
+        la, lb = _gated_rms(a_end), _gated_rms(b_start)
+        if la is None or lb is None:
+            return 1.0, 1.0
+        diff = 20.0 * math.log10(la / lb)                       # positivo: B entra más floja que lo que acaba de A
+        if abs(diff) < TRIM_MIN_DB or (together and diff < TRIM_BLEND_DB):
+            return 1.0, 1.0                                     # en una mezcla B solo se sube (bajarla destaparía el final de A)
+        db_b = min(max(diff, TRIM_B_DB[0]), TRIM_B_DB[1])
+        if db_b > 0:
+            pb = _peak(*b_parts)
+            if pb > 0:
+                db_b = min(db_b, max(0.0, 20.0 * math.log10(TRIM_PEAK / pb)))
+        db_a = 0.0 if together else min(max(db_b - diff, TRIM_A_DB[0]), TRIM_A_DB[1])
+        if db_a > 0:
+            pa = _peak(*a_parts)
+            if pa > 0:
+                db_a = min(db_a, max(0.0, 20.0 * math.log10(TRIM_PEAK / pa)))
+        return (10.0 ** (db_b / 20.0) if abs(db_b) >= 0.1 else 1.0), (10.0 ** (db_a / 20.0) if abs(db_a) >= 0.1 else 1.0)
+
+    @staticmethod
+    def _note_gains(check, gains):
+        if gains[0] != 1.0:
+            check["entry_gain_db"] = round(20.0 * math.log10(gains[0]), 2)
+        if gains[1] != 1.0:
+            check["a_end_gain_db"] = round(20.0 * math.log10(gains[1]), 2)
+
+    @staticmethod
+    def _after_mix(b, b_body, join, k, gain):
+        """Los primeros k muestras que suenan tras la mezcla (empalme y cuerpo de B), con la ganancia de entrada si la hay."""
+        np = dj_dsp._np()
+        after = b.data[b_body:b_body + k]
+        if join is not None:
+            after = np.concatenate((join, b.data[b_body + len(join):b_body + k]))
+        if gain is not None and len(gain):
+            after = after.copy()
+            kg = min(len(gain), len(after))
+            after[:kg] *= gain[:kg, None]
+        return after
 
     @staticmethod
     def _audible_plan(plan, kind, a_part, b_part, ctx):
@@ -1001,7 +1191,8 @@ class EngineSession:
         win = int(SOUND_WIN_S * sr)
 
         def ok(c):
-            return _sounds(a_part[max(0, c - win):c]) and _sounds(b_part[c:c + win])
+            return (_sounds(a_part[max(0, c - win):c]) and _sounds(b_part[c:c + win])
+                    and _fading_end(a_part, c) is None and _quiet_start(b_part, c) is None)
 
         c = transition_types._cut_point(plan, n, sr)
         if ok(c):
@@ -1183,6 +1374,14 @@ class EngineSession:
             if first is not None and first + int(MIN_CHUNK_S * sr) < b.frames:
                 bs = max(0, first - int(0.01 * sr))
                 moved.append("la que entra empezaba en silencio")
+        end = _fading_end(a.data, c) if self.entry_gain else None
+        if end is not None and lo_min < end < c:                           # A se apagaba: se corta antes del apagado
+            c = end
+            moved.append("la que suena se estaba apagando")
+        first = _quiet_start(b.data, bs) if self.entry_gain else None
+        if first is not None and first > bs and first + int(MIN_CHUNK_S * sr) < b.frames:
+            bs = first                                                     # B arrancaba muy callada: entra donde ya suena
+            moved.append("la que entra arrancaba muy callada")
         lo = max(lo_min, c - piece)
         if plan.kind != KIND_CUT:
             plan = TransitionPlan(c / sr, bs / sr, 0.0, 1.0, None, KIND_CUT, plan.reason)
@@ -1190,17 +1389,33 @@ class EngineSession:
             plan = dataclasses.replace(plan, a_start_s=round(c / sr, 3), b_start_s=round(bs / sr, 3),
                                        reason=f"{plan.reason}; corte movido: {' y '.join(moved)}")
         kind, why = self._choose(ctx, plan)
-        x, tail = self._render(a.data[lo:c], b.data[bs:bs + piece], plan, kind, ctx)
+        b_part = b.data[bs:bs + piece]
+        lvl, fade = int(TRIM_LEVEL_S * sr), int(TRIM_A_FADE_S * sr)
+        gains = self._entry_trim(a.data[max(0, c - lvl):c], b.data[bs:bs + lvl], False,
+                                 (b.data[bs:bs + int(TRIM_RAMP_S * sr)],), (a.data[max(lo_min, c - fade):c],))
+        if gains[1] != 1.0:
+            lo = max(lo_min, c - fade)                          # el final de A va en la pieza del corte para poder bajarlo
         k = c - lo
+        a_piece = a.data[lo:c]
+        if gains[1] != 1.0:
+            a_piece = a_piece * _fade_to(gains[1], k)[:, None]
+        post_gain = None
+        if gains[0] != 1.0:
+            curve = _trim_curve(gains[0], k, k + len(b_part) + int(TRIM_RAMP_S * sr))
+            b_part = b_part * curve[k:k + len(b_part), None]
+            post_gain = curve[k + len(b_part):]
+        x, tail = self._render(a_piece, b_part, plan, kind, ctx)
         x1 = x[:k] if k else None
         entry = [(x[k:], _Label(b.id, "entry", bs / sr, 1.0))]
         b_body = bs + (len(x) - k)
-        more, b_body = self._tail_entry(b, b_body, None, tail, b_body / sr, 1.0)
+        more, b_body = self._tail_entry(b, b_body, None, tail, b_body / sr, 1.0, post_gain)
         entry += more
         for i, (_, lab) in enumerate(entry):
             lab.idx = i
-        return _Pair(b, self._typed_plan(plan, why), lo, x1, _Label(a.id, "x1", lo / sr, 1.0, lo), entry, b_body, bs,
+        pair = _Pair(b, self._typed_plan(plan, why), lo, x1, _Label(a.id, "x1", lo / sr, 1.0, lo), entry, b_body, bs,
                      ctx.grid_a if ctx else None, ctx, kind)
+        self._note_gains(pair.check, gains)
+        return pair
 
     def _late_cut_locked(self, f):
         """El plan llegó tarde (lo que suena ya pasa del punto de mezcla): corte limpio en el siguiente compás tras f."""
