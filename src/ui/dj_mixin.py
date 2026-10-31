@@ -329,6 +329,7 @@ class DjMixin:
         start.triggered.connect(self.start_dj_session)
         start.setEnabled(summary is None or bool(dj_service.tracks_for(summary, source)))
         menu.addAction(icon("sliders.svg"), "Abrir la página DJ").triggered.connect(self.open_dj_page)
+        menu.addAction(icon("play.svg"), "Modo fiesta (botones grandes)").triggered.connect(self.open_party_page)
         if self.dj_recording():
             menu.addAction("Cancelar la grabación del mix").triggered.connect(self.dj_record_cancel)
         else:
