@@ -47,7 +47,7 @@ class FakeLoader:
         ph = t % (60.0 / s["bpm"])
         env = np.where(ph < 0.15, np.sin(np.pi * ph / 0.15) ** 2, 0.0)
         amp = s.get("amp", 0.3)
-        v = (amp * np.sin(2 * np.pi * s["freq"] * t) + 0.2 * env * np.sin(2 * np.pi * 60.0 * t)).astype(np.float32)
+        v = (amp * np.sin(2 * np.pi * s["freq"] * t) + s.get("bump", 0.2) * env * np.sin(2 * np.pi * 60.0 * t)).astype(np.float32)
         for a, b in s.get("silence", ()):              # tramos en silencio digital (principio o final de un mp3)
             v[int(a * SR):int(b * SR)] = 0.0
         return np.stack([v, v], axis=1)
@@ -91,6 +91,7 @@ def info_of(songs, path):
 
 
 LUFS = {"A": -17.0, "B": -11.0, "C": -14.0}
+DEFAULTS = {}                   # parámetros de la sesión que una prueba fija para todos sus Rig (p. ej. entry_gain=False)
 
 
 class Rig:
@@ -102,6 +103,8 @@ class Rig:
         self.eng = MixEngine()
         self.asked = []
         self.info = info or (lambda p: info_of(songs, p))
+        for k, v in DEFAULTS.items():
+            kw.setdefault(k, v)
         self.sess = EngineSession(self.eng, lambda p: self.info(p), self._next_after, loader=self.fake,
                                   lufs_stored=lambda p: LUFS.get(p), lufs_measure=lambda p: LUFS.get(p), **kw)
         self.out, self.frames, self.since, self.ticks = [], 0, 0, 0
