@@ -335,6 +335,7 @@ class DjMixin:
             record = menu.addAction("Grabar lo que queda de la sesión en un archivo…")
             record.triggered.connect(self.dj_record_ask)
             record.setEnabled(self.dj_session_active())
+        menu.addAction("Sesión de votos (escuchar mezclas y votar)…").triggered.connect(self.open_vote_session)
         menu.addAction(icon("refresh.svg"), "Volver a leer la carpeta").triggered.connect(self._reread_dj_folder)
         menu.addAction(icon("folder.svg"), "Abrir la carpeta en el explorador").triggered.connect(
             lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(root)))
