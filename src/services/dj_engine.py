@@ -13,8 +13,40 @@ Cómo suena una canción A y cómo se pasa a la siguiente B (todo a precisión d
     `b_start_s + length_s * tempo_ratio_b` (en su tiempo original).
   * Un corte limpio (KIND_CUT, o una mezcla imposible) se encola igual, en dos piezas de 0,5 s: el final de A con su rampa de
     bajada de 5 ms y el principio de B con su rampa de subida (las hace `render_transition` con el plan de corte).
-  * Plan tardío: si cuando llega el plan el trozo que suena ya pasa del punto de mezcla, se hace un corte limpio en el primer
+  * Tipos de transición (`typed=True`, lo normal; ver `transition_types`): `choose_type(ficha A, ficha B, plan, BPM de A)`
+    decide entre mezcla larga (blend, la de siempre), corte en el compás (cut_bar), eco de salida (echo_out) y filtro (filter);
+    su regla de seguridad manda (rejillas poco fiables o tempo a más del 5 % nunca dan una mezcla larga). La mezcla mide lo
+    mismo en todos los tipos y B no se desplaza, así que todo lo demás (cuerpo de B, empalme, posiciones) no cambia. Con
+    cut_bar y echo_out B suena sola desde el corte (`plan.bass_swap_at`): la mezcla se parte ahí (y no en la mitad) para que
+    `advanced` salga cuando entra B. La cola del eco (lo que suena después de la mezcla) se SUMA al principio del cuerpo de B
+    en una copia: se encola un trozo «entry» con el empalme del tramo estirado (si lo hay), el cuerpo de B desde `b_body` y la
+    cola encima, y el cuerpo normal sigue detrás. En un corte (plan de corte, corte por mezcla imposible o tardío) solo cabe
+    cut_bar (el corte limpio de siempre) o echo_out (tempos lejanos o final brusco, con el tempo de A). El tipo se añade al
+    motivo del plan («; tipo: ...») y al estado (`transition_type`). `typed=False`: exactamente lo de antes.
+  * Puntuador (`audio_check="light"`, lo normal; ver docs/MOTOR_DJ.md): antes de renderizar, `transition_scorer.score_plan`;
+    si dice «descartar», corte limpio con su motivo. Después de renderizar una mezcla en la que suenan las dos, si hay clic
+    en una unión, recorte, hueco o salto de volumen (umbrales del puntuador), se cambia por un corte en el compás en vez de
+    retocarla. Unos 0,1 s por mezcla de 32 s, en el hilo de trabajo. `audio_check="full"` usa `score_audio` entero.
+  * Bucles (`loops=True`; APAGADO por defecto, ver docs/MOTOR_DJ.md): si `loops.needs_loop` lo pide, A suena hasta
+    `loop_start`, repite sus 4 compases de antes del punto de mezcla (segmentos «loop» de `loops.extend_body`) y la mezcla, la
+    misma y desde la misma muestra de A, llega `loop_bars` compases más tarde. Con el bucle sonando, B ya no se cambia.
+  * Silencios: un corte limpio no corta A cuando ya calla (se adelanta a donde deja de sonar) ni hace entrar B donde aún
+    calla (entra donde empieza a sonar); con corte en el compás o eco, el corte se mueve al compás más cercano en que suenan
+    las dos. Si aun así el corte en el compás deja un hueco, se cambia por la mezcla (la otra canción lo tapa).
+  * Rampa de tempo (`tempo_ramp=True`; APAGADA por defecto, ver docs/MOTOR_DJ.md): tras una mezcla con B estirada, 3 tramos
+    de 2 s con el tempo cada vez más cerca de 1,0 antes del cuerpo original, en vez del empalme directo de 20 ms.
+  * Si cuando llega el plan el punto de mezcla cae dentro del trozo que ya suena y aún le faltan más de 0,25 s para llegar,
+    el motor acorta ese trozo justo en él (`MixEngine.truncate_current`): no hace falta que el trozo acabe antes (canciones
+    de 20 s, o `play(start_s)` cerca del final).
+  * Plan tardío: si cuando llega el plan lo que suena ya pasa del punto de mezcla, se hace un corte limpio en el primer
     comienzo de compás de A que deje sitio a la pieza de 0,5 s tras el final de ese trozo (o justo ahí si no hay rejilla).
+  * Una mezcla que no se puede hacer (el audio no cuadra con el análisis) pasa a corte limpio en el compás de donde la mezcla
+    habría acabado (A ya se habría ido), no en su principio: no se tira el final de A. El plan puede pasarse del final de A
+    hasta 50 ms (redondeos): lo que falta se rellena con silencio, con la rampa de `render_transition`.
+  * Canción más larga que el tope del cargador (`pcm_loader.MAX_SECONDS`, 8 min): se carga hasta el tope y su final no existe
+    en lo cargado. Si lo cargado llega al tope y el análisis dice que dura más (o no lo dice), se marca `truncated`, el final
+    se toma como «de golpe» y la transición es un corte limpio en el último compás antes del tope, con ese motivo. La barra
+    muestra la duración cargada (8:00).
   * Si A se acaba antes de que esté lista B (preparación lentísima), B entra con su rampa de subida en cuanto llega.
 
 Hilos: un solo hilo de trabajo con una cola de tareas («cargar A», «preparar B»). Cada tarea lleva la generación de la sesión
@@ -50,6 +82,7 @@ Mediciones (pruebas/prueba_motor_dj.py, Windows 11, CPU compartida; cargador rea
     guardado), estirar 32 s de B con rubberband (tempo 0,9615) y `render_transition` de 32 s.
   * Con el cargador falso y un hilo que saca audio 20 veces más deprisa que el tiempo real mientras la interfaz hace replan
     cada 0,35 s y algún seek: sin huecos, repeticiones ni clics, y nunca más de 2 canciones enteras en memoria."""
+import dataclasses
 import itertools
 import logging
 import math
@@ -58,7 +91,7 @@ import queue as _queue
 import threading
 import time
 
-from services import dj_dsp, mix_planner, mix_points
+from services import dj_dsp, dj_fx, loops, mix_planner, mix_points, transition_scorer, transition_types
 from services.mix_types import KIND_CUT, SAMPLE_RATE, BeatGrid, TransitionPlan
 
 log = logging.getLogger(__name__)
@@ -68,10 +101,25 @@ MIN_CHUNK_S = 1.0               # un último trozo más corto se junta con el an
 CUT_PIECE_S = 0.5               # piezas del corte limpio (A con rampa de bajada, B con rampa de subida)
 JOIN_S = 0.020                  # con tempo estirado, fundido lineal entre el final del tramo estirado y el cuerpo original de B
 MIN_GAP_FRAMES = 4096           # en un corte tardío, el trozo de A que queda antes no puede ser más corto que esto
+TRUNC_GUARD_S = 0.25            # el trozo que suena se acorta en el punto de mezcla solo si aún le faltan 0,25 s para llegar
+FIT_TOL_S = 0.05                # la mezcla puede pasarse del final de A hasta 50 ms (redondeos del plan): se rellena con silencio
+TRUNCATED_TOL_S = 0.05          # una canción cargada hasta el tope del cargador (menos esto) se ha truncado si dura más
+CHECK_CONTEXT_S = 2.0           # el puntuador mira también los 2 s de antes y de después de la mezcla (saltos de volumen)
+CHECK_CLICK_S = 0.05            # y busca clics en ±50 ms alrededor de cada unión de la mezcla
+AUDIO_CHECKS = ("light", "full")
+SILENCE_DB = -50.0              # 100 ms más flojos que esto (dBFS) son silencio: ni se corta A ni entra B en él
+SOUND_WIN_S = 0.1               # ventana con la que se mira si algo suena justo antes o justo después de un corte
+SOUND_SEARCH_S = 30.0           # hasta dónde se busca sonido antes del corte (A) o después de la entrada (B)
 MAX_TRIES = 5                   # canciones seguidas que se intentan cargar como siguiente antes de rendirse
 INSTALL_TRIES = 8               # reintentos de cambiar la cola si la llamada de audio avanza a la vez
 
+LOOP_BARS = 4                   # el bucle repite los 4 compases de antes del punto de mezcla
+RAMP_STEPS = 3                  # rampa de vuelta al tempo original de B: 3 tramos con el tempo cada vez más cerca de 1,0
+RAMP_SEG_S = 2.0                # de 2 s de salida cada uno
+RAMP_PREROLL_S = 0.5            # cada tramo se estira desde 0,5 s antes y eso se tira (el principio de un estirado no es fiel)
+
 _track_ids = itertools.count(1)
+_loop_ids = itertools.count(1)
 
 
 def _key(path):
@@ -98,26 +146,41 @@ class _Track:
 
 class _Label:
     """Etiqueta de cada segmento encolado: de qué canción es y en qué instante de ella (tiempo original) empieza."""
-    __slots__ = ("track_id", "role", "t0", "ratio", "f0", "f1", "idx")
+    __slots__ = ("track_id", "role", "t0", "ratio", "f0", "f1", "idx", "tag")
 
-    def __init__(self, track_id, role, t0, ratio=1.0, f0=0, f1=0, idx=0):
+    def __init__(self, track_id, role, t0, ratio=1.0, f0=0, f1=0, idx=0, tag=None):
         self.track_id = track_id
-        self.role = role                # "body" (trozo del cuerpo), "x1" (1.ª mitad o final del corte), "entry"
+        self.role = role                # "body" (trozo del cuerpo), "loop" (repetición del bucle), "x1" (1.ª mitad o final
+                                        # del corte), "entry"
         self.t0 = t0                    # segundo de la canción en el que empieza el segmento
         self.ratio = ratio              # segundos de la canción por segundo de salida (tempo de B en la mezcla)
-        self.f0 = f0                    # "body" y "x1": primera muestra del cuerpo que cubre
-        self.f1 = f1                    # "body": muestra del cuerpo donde acaba (sin incluir)
-        self.idx = idx                  # "entry": posición en track.entry
+        self.f0 = f0                    # "body", "loop" y "x1": primera muestra del cuerpo que cubre
+        self.f1 = f1                    # "body": muestra del cuerpo donde acaba (sin incluir); "loop": el punto de mezcla
+        self.idx = idx                  # "entry": posición en track.entry; "loop": número de repetición
+        self.tag = tag                  # "loop": de qué bucle es (_Pair.loop_id)
 
     def __repr__(self):
         return f"<{self.role} pista {self.track_id} desde {self.t0:.3f} s>"
 
 
+class _Ctx:
+    """Lo que se sabe de las dos canciones al preparar el paso (para elegir el tipo y para el corte tardío)."""
+    __slots__ = ("info_a", "info_b", "grid_a", "bpm_a")
+
+    def __init__(self, info_a, info_b, grid_a):
+        self.info_a = info_a if isinstance(info_a, dict) else {}
+        self.info_b = info_b if isinstance(info_b, dict) else {}
+        self.grid_a = grid_a
+        bpm = grid_a.bpm if grid_a is not None else self.info_a.get("bpm")
+        self.bpm_a = float(bpm) if isinstance(bpm, (int, float)) and not isinstance(bpm, bool) and bpm > 0 else None
+
+
 class _Pair:
     """Paso preparado de la actual (A) a la siguiente (B)."""
-    __slots__ = ("b", "plan", "a_mix", "x1", "x1_label", "entry", "b_body", "b_cut", "grid_a")
+    __slots__ = ("b", "plan", "a_mix", "x1", "x1_label", "entry", "b_body", "b_cut", "grid_a", "ctx", "kind", "check",
+                 "loop_segs", "loop_start", "loop_id", "loop_bars")
 
-    def __init__(self, b, plan, a_mix, x1, x1_label, entry, b_body, b_cut, grid_a):
+    def __init__(self, b, plan, a_mix, x1, x1_label, entry, b_body, b_cut, grid_a, ctx=None, kind=None):
         self.b = b
         self.plan = plan
         self.a_mix = a_mix              # muestra de A donde acaba su cuerpo y empieza x1
@@ -127,6 +190,13 @@ class _Pair:
         self.b_body = b_body            # muestra de B donde sigue su cuerpo
         self.b_cut = b_cut              # muestra de B por la que entraría un corte limpio (para el plan tardío)
         self.grid_a = grid_a
+        self.ctx = ctx                  # _Ctx (fichas de las dos), para rehacer un corte tardío con su tipo
+        self.kind = kind                # tipo de transición (transition_types.TYPE_*) que suena
+        self.check = {}                 # lo que dijo el puntuador: "plan" (veredicto), "audio" (motivos), "swapped", "seconds"
+        self.loop_segs = []             # bucle (loops.extend_body): repeticiones que suenan entre loop_start y a_mix
+        self.loop_start = a_mix         # muestra de A donde empieza el bucle (el cuerpo de A suena hasta aquí)
+        self.loop_id = None
+        self.loop_bars = 0              # compases que añade el bucle (0: sin bucle)
 
 
 class _Ask:
@@ -140,6 +210,55 @@ class _Ask:
         self.attempt = attempt
         self.not_before = not_before    # número de tick a partir del cual se puede pedir
         self.force = False              # «replan» que rehace la mezcla aunque la siguiente sea la misma (llegó un análisis)
+
+
+def _sounds(x) -> bool:
+    """¿Suena algo en x (RMS por encima de `SILENCE_DB`)? Un trozo vacío no suena."""
+    if not len(x):
+        return False
+    np = dj_dsp._np()
+    return float(np.mean(np.square(x, dtype=np.float64))) > 10 ** (SILENCE_DB / 10.0)
+
+
+def _block_loud(x, block):
+    """Por cada bloque de `block` muestras de x: ¿suena (RMS por encima de `SILENCE_DB`)?"""
+    np = dj_dsp._np()
+    k = len(x) // block
+    if k < 1:
+        return np.zeros(0, dtype=bool)
+    p = np.square(x[:k * block], dtype=np.float64).mean(axis=1).reshape(k, block).mean(axis=1)
+    return p > 10 ** (SILENCE_DB / 10.0)
+
+
+def _last_sound(data, end, search_s=SOUND_SEARCH_S):
+    """Muestra donde acaba el último bloque de 10 ms que suena antes de `end` (buscando `search_s` hacia atrás), o None."""
+    block = int(0.01 * SAMPLE_RATE)
+    lo = max(0, end - int(search_s * SAMPLE_RATE))
+    lo = end - (end - lo) // block * block
+    loud = _block_loud(data[lo:end], block)
+    hits = loud.nonzero()[0]
+    return None if not len(hits) else lo + (int(hits[-1]) + 1) * block
+
+
+def _first_sound(data, start, search_s=SOUND_SEARCH_S):
+    """Muestra donde empieza el primer bloque de 10 ms que suena desde `start` (buscando `search_s`), o None."""
+    block = int(0.01 * SAMPLE_RATE)
+    loud = _block_loud(data[start:start + int(search_s * SAMPLE_RATE)], block)
+    hits = loud.nonzero()[0]
+    return None if not len(hits) else start + int(hits[0]) * block
+
+
+def _max_minutes():
+    from services import pcm_loader
+    return round(pcm_loader.MAX_SECONDS / 60)
+
+
+def _truncated(frames, known_s) -> bool:
+    """¿El cargador cortó la canción en su tope (`pcm_loader.MAX_SECONDS`)? Si lo cargado llega al tope y el análisis dice que
+    dura más (o no lo dice: una canción de justo 8:00 es rara)."""
+    from services import pcm_loader
+    top = pcm_loader.MAX_SECONDS
+    return frames >= (top - TRUNCATED_TOL_S) * SAMPLE_RATE and (known_s is None or known_s > frames / SAMPLE_RATE + 0.5)
 
 
 def _stored_lufs(path):
@@ -162,7 +281,8 @@ def _gain_for(lufs, peak) -> float:
 class EngineSession:
     """Sesión del DJ sobre un `MixEngine` (ver la explicación del módulo). El dueño del motor hace start()/stop() del flujo."""
 
-    def __init__(self, engine, info_for, next_after, bars=16, loader=None, lead_s=45.0, lufs_stored=None, lufs_measure=None):
+    def __init__(self, engine, info_for, next_after, bars=16, loader=None, lead_s=45.0, lufs_stored=None, lufs_measure=None,
+                 typed=True, audio_check="light", loops=False, tempo_ramp=False):
         if loader is None:
             from services import pcm_loader
             loader = pcm_loader.load
@@ -171,6 +291,12 @@ class EngineSession:
         self._next_after = next_after
         self.bars = bars
         self.lead_s = lead_s
+        self.typed = bool(typed)        # tipos de transición (transition_types); False: solo mezcla larga o corte limpio
+        # puntuador (transition_scorer): "light" (por defecto) mide recorte, huecos, clics en las uniones y saltos de volumen
+        # con sus funciones y umbrales; "full" llama a score_audio entero (0,1 a 0,4 s más por mezcla); None: no se puntúa
+        self.audio_check = audio_check if audio_check in AUDIO_CHECKS else None
+        self.loops = bool(loops)        # bucles de 4 u 8 compases antes de la mezcla (loops.needs_loop); ver docs/MOTOR_DJ.md
+        self.tempo_ramp = bool(tempo_ramp)  # B vuelve a su tempo en 3 tramos de 2 s en vez de en el empalme de 20 ms
         self._loader = loader
         self._lufs_stored = lufs_stored or _stored_lufs
         self._lufs_measure = lufs_measure or _measured_lufs
@@ -373,7 +499,8 @@ class EngineSession:
             state = "playing" if self._want_play else "paused"
         nxt = p.b.path if p is not None else self._preparing
         return {"path": path, "position_s": pos, "duration_s": dur, "state": state, "advanced": advanced, "ended": ended,
-                "error": error, "plan": p.plan if p is not None else None, "next_path": nxt}
+                "error": error, "plan": p.plan if p is not None else None, "next_path": nxt,
+                "transition_type": p.kind if p is not None else None, "loop_bars": p.loop_bars if p is not None else 0}
 
     def _locked_in_locked(self) -> bool:
         """¿Ha empezado ya la mezcla hacia B (su primera mitad suena)? Entonces B ya no se puede cambiar."""
@@ -382,6 +509,8 @@ class EngineSession:
             return False
         cur = self._engine.current()
         lab = cur[0] if cur is not None else None
+        if isinstance(lab, _Label) and lab.role == "loop" and lab.track_id == self._a.id:
+            return lab.tag == p.loop_id and (cur[2] > 0 or lab.idx > 0)    # el bucle ya suena: va derecho a la mezcla
         return isinstance(lab, _Label) and ((lab.role == "x1" and lab.track_id == self._a.id and cur[2] > 0)
                                             or lab.track_id == p.b.id)
 
@@ -464,12 +593,28 @@ class EngineSession:
         if f > p.a_mix:
             self._late_cut_locked(f)
             p = self._pair
-        segs = self._body_segs(a, f, p.a_mix)
-        if p.x1 is not None:
-            segs.append((p.x1, p.x1_label))
+        if p.loop_segs and f < p.a_mix:                         # cuerpo hasta el bucle (o desde dentro de su región)
+            return self._body_segs(a, f, p.loop_start) + self._loop_from_locked(p, max(0, f - p.loop_start), 0)
+        return self._body_segs(a, f, p.a_mix) + self._mix_on_locked(p)
+
+    def _mix_on_locked(self, p) -> list:
+        """La mezcla (primera parte), la entrada de B y el cuerpo de B."""
+        segs = [(p.x1, p.x1_label)] if p.x1 is not None else []
         segs += p.entry
         segs += self._body_segs(p.b, p.b_body, p.b.frames)
         return segs
+
+    def _loop_from_locked(self, p, off, i) -> list:
+        """Las repeticiones del bucle desde la número i (la primera, desde su muestra `off`) y luego la mezcla."""
+        a = self._a
+        segs = []
+        for k in range(i, len(p.loop_segs)):
+            arr = p.loop_segs[k][off if k == i else 0:]
+            o = len(p.loop_segs[k]) - len(arr)
+            if len(arr):
+                segs.append((arr, _Label(a.id, "loop", (p.loop_start + o) / SAMPLE_RATE, 1.0, p.loop_start + o, p.a_mix,
+                                         idx=k, tag=p.loop_id)))
+        return segs + self._mix_on_locked(p)
 
     def _future_locked(self, cur):
         """Lo que debe venir detrás del segmento que suena (o desde él, si aún no ha empezado). None: no tocar nada."""
@@ -485,7 +630,19 @@ class EngineSession:
             i = lab.idx + (1 if started else 0)
             return list(a.entry[i:]) + self._from_frame_locked(a.body_start)
         if lab.role == "body":
-            return self._from_frame_locked(lab.f1 if started else lab.f0)
+            if not started:
+                return self._from_frame_locked(lab.f0)
+            p = self._pair
+            end = (p.loop_start if p.loop_segs else p.a_mix) if p is not None else None
+            if (p is not None and lab.f0 < end < lab.f1
+                    and self._engine.truncate_current(cur[1], end - lab.f0, round(TRUNC_GUARD_S * SAMPLE_RATE))):
+                lab.f1 = end                                    # el trozo que suena acaba ya en el bucle o el punto de mezcla
+            return self._from_frame_locked(lab.f1)
+        if lab.role == "loop":
+            p = self._pair
+            if p is not None and lab.tag == p.loop_id:
+                return self._loop_from_locked(p, 0, lab.idx + (1 if started else 0))
+            return self._from_frame_locked(lab.f1 if started else lab.f0)   # bucle de un plan que ya no está
         if lab.role == "x1" and not started:
             return self._from_frame_locked(lab.f0)
         return None                                             # la mezcla ya suena: no se toca
@@ -576,14 +733,20 @@ class EngineSession:
         with self._lock:
             if gen != self._gen:
                 return
-        data = self._load(path)
-        g = self._apply_gain(self._lufs_stored, path, data) if data is not None else 1.0
+        data, g, err = None, 1.0, None
+        try:
+            data = self._load(path)
+            if data is not None:
+                g = self._apply_gain(self._lufs_stored, path, data)
+        except Exception as e:                              # el volumen o el pico fallaron: no se queda «cargando» para siempre
+            log.exception("fallo al preparar %s", path)
+            data, err = None, f"no se pudo cargar {path}: {e}"
         with self._lock:
             if gen != self._gen:
                 return
             self._loading = None
             if data is None:
-                self._error = self._error or f"no se pudo cargar {path}"
+                self._error = err or self._error or f"no se pudo cargar {path}"
                 self._a = None
                 return
             a = self._a = _Track(path, data, g)
@@ -628,8 +791,14 @@ class EngineSession:
             log.warning("info_for falló con %s: %s", path, e)
             info = None
         info = dict(info) if isinstance(info, dict) else {}
+        known = mix_points.seconds(info, "duration")
         info["duration_s"] = frames / SAMPLE_RATE           # la duración de lo decodificado, no la del análisis (podría pasarse por una muestra)
         info.pop("duration_ms", None)
+        if _truncated(frames, known):
+            # el cargador la cortó en su tope: su final (outro) no está en lo cargado. Se marca y el final pasa a ser «de golpe»
+            info["truncated"] = True
+            info.pop("outro_ms", None)
+            info["outro_s"] = 0.0
         return info
 
     def _build_pair(self, a, b_path):
@@ -639,27 +808,130 @@ class EngineSession:
             return None
         gain = self._apply_gain(self._lufs_measure, b_path, body)
         b = _Track(b_path, body, gain)
-        info_a = self._info(a.path, a.frames)
-        plan = mix_planner.plan_transition(info_a, self._info(b_path, b.frames), self.bars)
+        info_a, info_b = self._info(a.path, a.frames), self._info(b_path, b.frames)
+        plan = mix_planner.plan_transition(info_a, info_b, self.bars)
         grid_a = info_a.get("beatgrid") if isinstance(info_a.get("beatgrid"), BeatGrid) else None
+        ctx = _Ctx(info_a, info_b, grid_a)
+        if info_a.get("truncated"):
+            c = self._bar_before(a, grid_a, a.frames)
+            plan = mix_points.cut(c / SAMPLE_RATE, plan.b_start_s,
+                                  f"corte limpio al llegar al tope de {_max_minutes()} min que se carga de cada canción "
+                                  "(el resto de la que suena no se carga)")
+        verdict = None
+        if plan.kind != KIND_CUT and plan.length_s > 0 and self.audio_check:
+            verdict = transition_scorer.score_plan(info_a, info_b, plan)
+            if verdict["verdict"] == transition_scorer.VERDICT_DISCARD:
+                end = min(a.frames, round((plan.a_start_s + plan.length_s) * SAMPLE_RATE))
+                plan = mix_points.cut(self._bar_before(a, grid_a, end) / SAMPLE_RATE, plan.b_start_s,
+                                      "corte limpio: el puntuador descartó la mezcla (" + "; ".join(verdict["reasons"]) + ")")
         if plan.kind != KIND_CUT and plan.length_s > 0:
-            pair, why = self._blend(a, b, plan, grid_a)
+            pair, why = self._blend(a, b, plan, ctx)
             if pair is not None:
+                if verdict is not None:
+                    pair.check["plan"] = verdict["verdict"]
+                if self.loops:
+                    self._add_loop(pair, a, ctx)
                 return pair
-            plan = mix_points.cut(min(plan.a_start_s, a.frames / SAMPLE_RATE), plan.b_start_s, "corte limpio: " + why)
-        return self._cut(a, b, plan, grid_a, round(plan.a_start_s * SAMPLE_RATE), round(plan.b_start_s * SAMPLE_RATE))
+            # donde A se habría ido del todo (su final, si la mezcla no cabía): no se tira el final de A
+            end = min(a.frames, round((plan.a_start_s + plan.length_s) * SAMPLE_RATE))
+            plan = mix_points.cut(self._bar_before(a, grid_a, end) / SAMPLE_RATE, plan.b_start_s, "corte limpio: " + why)
+        return self._cut(a, b, plan, ctx, round(plan.a_start_s * SAMPLE_RATE), round(plan.b_start_s * SAMPLE_RATE))
 
-    def _blend(self, a, b, plan, grid_a):
+    @staticmethod
+    def _add_loop(pair, a, ctx):
+        """Bucle antes de la mezcla si `loops.needs_loop` lo pide: A repite sus `LOOP_BARS` compases de antes del punto de mezcla
+        y la mezcla (la misma, desde la misma muestra de A) suena `loop_bars` compases más tarde."""
+        grid_b = ctx.info_b.get("beatgrid") if isinstance(ctx.info_b.get("beatgrid"), BeatGrid) else None
+        info_b = dict(ctx.info_b, intro_s=mix_points.seconds(ctx.info_b, "intro"))     # needs_loop solo lee intro_s
+        try:
+            extra, why = loops.needs_loop(ctx.info_a, info_b, pair.plan, ctx.grid_a, grid_b)
+            if extra <= 0:
+                return
+            segs, _ = loops.extend_body(a.data, ctx.grid_a, pair.plan.a_start_s, extra, loop_bars=LOOP_BARS)
+        except Exception as e:                                  # una ayuda nunca debe romper la mezcla
+            log.warning("no se pudo preparar el bucle: %s", e)
+            return
+        if not segs or round(pair.plan.a_start_s * SAMPLE_RATE) != pair.a_mix:
+            return
+        pair.loop_segs = segs
+        pair.loop_start = pair.a_mix - len(segs[0])
+        pair.loop_id = next(_loop_ids)
+        pair.loop_bars = extra
+        pair.plan = dataclasses.replace(pair.plan, reason=f"{pair.plan.reason}; {why}")
+
+    @staticmethod
+    def _bar_before(a, grid_a, end) -> int:
+        """Muestra del comienzo de compás de A más cercano antes de `end` (a menos de un compás), o `end` sin rejilla."""
+        if grid_a is None:
+            return int(end)
+        try:
+            bar = math.floor(grid_a.bar_at(end / SAMPLE_RATE) + 1e-9)
+            c = round(grid_a.bar_time(bar) * SAMPLE_RATE)
+        except (ValueError, ZeroDivisionError, OverflowError):
+            return int(end)
+        return c if 0 < c <= end and end - c <= grid_a.bar_s * SAMPLE_RATE + 1 else int(end)
+
+    # ---- tipos de transición -------------------------------------------------------------------------------------------
+    def _choose(self, ctx, plan):
+        """(tipo, motivo) de la transición. Sin `typed`: mezcla larga (o corte limpio, que con un plan de corte es lo mismo)."""
+        cut = plan.kind == KIND_CUT or plan.length_s <= 0
+        default = transition_types.TYPE_CUT_BAR if cut else transition_types.TYPE_BLEND
+        if not self.typed or ctx is None:
+            return default, ""
+        try:
+            return transition_types.choose_type(ctx.info_a, ctx.info_b, plan, ctx.bpm_a)
+        except Exception as e:                                  # una regla de ayuda nunca debe romper la mezcla
+            log.warning("no se pudo elegir el tipo de transición: %s", e)
+            return default, ""
+
+    @staticmethod
+    def _render(a_part, b_part, plan, kind, ctx):
+        """(mezcla, cola) del tipo `kind`. La mezcla larga y el corte limpio, con `render_transition` tal cual."""
+        if kind == transition_types.TYPE_BLEND or (kind == transition_types.TYPE_CUT_BAR and plan.kind == KIND_CUT):
+            x = dj_dsp.render_transition(a_part, b_part, plan)
+            return x, x[:0]
+        return transition_types.render_typed_parts(a_part, b_part, plan, kind, bpm=ctx.bpm_a if ctx else None)
+
+    @staticmethod
+    def _typed_plan(plan, why):
+        return dataclasses.replace(plan, reason=f"{plan.reason}; tipo: {why}") if why else plan
+
+    @staticmethod
+    def _tail_entry(b, b_body, join, tail, t0, ratio):
+        """Lo que suena tras la mezcla antes del cuerpo normal de B: el empalme del tramo estirado (`join`) y, si el tipo deja
+        cola (eco de salida), el principio del cuerpo de B con la cola SUMADA (copia: el cuerpo de B no se toca). Devuelve
+        ([(array, etiqueta)], muestra de B donde sigue su cuerpo)."""
+        np = dj_dsp._np()
+        k_join = len(join) if join is not None else 0
+        m = len(tail)
+        only_join = ([(join, _Label(b.id, "entry", t0, ratio))], b_body + k_join) if k_join else ([], b_body)
+        length = min(max(m, k_join), b.frames - b_body)
+        if not m or length <= 0:
+            return only_join
+        post = np.empty((length, 2), dtype=np.float32)
+        kj = min(k_join, length)
+        if kj:
+            post[:kj] = join[:kj]
+        post[kj:] = b.data[b_body + kj:b_body + length]
+        k = min(m, length)
+        add = tail[:k]
+        if k < m:                                               # B se acaba antes que el eco: que la cola baje a cero
+            add = add.copy()
+            dj_fx._fade_out(add, min(k, int(0.05 * SAMPLE_RATE)))
+        post[:k] += add
+        return [(post, _Label(b.id, "entry", t0, 1.0))], b_body + length
+
+    def _blend(self, a, b, plan, ctx):
         """(_Pair, None) con la mezcla hecha, o (None, motivo) si no cabe (datos del análisis que no cuadran con el audio)."""
         sr = SAMPLE_RATE
         ratio = float(plan.tempo_ratio_b or 1.0)
         a_mix, n = round(plan.a_start_s * sr), round(plan.length_s * sr)
         bs, b_body = round(plan.b_start_s * sr), round((plan.b_start_s + plan.length_s * ratio) * sr)
-        if a_mix < 0 or a_mix + n > a.frames:
+        if a_mix < 0 or a_mix + n > a.frames + round(FIT_TOL_S * sr):
             return None, "la mezcla no cabe en la canción que suena"
         if b_body + int(MIN_CHUNK_S * sr) > b.frames:
             return None, "la canción que entra es demasiado corta"
-        join = None
+        join = join_tail = None
         if abs(ratio - 1.0) < 1e-6:
             piece = b.data[bs:bs + n]                           # ya con su ganancia
         else:
@@ -667,16 +939,209 @@ class EngineSession:
             if piece is None:
                 return None, "no se pudo cambiar el tempo de la que entra"
             piece *= b.gain
-            join, piece = self._join_piece(piece[n:], b, b_body), piece[:n]
-        x = dj_dsp.render_transition(a.data[a_mix:a_mix + n], piece, plan)
-        del piece
-        half = len(x) // 2
+            join_tail = piece[n:]
+            join, piece = self._join_piece(join_tail, b, b_body), piece[:n]
+        kind, why = self._choose(ctx, plan)
+        a_part = a.data[a_mix:a_mix + n]
+        base_plan = plan
+        plan = self._audible_plan(base_plan, kind, a_part, piece, ctx)
+        x, tail = self._render(a_part, piece, plan, kind, ctx)
+        split = self._split(kind, plan, len(x))
+        check = {}
+        if self.audio_check:
+            t0 = time.perf_counter()
+            k = int(CHECK_CONTEXT_S * sr)
+            after = b.data[b_body:b_body + k]
+            if join is not None:                                # lo que suena de verdad tras la mezcla: el empalme y el cuerpo
+                after = dj_dsp._np().concatenate((join, b.data[b_body + len(join):b_body + k]))
+            bad = self._audio_problems(x, a_part, piece, plan, kind, split, ctx, a.data[max(0, a_mix - k):a_mix], after)
+            check = {"audio": bad}
+            new = None
+            if bad and kind != transition_types.TYPE_CUT_BAR:
+                new = transition_types.TYPE_CUT_BAR
+            elif bad and any("hueco" in m for m in bad):      # el corte deja un silencio: la mezcla lo tapa con la otra
+                new = transition_types.TYPE_BLEND
+            if new is not None:
+                old, kind = kind, new
+                what = "corte en el compás" if new == transition_types.TYPE_CUT_BAR else "mezcla"
+                why = f"{what}: el puntuador descartó «{old}» ({'; '.join(bad)})"
+                plan = self._audible_plan(base_plan, kind, a_part, piece, ctx)
+                x, tail = self._render(a_part, piece, plan, kind, ctx)
+                split = self._split(kind, plan, len(x))
+                check["swapped"] = old
+            check["seconds"] = round(time.perf_counter() - t0, 4)
+        del piece, a_part
         x1_label = _Label(a.id, "x1", a_mix / sr, 1.0, a_mix)
-        entry = [(x[half:], _Label(b.id, "entry", plan.b_start_s + half * ratio / sr, ratio))]
-        if join is not None:                                    # el empalme sin salto con el cuerpo original de B
-            entry.append((join, _Label(b.id, "entry", plan.b_start_s + n * ratio / sr, ratio, idx=1)))
+        entry = [(x[split:], _Label(b.id, "entry", plan.b_start_s + split * ratio / sr, ratio))]
+        ramp = None
+        if join is not None and self.tempo_ramp and not len(tail):
+            ramp = self._ramp_entry(b, join_tail, plan.b_start_s + plan.length_s * ratio, ratio)
+        if ramp is not None:
+            entry += ramp[0]
+            b_body = ramp[1]
+        else:
+            more, b_body = self._tail_entry(b, b_body, join, tail, plan.b_start_s + n * ratio / sr, ratio)
+            entry += more
+        for i, (_, lab) in enumerate(entry):
+            lab.idx = i
+        plan = self._typed_plan(plan, why)
+        pair = _Pair(b, plan, a_mix, x[:split], x1_label, entry, b_body, bs, ctx.grid_a, ctx, kind)
+        pair.check = check
+        return pair, None
+
+    @staticmethod
+    def _audible_plan(plan, kind, a_part, b_part, ctx):
+        """Con corte en el compás o eco, el corte (`bass_swap_at`) debe caer donde A aún suena justo antes y B ya suena justo
+        después (si no, un silencio: A con su final mudo o B con su principio mudo). Si no es así, se mueve al comienzo de
+        compás de A más cercano en que sí (o cada medio segundo sin rejilla). Con los demás tipos, el plan tal cual."""
+        if kind not in (transition_types.TYPE_CUT_BAR, transition_types.TYPE_ECHO_OUT):
+            return plan
+        sr = SAMPLE_RATE
+        n = round(plan.length_s * sr)
+        win = int(SOUND_WIN_S * sr)
+
+        def ok(c):
+            return _sounds(a_part[max(0, c - win):c]) and _sounds(b_part[c:c + win])
+
+        c = transition_types._cut_point(plan, n, sr)
+        if ok(c):
+            return plan
+        grid = ctx.grid_a if ctx is not None else None
+        if grid is not None:
+            first = math.ceil(grid.bar_at(plan.a_start_s) - 1e-9)
+            last = math.floor(grid.bar_at(plan.a_start_s + plan.length_s) + 1e-9)
+            cands = [round((grid.bar_time(k) - plan.a_start_s) * sr) for k in range(first, last + 1)]
+        else:
+            cands = list(range(0, n, int(0.5 * sr)))
+        cands = sorted((x for x in cands if win <= x <= n - win), key=lambda x: abs(x - c))
+        best = next((x for x in cands if ok(x)), None)
+        if best is None:
+            return plan
+        return dataclasses.replace(plan, bass_swap_s=round(best / sr, 3))
+
+    @staticmethod
+    def _split(kind, plan, n) -> int:
+        """Dónde se parte la mezcla (desde ahí domina B): la mitad, o el corte con corte en el compás y eco de salida."""
+        if kind in (transition_types.TYPE_CUT_BAR, transition_types.TYPE_ECHO_OUT):
+            return transition_types._cut_point(plan, n, SAMPLE_RATE)
+        return n // 2
+
+    def _audio_problems(self, x, a_part, b_part, plan, kind, split, ctx, a_before, b_after) -> list:
+        """Motivos (en español) por los que el puntuador DESCARTA esta mezcla por algo que un corte en el compás arregla: clic,
+        recorte, hueco de silencio o salto de volumen. [] si nada. Los veredictos de gusto (golpes, graves, voces, tonos) no se
+        usan aquí. Umbrales: los de `transition_scorer` (CLICK_RATIO, CLIP_DISCARD, GAP_DISCARD_MS, LOUD_DISCARD_DB)."""
+        try:
+            if self.audio_check == "full":
+                return self._full_problems(x, a_part, b_part, plan, kind, split, ctx, a_before, b_after)
+            return self._light_problems(x, a_part, b_part, kind, split, a_before, b_after)
+        except Exception as e:                                  # el puntuador nunca debe romper la mezcla
+            log.warning("no se pudo puntuar la mezcla: %s", e)
+            return []
+
+    @staticmethod
+    def _lines(np, x, a_part, b_part, kind, split):
+        """A y B en la línea de tiempo de la mezcla y su ganancia de medios y agudos (fundido, o escalón en el corte)."""
+        ts = transition_scorer
+        n = len(x)
+        if kind in (transition_types.TYPE_ECHO_OUT, transition_types.TYPE_CUT_BAR):
+            a_line, b_line = ts._place(np, a_part[:split], 0, n), ts._place(np, b_part[split:], split, n)
+            gain_a = (np.arange(n) < split).astype(np.float64)
+            return a_line, b_line, gain_a, 1.0 - gain_a
+        gain_a, gain_b = ts._fades(np, np.arange(n) / SAMPLE_RATE, n / SAMPLE_RATE)
+        return ts._place(np, a_part, 0, n), ts._place(np, b_part, 0, n), gain_a, gain_b
+
+    def _light_problems(self, x, a_part, b_part, kind, split, a_before, b_after) -> list:
+        ts = transition_scorer
+        np = dj_dsp._np()
+        sr = SAMPLE_RATE
+        n = len(x)
+        bad = []
+        a_line, b_line, gain_a, gain_b = self._lines(np, x, a_part, b_part, kind, split)
+        added = float((np.abs(x) > 1.0).mean()) - max(float((np.abs(a_line) > 1.0).mean()), float((np.abs(b_line) > 1.0).mean()))
+        if added >= ts.CLIP_DISCARD:
+            bad.append(f"recorte en un {added * 100:.2f} % de las muestras".replace(".", ","))
+        gap = ts._silence_gap_ms(np, x, sr)
+        if gap >= ts.GAP_DISCARD_MS:
+            bad.append(f"hueco de silencio de {gap:.0f} ms")
+        w = int(CHECK_CLICK_S * sr)
+        joins = [(np.concatenate((a_before[-w:], x[:w])), (np.concatenate((a_before[-w:], a_part[:w])),)),
+                 (np.concatenate((x[-w:], b_after[:w])), (np.concatenate((b_part[-w:], b_after[:w])),))]
+        if kind in (transition_types.TYPE_ECHO_OUT, transition_types.TYPE_CUT_BAR):
+            lo, hi = max(0, split - w), min(n, split + w)
+            joins.append((x[lo:hi], (a_part[lo:hi], b_part[lo:hi])))
+        for seq, refs in joins:
+            ratio = ts._click_ratio(np, seq, sr)[0]
+            base = max((ts._click_ratio(np, r, sr)[0] for r in refs if len(r) > 2), default=0.0)
+            if ratio >= ts.CLICK_RATIO and (base <= 0 or ratio >= ts.CLICK_VS_PARTS * base):
+                bad.append(f"clic en una unión (salto de {ratio:.0f} veces lo normal)")
+                break
+        k = int(CHECK_CONTEXT_S * sr)
+        excess = ts._loudness(np, x, a_line, b_line, gain_a, gain_b, a_before[-k:], b_after[:k], sr,
+                              split if kind in (transition_types.TYPE_ECHO_OUT, transition_types.TYPE_CUT_BAR) else None)[0]
+        if excess is not None and excess >= ts.LOUD_DISCARD_DB:
+            bad.append(f"salto de volumen de {excess:.1f} dB".replace(".", ","))
+        return bad
+
+    @staticmethod
+    def _full_problems(x, a_part, b_part, plan, kind, split, ctx, a_before, b_after) -> list:
+        ts = transition_scorer
+        if kind in (transition_types.TYPE_ECHO_OUT, transition_types.TYPE_CUT_BAR):     # como un corte en `split`
+            a_part, b_part = a_part[:split], b_part[split:]
+            plan = TransitionPlan(plan.a_start_s, plan.b_start_s, 0.0, 1.0, None, KIND_CUT, plan.reason)
+        info_a, info_b = ctx.info_a if ctx else {}, ctx.info_b if ctx else {}
+        grid_b = info_b.get("beatgrid") if isinstance(info_b.get("beatgrid"), BeatGrid) else None
+        res = ts.score_audio(x, a_part, b_part, plan, ctx.grid_a if ctx else None, grid_b, tone_a=info_a.get("tone"),
+                             tone_b=info_b.get("tone"), tone_conf_a=info_a.get("tone_conf"), tone_conf_b=info_b.get("tone_conf"),
+                             a_before=a_before, b_after=b_after)
+        m = res["metrics"]
+        bad = []
+        if (m.get("click") or {}).get("note") == 0.0:
+            bad.append("clic")
+        if ((m.get("clipping") or {}).get("added") or 0.0) >= ts.CLIP_DISCARD:
+            bad.append("recorte")
+        if ((m.get("silence_gap_ms") or {}).get("value") or 0.0) >= ts.GAP_DISCARD_MS:
+            bad.append("hueco de silencio")
+        if ((m.get("loudness_step_db") or {}).get("value") or 0.0) >= ts.LOUD_DISCARD_DB:
+            bad.append("salto de volumen")
+        return bad
+
+    def _ramp_entry(self, b, tail, t, ratio):
+        """Rampa de vuelta al tempo original de B tras una mezcla con B estirada: `RAMP_STEPS` tramos de `RAMP_SEG_S` s con
+        el tempo cada vez más cerca de 1,0 (con 0,96: 0,97, 0,98, 0,99), cada uno cargado con el cargador desde donde acaba
+        el anterior (en el tiempo de B) y empalmado con el mismo fundido de 20 ms que el empalme normal; el último se empalma
+        con el cuerpo original de B. `tail`: lo que el tramo estirado de la mezcla sigue tras ella. Devuelve
+        ([(array, etiqueta)], muestra de B donde sigue su cuerpo) o None si algún tramo no se pudo cargar o no cabe."""
+        np = dj_dsp._np()
+        sr = SAMPLE_RATE
+        seg_n = round(RAMP_SEG_S * sr)
+        out = []
+        for i in range(1, RAMP_STEPS + 1):
+            r = ratio + (1.0 - ratio) * i / (RAMP_STEPS + 1)
+            if round((t + (RAMP_SEG_S + JOIN_S) * r) * sr) + int(MIN_CHUNK_S * sr) > b.frames:
+                return None
+            pre = min(RAMP_PREROLL_S, t)                        # se carga desde antes y se tira: el arranque de rubberband
+            skip = round(pre / r * sr)
+            try:
+                seg = self._loader(b.path, tempo_ratio=r, start_s=t - pre, duration_s=pre + (RAMP_SEG_S + JOIN_S) * r)
+            except Exception as e:
+                log.warning("no se pudo cargar la rampa de tempo de %s: %s", b.path, e)
+                return None
+            if seg is None or len(seg) < skip + seg_n + 8:
+                return None
+            seg = (seg[skip:] * np.float32(b.gain)).astype(np.float32)
+            k = min(len(tail), seg_n)
+            if k:
+                fade = np.linspace(0.0, 1.0, k, dtype="float32")[:, None]
+                seg[:k] = tail[:k] * (1.0 - fade) + seg[:k] * fade
+            out.append((seg[:seg_n], _Label(b.id, "entry", t, r)))
+            tail = seg[seg_n:]
+            t += RAMP_SEG_S * r
+        b_body = round(t * sr)
+        join = self._join_piece(tail, b, b_body)
+        if join is not None:
+            out.append((join, _Label(b.id, "entry", t, 1.0)))
             b_body += len(join)
-        return _Pair(b, plan, a_mix, x[:half], x1_label, entry, b_body, bs, grid_a), None
+        return out, b_body
 
     @staticmethod
     def _join_piece(tail, b, b_body):
@@ -699,20 +1164,43 @@ class EngineSession:
             return None
         return piece if piece is not None and len(piece) else None
 
-    def _cut(self, a, b, plan, grid_a, c, bs, lo_min=0):
-        """Corte limpio en la muestra c de A hacia la muestra bs de B: dos piezas de 0,5 s con sus rampas."""
+    def _cut(self, a, b, plan, ctx, c, bs, lo_min=0):
+        """Corte limpio en la muestra c de A hacia la muestra bs de B: dos piezas de 0,5 s con sus rampas (y, con el tipo eco
+        de salida, el eco del último golpe de A sumado a lo que sigue de B)."""
         sr = SAMPLE_RATE
         piece = int(CUT_PIECE_S * sr)
         c = min(max(c, lo_min), a.frames)
         bs = min(max(bs, 0), max(0, b.frames - 1))
+        win = int(SOUND_WIN_S * sr)
+        moved = []
+        if c > lo_min and not _sounds(a.data[max(lo_min, c - win):c]):     # A ya no suena: se corta donde deja de sonar
+            end = _last_sound(a.data, c)
+            if end is not None and end > lo_min:
+                c = end
+                moved.append("la que suena ya estaba en silencio")
+        if not _sounds(b.data[bs:bs + win]):                               # B empieza en silencio: entra donde suena
+            first = _first_sound(b.data, bs)
+            if first is not None and first + int(MIN_CHUNK_S * sr) < b.frames:
+                bs = max(0, first - int(0.01 * sr))
+                moved.append("la que entra empezaba en silencio")
         lo = max(lo_min, c - piece)
         if plan.kind != KIND_CUT:
             plan = TransitionPlan(c / sr, bs / sr, 0.0, 1.0, None, KIND_CUT, plan.reason)
-        x = dj_dsp.render_transition(a.data[lo:c], b.data[bs:bs + piece], plan)
+        if moved:
+            plan = dataclasses.replace(plan, a_start_s=round(c / sr, 3), b_start_s=round(bs / sr, 3),
+                                       reason=f"{plan.reason}; corte movido: {' y '.join(moved)}")
+        kind, why = self._choose(ctx, plan)
+        x, tail = self._render(a.data[lo:c], b.data[bs:bs + piece], plan, kind, ctx)
         k = c - lo
         x1 = x[:k] if k else None
         entry = [(x[k:], _Label(b.id, "entry", bs / sr, 1.0))]
-        return _Pair(b, plan, lo, x1, _Label(a.id, "x1", lo / sr, 1.0, lo), entry, bs + (len(x) - k), bs, grid_a)
+        b_body = bs + (len(x) - k)
+        more, b_body = self._tail_entry(b, b_body, None, tail, b_body / sr, 1.0)
+        entry += more
+        for i, (_, lab) in enumerate(entry):
+            lab.idx = i
+        return _Pair(b, self._typed_plan(plan, why), lo, x1, _Label(a.id, "x1", lo / sr, 1.0, lo), entry, b_body, bs,
+                     ctx.grid_a if ctx else None, ctx, kind)
 
     def _late_cut_locked(self, f):
         """El plan llegó tarde (lo que suena ya pasa del punto de mezcla): corte limpio en el siguiente compás tras f."""
@@ -726,4 +1214,4 @@ class EngineSession:
                 c = cb
         plan = TransitionPlan(min(c, a.frames) / sr, p.b_cut / sr, 0.0, 1.0, None, KIND_CUT,
                               "corte limpio en el siguiente compás: la transición llegó cuando el punto de mezcla ya había pasado")
-        self._pair = self._cut(a, p.b, plan, p.grid_a, c, p.b_cut, lo_min=f)
+        self._pair = self._cut(a, p.b, plan, p.ctx, c, p.b_cut, lo_min=f)

@@ -12,3 +12,4 @@ class Page(IntEnum):
     LIST = 4        # una lista (favoritos, playlist, cola, lo más escuchado...)
     LIBRARY = 5     # tu música descargada
     DJ = 6          # modo DJ: la sesión que se está mezclando
+    PARTY = 7       # modo fiesta: botones grandes para llevar la sesión DJ de lejos

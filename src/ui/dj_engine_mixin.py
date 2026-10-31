@@ -138,7 +138,8 @@ class DjEngineMixin:
 
     # ---- lo que el motor pregunta a la aplicación -------------------------------------------------------------------
     def _dj_engine_info(self, path: str) -> dict:
-        """La ficha de una canción para el planificador de mezclas: su análisis, con el BPM puesto a mano si lo hay."""
+        """La ficha de una canción para el planificador de mezclas: su análisis, con el BPM puesto a mano si lo hay y la estructura
+        (drops, subidas, voz) ya leída en `structure` (un dict, o None si no se calculó)."""
         path = next((p for p in (path, *self._dj_analysis) if _same_path(p, path)), path)     # la clave con la que se guardó
         info = dict(self._dj_analysis.get(path) or {})
         grid = track_analysis.grid_from(info)
@@ -148,6 +149,7 @@ class DjEngineMixin:
         if manual and grid is not None and not _same_tempo(bpm, grid.bpm):
             grid = None                         # la rejilla se calculó con otro tempo: no se fía de ella
         info["beatgrid"] = grid
+        info["structure"] = track_analysis.structure_from(info)     # drops, subidas y voz ya leídos (o None)
         return info
 
     def _dj_engine_resolve(self, path: str):

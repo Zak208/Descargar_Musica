@@ -238,5 +238,6 @@ check("con el motor apagado, la sesión usa el reproductor de siempre", wait(lam
       and not w.dj_engine_on() and w.player is real_player)
 w.set_dj_engine_wanted(True)
 w.player.pause()
-w.shutdown_playback_options()
+w.close()                            # como al cerrar el programa: con la ventana abierta al salir, Qt y PortAudio se destruyen en mal orden
+app.processEvents()
 print("FIN")

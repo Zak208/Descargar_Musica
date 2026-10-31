@@ -94,8 +94,8 @@ lo de arriba solo demuestra que el motor no se queda sin datos ni tarda en la ll
   pesado en Python puro mientras suena el DJ.
 - **Dispositivo desconectado** (auriculares USB, Bluetooth): el flujo se para y llega `on_stream_finished`. El motor no
   reabre solo; la sesión debe llamar a `stop()` y `start()` (con otro dispositivo o el predeterminado nuevo).
-- **Saturación.** El motor no recorta: si la mezcla pasa de ±1,0 lo recorta el dispositivo. El margen (o un limitador) va en
-  la preparación de la transición.
+- **Saturación.** El motor lleva un limitador suave de salida (ver «Limitador de salida» abajo): nada sale por encima de ±1,0
+  y por debajo de 0,9 no se toca nada.
 - Un segundo salto antes de que acabe el fundido del primero (15 ms) corta en seco ese resto de fundido.
 - ASIO: la rueda de sounddevice trae también una PortAudio con ASIO (`libportaudio64bit-asio.dll`), que solo se usa con la
   variable de entorno `SD_ENABLE_ASIO`; no se ha probado.
@@ -156,3 +156,205 @@ Lo que tendrá que hacer la sesión DJ (`dj_mixin` / `dj_service`), sin tocar el
 10. **Empaquetado:** PyInstaller tiene que llevar `_sounddevice_data/portaudio-binaries/libportaudio64bit.dll` (unos 300 KB);
     el gancho de `pyinstaller-hooks-contrib` para sounddevice lo hace, pero hay que comprobarlo en el `.spec` y en el
     instalador (no se ha probado).
+
+## Sesión del DJ: arreglos e integración de los módulos (fases 0 a 6 de la integración)
+
+Lo que la sesión (`dj_engine.EngineSession`) hace además de la mezcla larga y el corte limpio. Las pruebas están en
+`pruebas/prueba_motor_dj_arreglos.py` y en las que se citan en cada punto.
+
+### Arreglos (fase 0)
+
+- **Redondeo del plan.** `mix_points.plan` redondea el principio y la longitud de la mezcla a milésimas por separado y la suma
+  se podía pasar hasta 44 muestras del final de A: la mezcla se rechazaba y caía a corte (casi la mitad de las canciones sin
+  análisis). Ahora se admite un exceso de hasta 50 ms (`FIT_TOL_S`); lo que falta de A se rellena con silencio con la rampa de
+  5 ms de `render_transition` (A ya está casi a cero al final de la mezcla).
+- **Canciones cortas.** Con trozos de 15 s, en una canción de 20 s el primer trozo ya sonaba pasado el punto de mezcla y toda
+  transición era un «plan tardío». `MixEngine.truncate_current(seg_id, frames, guard)` acorta el segmento que suena (solo si
+  lo tocado más 0,25 s de margen no llega al nuevo final) y la sesión lo usa para que el punto de mezcla caiga dentro del
+  trozo que suena. El corte tardío queda solo para cuando lo que suena ya pasó el punto de mezcla.
+- **B muy corta.** `mix_planner` limitaba la mezcla por frases solo por A: con B de 25 s salía una mezcla de 32 s que el motor
+  rechazaba. Ahora la frase se parte hasta que mide como mucho un tercio de B (como la fase 8) y deja al menos 1 s de cuerpo
+  de B. Si aun así la mezcla no se puede hacer, el corte va al compás de donde la mezcla habría acabado, no a su principio.
+- **Carga que se quedaba en «cargando».** Si fallaba el cálculo de la ganancia de la canción pedida, la sesión no salía nunca
+  de «loading». Ahora queda «stopped» con el error.
+- **Canciones de más de 8 min.** `pcm_loader.MAX_SECONDS` (480 s) corta sin avisar. La sesión lo detecta (lo cargado llega al
+  tope y el análisis dice que dura más) y la transición es un corte limpio en el último compás antes del tope, con su motivo,
+  en vez de una mezcla de outro sobre un final que no existe. El tope no se ha subido (`pcm_loader` no es de este cambio): una
+  canción de 12 min serían 254 MB, y con A y B en memoria se pasaría del medio giga.
+
+### Limitador de salida (fase 1)
+
+Dos canciones igualadas a -14 LUFS sumadas en una mezcla pasan de 1,0 (el grabador midió picos de 1,93) y los mp3 reales ya
+pasan de 1,0 en un 0,1 a 0,3 % de las muestras. `MixEngine` aplica al final de cada bloque (después de las ganancias de pausa
+y maestra) una rodilla suave, estática y por muestra:
+
+    |x| <= 0,9  ->  sin cambios (idéntica, muestra a muestra)
+    |x| >  0,9  ->  signo(x) · (0,9 + 0,1 · tanh((|x| - 0,9) / 0,1))      (pendiente 1 en 0,9, nunca llega a 1,0)
+
+No tiene memoria entre bloques, así que no puede crear saltos en las uniones. NaN e infinitos salen como 0 y ±1. Se puede
+apagar con `MixEngine(limit=False)` (las pruebas que comparan muestras numeradas mayores que 1 lo hacen). `stats()` cuenta
+en `limited_blocks` los bloques en los que tuvo que redondear algún pico. No es un limitador con ataque y relajación: redondea
+los picos que pasan de 0,9 (algo de distorsión armónica en ellos, mucho menos que el recorte duro del dispositivo); que suene
+transparente en música real es una hipótesis que hay que comprobar de oído.
+
+Coste medido (pruebas/prueba_motor_audio.py, bloque 1024, sin dispositivo, CPU compartida): media 0,0024 ms si nada pasa del
+umbral (dos reducciones; 0,0011 ms sin limitador) y 0,015 ms si todo el bloque pasa (presupuesto 23,2 ms). Con el
+dispositivo real la media siguió en 0,022 a 0,028 ms y la máxima en 0,1 ms.
+
+### Tipos de transición (fase 2, `EngineSession(typed=True)`, activo por defecto)
+
+`_blend`, `_cut` y `_late_cut_locked` piden el tipo a `transition_types.choose_type(ficha A, ficha B, plan, BPM de A)` y lo
+renderizan con `render_typed_parts` (la mezcla larga y el corte limpio siguen saliendo de `render_transition` tal cual). La
+regla de seguridad de `choose_type` manda: con rejillas de confianza menor de 0,4 o un cambio de tempo de más del 5 % nunca
+hay mezcla larga de graves (corte en el compás, o mezcla si ya era corta). Detalles de la integración:
+
+- La mezcla mide lo mismo en todos los tipos y B no se desplaza: el cuerpo de B, el empalme del tramo estirado y las
+  posiciones no cambian.
+- Con cut_bar y echo_out B suena sola desde el corte (`bass_swap_at`): la mezcla se parte ahí, no en la mitad, y `advanced`
+  sale cuando entra B.
+- La cola del eco se SUMA al principio del cuerpo de B, en una copia (los trozos del cuerpo son vistas): se encola un trozo
+  «entry» con el empalme del tramo estirado (si lo hay) seguido del cuerpo de B desde `b_body`, con la cola encima, y el
+  cuerpo normal sigue tras él. Si B se acaba antes que la cola, la cola baja a cero en 50 ms.
+- En la práctica la cola solo aparece en cortes (plan de corte por tempos lejanos, corte tardío o por mezcla imposible): en
+  una mezcla, el corte cae hacia la mitad y el eco (unos 3,9 s a 120 BPM) se apaga dentro.
+- El tipo se ve en el motivo del plan («...; tipo: eco de salida: ...») y en el estado de `tick()` (`transition_type`).
+- `typed=False` da exactamente la mezcla de antes (`pruebas/prueba_motor_dj.py` la usa para comparar muestra a muestra).
+- Coste: el filtro tarda 1 s con 30 s de mezcla (los demás, unas centésimas); va en el hilo de trabajo.
+
+Pruebas: `pruebas/prueba_motor_tipos.py` (cada tipo en su sitio y con la longitud exacta, sin clic, cola sumada, `advanced`,
+posiciones, seek, replan, memoria, corte tardío con eco y `typed=False`). Que cada tipo suene bien en su caso es una
+hipótesis: no se ha oído.
+
+### Puntuador como red de seguridad (fase 3, `EngineSession(audio_check="light")`, activo por defecto)
+
+Todo en el hilo de trabajo, nunca en la llamada de audio.
+
+1. **Antes de renderizar** una mezcla, `transition_scorer.score_plan(ficha A, ficha B, plan)` (microsegundos). Si dice
+   «descartar» (cambio de tempo de más del 8 %, la mezcla no cabe en alguna de las dos...), se pasa a corte limpio en el
+   compás donde la mezcla habría acabado, con el motivo en `plan.reason` («corte limpio: el puntuador descartó la mezcla
+   (...)»), sin estirar ni renderizar nada.
+2. **Después de renderizar** una mezcla en la que suenan las dos (mezcla, filtro o eco de salida; el corte en el compás no se
+   mide: es ya lo más seguro), se buscan los fallos que un corte en el compás arregla: clic, recorte, hueco de silencio o
+   salto de volumen. Si hay alguno, la mezcla NO se retoca: se vuelve a renderizar como corte en el compás (`cut_bar`), con el
+   motivo en el plan («tipo: corte en el compás: el puntuador descartó «blend» (...)»). Los veredictos de gusto (golpes
+   desfasados, graves dobles, voces, tonos) no cambian nada aquí: los usa la elección del tipo y quedan para el diagnóstico.
+
+Umbrales (los de `transition_scorer`, sin tocar): clic si un salto entre muestras es 10 veces el normal de sus 50 ms de
+alrededor y 1,5 veces lo que ya tenían A y B; recorte si la mezcla añade un 0,1 % de muestras por encima de 1,0; hueco si hay
+500 ms por debajo de -60 dBFS; salto de volumen si el nivel a corto plazo (400 ms) cambia 8 dB más de lo que traían A y B
+(con los 2 s de antes y de después). **Son de criterio, no están calibrados con el oído**; cuando haya votos (fase 24) habrá
+que ajustarlos.
+
+Coste. `score_audio` entero cuesta 0,12 s con 8 s de mezcla y 0,41 s con 32 s (medido), por encima de lo que se quería
+gastar (0,1 s). Por eso el modo por defecto, «light», usa las mismas funciones y umbrales del puntuador pero solo para esas
+cuatro medidas, y el clic solo en ±50 ms alrededor de cada unión (principio de la mezcla con el cuerpo de A, final con lo que
+sigue de B y, en el eco de salida, el corte): son los únicos sitios donde el motor puede crear un salto, porque dentro de la
+mezcla todo es una combinación lineal suave de A y B. Medido: 55 a 60 ms con 16 s de mezcla y 108 ms con 32 s. Limitación:
+un clic en mitad de la mezcla (un fallo del render) solo lo ve `audio_check="full"`, que llama a `score_audio` entero.
+`audio_check=None` no puntúa nada. Lo que dijo el puntuador queda en `_Pair.check` (veredicto del plan, motivos del audio,
+tipo descartado y segundos).
+
+Pruebas: `pruebas/prueba_motor_puntuador.py`.
+
+### Bucles (fase 4, `EngineSession(loops=True)`, APAGADO por defecto)
+
+Cómo se integra (`loops.needs_loop` + `loops.extend_body`, siguiendo lo que pide `loops.py`):
+
+- Tras preparar una mezcla, si `needs_loop(ficha A, ficha B, plan, rejilla A, rejilla B)` pide 4 u 8 compases, A se alarga
+  repitiendo sus 4 compases de antes del punto de mezcla M: suena su cuerpo hasta L = M - 4 compases, luego las repeticiones
+  (segmentos con rol «loop», etiquetados en el tiempo de A de la región, así que la posición vuelve atrás en cada vuelta) y
+  luego la mezcla, la misma de siempre y desde la misma muestra M de A. `_Pair` guarda `loop_segs`, `loop_start`, `loop_id` y
+  `loop_bars`; el plan lleva el motivo («; bucle de 8 compases: ...») y el estado de `tick()`, `loop_bars`.
+- `_from_frame_locked`: cuerpo hasta L y bucle; desde dentro de la región [L, M) (un seek), el resto de la primera vuelta y
+  las demás. `_future_locked`: tras una vuelta, la siguiente; el trozo del cuerpo que suena se acorta en L (no en M).
+  `_late_cut_locked`: si lo que suena ya pasó M, corte tardío sin bucle, como siempre. `_seek_locked`: como antes.
+- `_locked_in_locked`: con el bucle sonando, B ya no se cambia (el bucle va derecho a la mezcla). Si se dejara a medias, el
+  final de una vuelta que no es la última está doblado hacia el principio de la siguiente (el fundido de la unión de
+  `loops.repeat`) y saltar de ahí al cuerpo de A en M haría un medio escalón (posible clic).
+- `needs_loop` solo lee `intro_s`; la sesión le pasa la intro de B en segundos aunque la ficha la traiga en milisegundos (el
+  análisis de la aplicación usa `intro_ms`: sin esto el bucle no se pediría nunca).
+
+Por qué queda apagado (decisión, no un fallo de las pruebas, que pasan: `pruebas/prueba_motor_bucles.py`, con carrera
+contra la llamada de audio):
+
+1. El motivo que más se da en la práctica (la intro de B no está hecha al acabar la mezcla) solo **retrasa** la mezcla: B
+   entra con el mismo `b_start_s` (lo avisa `needs_loop`), así que el bucle no arregla lo que mide; es A sonando 8 compases
+   más. Para que sirva habría que recalcular la entrada de B (que B empiece antes, por debajo del bucle), y eso es otra mezcla.
+2. El otro motivo (mezcla a 4 compases de una frase) casi nunca se da: con rejillas el planificador ya empieza la mezcla en
+   un comienzo de frase de 8 o 16 compases.
+3. Mientras suena el bucle (hasta 16 s) no se puede cambiar la siguiente.
+4. La interfaz calcula la cuenta atrás de la mezcla con `plan.a_start_s - posición`: con el bucle, la posición vuelve atrás
+   y la cuenta atrás sube y baja. Habría que darle a la página los segundos de salida que faltan (no es de este cambio:
+   `ui/dj_mixin.py` lo lleva otra sesión).
+5. No se ha oído: que la repetición suene natural en música real es una hipótesis.
+
+### Estructura en el planificador (fase 5, activa si la ficha trae `structure`)
+
+`dj_engine_mixin._dj_engine_info` añade a la ficha `structure` = `track_analysis.structure_from(análisis)` (drops, subidas y
+voz ya leídos, o None). `mix_planner` la usa solo en la mezcla por frases; sin ella (o con None) el plan es el de siempre:
+
+- **Dos drops a la vez** (`structure.drops_overlap`): la frase se parte por la mitad hasta que no coincidan; si con 4
+  compases siguen coincidiendo, corte limpio al empezar la frase de A (el tipo de transición decide si con eco).
+- **Drop de B al final de la mezcla** (`structure.drop_aligned_b_start`): solo candidata para la entrada de B; se usa si cuadra
+  con la frase de B al menos tan bien como la entrada normal (comienzo de frase de 8, de 4 o de compás), cabe en B, no pasa
+  de su mitad y no hace coincidir drops.
+- **Voces** (`structure.vocal_overlap`), peso bajo: con voz de las dos en más del 60 % de una mezcla de más de 16 s se prueba
+  una vez la frase de la mitad y se queda la que solape menos. Nunca lleva a un corte (la voz es una estimación con la señal,
+  que en música real distingue poco).
+
+### Cortes que no caen en un silencio
+
+Encontrado con las canciones reales (`pruebas/medir_calidad_mezcla.py`): muchos mp3 acaban con varios segundos de silencio
+digital y algunos empiezan con un poco. Un corte en ese silencio dejaba un hueco (10 de 44 transiciones con huecos de 0,5 a
+4,8 s). Ahora:
+
+- Corte limpio: si los últimos 100 ms de A antes del corte están por debajo de -50 dBFS, el corte se adelanta a donde A deja
+  de sonar; si los primeros 100 ms de B lo están, B entra donde empieza a sonar (10 ms antes). El plan lo dice («corte movido:
+  ...»).
+- Corte en el compás y eco de una mezcla: el corte va al comienzo de compás de A más cercano en que A suena justo antes y B
+  justo después.
+- Si el corte en el compás aún deja un hueco (B callada en toda la parte en que entraría sola), el puntuador lo cambia por la
+  mezcla: la otra canción tapa el silencio y, con B callada, no hay golpes que puedan chocar. Es la única excepción a la regla
+  de seguridad de `choose_type`.
+
+Pruebas: `pruebas/prueba_motor_silencios.py`.
+
+### Medida con las 22 canciones reales (`pruebas/medir_calidad_mezcla.py`, 31-10-2026)
+
+Orden inteligente con 3 semillas (39 transiciones distintas tras fusionar el orden atento al tempo), cada una sonada con la
+sesión real en silencio y puntuada con `score_audio` entero. ANTES = `typed=False`, sin puntuador y sin limitador (los
+arreglos de las fases 0 y de silencios ya están en las dos columnas):
+
+| | ANTES | DESPUÉS |
+|---|---|---|
+| ok / dudosa / descartar | 11 / 13 / 15 | 13 / 16 / 10 |
+| con clic / recorte > 0,1 % / huecos >= 500 ms | 0 / 0 / 0 | 0 / 0 / 0 |
+| pico máximo / medio | 0,943 / 0,605 | 0,783 / 0,546 |
+| saltos de volumen >= 8 dB / >= 5 dB (máximo) | 6 / 7 (14,8 dB) | 8 / 13 (18,3 dB) |
+| tipos | blend 32, corte 7 | filter 10, blend 8, cut_bar 7, corte 7, corte con eco 7 |
+| mezclas que empiezan en frase de 8 | 85 % | 86 % |
+| duración media de la mezcla | 15,5 s | 15,7 s |
+| preparación media / máxima | 0,71 / 1,26 s | 0,70 / 1,62 s |
+
+Una pasada anterior, con el orden de antes y sin el arreglo de silencios, dio 44 transiciones con 6 huecos ANTES y 10
+DESPUÉS (cortes en el silencio final de los mp3) y un pico de 1,07 sin limitador: de ahí salió «Cortes que no caen en un
+silencio». Lo que empeora: los saltos de volumen. Los tipos que cortan (corte en el compás, eco) dejan oír el salto de nivel
+entre A y B que la mezcla larga tapaba; el puntuador solo cambia una mezcla por un corte, no al revés. Criterio de aceptación
+(sin clic, sin recorte de más del 0,1 % y sin huecos): cumplido. `pruebas/medir_mezcla_real.py` (ventana real, en silencio, 3
+transiciones): un solo cambio de canción en cada paso, la que tocaba, sin que suene a la vez el reproductor de siempre.
+
+### Rampa de vuelta al tempo original (fase 6, `EngineSession(tempo_ramp=True)`, APAGADA por defecto)
+
+Hoy B, estirada hasta ±8 % en la mezcla, vuelve a su tempo de golpe tras ella (empalme de 20 ms). La rampa pone antes del
+cuerpo original 3 tramos de 2 s con el tempo cada vez más cerca de 1,0 (con 0,96: 0,97, 0,98 y 0,99), cada uno estirado con
+el cargador desde 0,5 s antes de donde acaba el anterior (ese medio segundo se tira: el principio de un estirado con rubberband
+no es fiel) y empalmado con el mismo fundido de 20 ms.
+
+Medido (`pruebas/prueba_motor_rampa.py`): con el cargador falso, lo que sale es B leída con la curva de tempo, sin saltos de
+fase. Con rubberband y una pista de golpes exactos: sin rampa, los golpes de B tras la mezcla caen a 0,0 a 0,3 ms de su sitio;
+con rampa, a -1,5 a +0,3 ms, pero aparecen 2 ataques de más, unos 30 ms tras un golpe, justo después de dos de los empalmes.
+El fundido de 20 ms entre dos estirados distintos de la misma música puede restar (las fases de un estirado y otro no
+coinciden) y la envolvente cae y vuelve a subir: un posible «flam» en cada empalme. Por eso queda apagada; para encenderla
+haría falta empalmar en puntos sin ataques (entre golpes, con la rejilla) o con un fundido más largo y comprobarlo de oído.
+ En reguetón y géneros con el bajo siempre
+presente salen pocos drops (lo dice `structure.py`), así que en la carpeta de prueba esto casi no cambia nada.

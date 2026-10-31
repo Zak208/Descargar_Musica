@@ -53,6 +53,7 @@ from ui.dj_mixin import DjMixin
 from ui.dj_record_mixin import DjRecordMixin
 from ui.dj_votes_mixin import DjVotesMixin
 from ui.vote_session_mixin import VoteSessionMixin
+from ui.party_mixin import PartyMixin
 from ui.artist_page import ArtistProfilePage
 from ui.album_page import AlbumDetailsPage
 from ui.list_page import ListPage
@@ -118,7 +119,7 @@ class FFmpegDownloadWorker(QThread):
 
 class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin, DownloadsMixin, OfflineMixin,
                  UsabilityMixin, PlaybackOptionsMixin, UpdatesMixin, LyricsMixin, SessionMixin, ThemeMixin, EqualizerMixin,
-                 SidebarMixin, DjMixin, DjEngineMixin, DjVotesMixin, DjRecordMixin, VoteSessionMixin):
+                 SidebarMixin, PartyMixin, DjMixin, DjEngineMixin, DjVotesMixin, DjRecordMixin, VoteSessionMixin):
     playing_changed = Signal(bool)          # empieza o se detiene el sonido (los indicadores de «sonando» lo siguen)
 
     def __init__(self):
@@ -170,6 +171,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self.init_dj_record_state()
         self.init_vote_session_state()
         self.init_dj_state()
+        self.init_party_state()
 
         # Ecualizador (graves / voces / agudos) aplicado a la música local
         self.eq_settings = load_eq_settings()
@@ -362,6 +364,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
 
         # === PAGE 6: MODO DJ ===
         self.build_dj_page()
+        self.build_party_page()         # === PAGE 7: MODO FIESTA ===
 
         build_player_bar(self)
         install_ripples(self)           # onda al pulsar en los botones principales
@@ -401,6 +404,9 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         focus_w = QApplication.focusWidget()
         if isinstance(focus_w, QLineEdit):
             super().keyPressEvent(event)
+            return
+        if self.party_key(event):           # con la pantalla de la fiesta delante, sus teclas (espacio, flechas, Esc...)
+            event.accept()
             return
 
         key = event.key()
@@ -782,7 +788,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             "Solo tienen sentido si vas a editar el audio.</p>",
             ok="Entendido")
 
-    _PAGE_DEPTH = {0: 0, 5: 0, 6: 0, 1: 1, 4: 1, 2: 2, 3: 3}      # inicio, biblioteca y DJ arriba; el detalle, más hondo
+    _PAGE_DEPTH = {0: 0, 5: 0, 6: 0, 7: 0, 1: 1, 4: 1, 2: 2, 3: 3}      # inicio, biblioteca, DJ y fiesta arriba; el detalle, más hondo
 
     def switch_to_page(self, target_index: int):
         """Cambia de página con un cruce suave: se hace una foto de la página que se va y esa foto se desvanece (y se
@@ -1582,6 +1588,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             return
         logging.info("Cerrando aplicación...")
         self.save_session()
+        self.party_shutdown()                   # los votos del público dejan de escuchar en la red
         self.shutdown_playback_options()
 
         self.stop_background_work()

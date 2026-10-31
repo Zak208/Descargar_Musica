@@ -35,3 +35,4 @@ app.lock
 *.corrupto-*
 *.restaurando
 /Descargador_Musica-Setup-*.exe
+venv_ia/
