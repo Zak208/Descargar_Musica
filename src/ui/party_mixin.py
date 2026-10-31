@@ -13,7 +13,10 @@ Lo que NO cuenta como fallo: la pausa (la del usuario, la del temporizador o cua
 canción que está cargando (el motor en «loading» o el reproductor en `LoadingMedia`), los `GRACE_S` que siguen a empezar o a
 una recuperación, la última canción de la sesión que llega a su final y un parón de la propia interfaz (si entre dos vueltas
 del vigilante pasan más de `FROZEN_UI_S`, el que estuvo parado fue el hilo de la ventana, no el sonido: se empieza a contar
-de nuevo).
+de nuevo). Lo nuevo del motor tampoco lo confunde: el limitador de salida solo redondea picos (nunca deja en silencio ni para
+la posición); los tipos de transición y los bucles antes de la mezcla siguen moviendo la posición (un bucle la hace volver
+atrás, y eso cuenta como movimiento); y el puntuador (`audio_check`) trabaja en el hilo de la sesión al preparar la mezcla, sin
+tocar lo que suena ni la posición que ve la ventana.
 
 Cómo se recupera, por escalones (si el fallo anterior fue hace menos de `ESCALATE_S`, 2 minutos, se sube un escalón):
   1. con el motor propio: se reinicia la sesión del motor (y su flujo de audio si se cerró) en la siguiente canción;
@@ -114,11 +117,11 @@ class PartyMixin:
         self.page_party = None
         self._party_on = False
         self._party_clock = time.monotonic          # las pruebas lo cambian para simular el paso del tiempo
-        self._party_timer = QTimer()
+        self._party_timer = QTimer(self)             # con la ventana como padre: se destruyen con ella, en orden
         self._party_timer.setInterval(WATCH_MS)
         self._party_timer.timeout.connect(self._party_watch)
         self._party_events = deque(maxlen=EVENT_MEMORY)
-        self._party_bridge = _CrowdBridge()
+        self._party_bridge = _CrowdBridge(self)
         self._party_bridge.signal.connect(self._party_on_crowd)
         self._party_crowd = None
         self._party_qr = None
