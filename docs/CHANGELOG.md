@@ -3,6 +3,20 @@
 Formato: `MAYOR.MENOR.PARCHE`. MAYOR = cambios que rompen datos o uso, MENOR = funciones nuevas, PARCHE = arreglos.
 Cada versión subida a GitHub tiene su etiqueta `vX.Y.Z` (pestaña *Releases/Tags*).
 
+## 1.19.0
+**Streaming Proxy local y Autoplay infinito**
+- **StreamingProxy HTTP 206 local**: Servidor proxy loopback multihilo en `127.0.0.1` con soporte nativo de solicitudes parciales `Range: bytes=X-Y` (HTTP 206) y reintentos ante estrangulamiento o cortes de YouTube, eliminando pausas a mitad de canción o bloqueos a 00:00.
+- **Autoplay inteligente continuo**: Al terminar cualquier lista, álbum o cola de reproducción, la música no se corta: continúa automáticamente con canciones populares recomendadas del artista (vía Deezer RANKING) o temas de la biblioteca local si no hay conexión.
+- **Conmutador de Autoplay en Ajustes**: Opción configurable en `Ajustes` -> `Reproducción` para habilitar o deshabilitar la reproducción automática continua.
+
+**Búsqueda y ranking avanzado**
+- **Buscador multivariable por relevancia y popularidad**: Ponderación combinada entre coincidencia exacta de título/artista, número de streams globales de Deezer y catálogo de iTunes, con penalizaciones automáticas a remixes no oficiales o karaokes.
+- **Modo Privado en Discord Rich Presence**: Al activar el modo privado, la presencia en Discord y Vencord se limpia inmediatamente sin filtrar datos de reproducción.
+
+**UI y rendimiento de carátulas**
+- **Prioridad local-first en carátulas**: La carga de portadas lee primero las etiquetas locales incrustadas para una latencia de 0 ms y compatibilidad offline inmediata.
+- **Eliminación de artefactos de foco y botón de descarga**: Consumo de eventos de ratón en estados de descarga y foco protegido sin recuadros residuales.
+
 ## 1.18.0
 **Discord Rich Presence nativo**
 - **Sincronización en tiempo real con Discord y Vencord**: presencia de estado que muestra el título de la canción, artista, álbum, carátula y el tiempo transcurrido sincronizado.
