@@ -5,7 +5,7 @@ numpy>=1.26.0              # análisis de audio del modo DJ (tono); sin él la a
 requests>=2.31.0
 sounddevice>=0.5.0         # motor de audio propio del modo DJ (trae PortAudio); sin él el DJ usa el reproductor de siempre
 # Control multimedia de Windows (opcional: sin ellos la aplicación funciona igual)
-winrt-runtime>=3.2.1; sys_platform == "win32"
+winrt-runtime>=4.1.0; sys_platform == "win32"
 winrt-Windows.Foundation>=3.2.1; sys_platform == "win32"
 winrt-Windows.Foundation.Collections>=3.2.1; sys_platform == "win32"
 winrt-Windows.Media>=3.2.1; sys_platform == "win32"
