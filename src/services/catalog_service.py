@@ -105,12 +105,50 @@ class CatalogSearchWorker(QThread):
             except Exception as e:
                 logger.warning(f"Error buscando artistas: {e}")
 
-            # 2. Buscar canciones (iTunes con deduplicación)
+            # 2. Buscar canciones con Deezer (RANKING de popularidad) + iTunes (fallback y complemento)
+            track_candidates = []
+            q_lower = self.query.lower()
+
+            # A. Deezer search ordenado por popularidad de escuchas globales (RANKING)
+            try:
+                r_dz = http.get(
+                    'https://api.deezer.com/search',
+                    params={'q': self.query, 'order': 'RANKING', 'limit': min(60, self.limits['tracks'] * 2)},
+                    timeout=4
+                )
+                if r_dz.status_code == 200:
+                    for it in r_dz.json().get('data', []):
+                        if self.is_cancelled:
+                            return
+                        t_name = it.get('title', '').strip()
+                        art_name = it.get('artist', {}).get('name', '').strip()
+                        track_key = (t_name.lower(), art_name.lower())
+                        if not t_name or track_key in seen_track_keys:
+                            continue
+                        seen_track_keys.add(track_key)
+                        duration_s = int(it.get('duration', 0) or 0)
+                        album_obj = it.get('album', {})
+                        artwork = album_obj.get('cover_big') or album_obj.get('cover_medium') or album_obj.get('cover') or ''
+                        track_candidates.append({
+                            "title": t_name,
+                            "uploader": art_name or 'Artista Desconocido',
+                            "album": album_obj.get('title', ''),
+                            "duration_secs": duration_s,
+                            "duration_str": format_duration(duration_s, blank_zero=False),
+                            "thumbnail": artwork,
+                            "url": f"ytsearch1:{art_name} {t_name}",
+                            "id": str(it.get('id', '')),
+                            "rank": int(it.get('rank', 0) or 0)
+                        })
+            except Exception as e:
+                logger.debug(f"Error consultando Deezer tracks: {e}")
+
+            # B. iTunes search (cobertura complementaria)
             try:
                 r_tracks = http.get(
                     'https://itunes.apple.com/search',
-                    params={'term': self.query, 'entity': 'song', 'limit': min(200, self.limits['tracks'] + 10)},
-                    timeout=5
+                    params={'term': self.query, 'entity': 'song', 'limit': min(50, self.limits['tracks'] + 10)},
+                    timeout=4
                 )
                 if r_tracks.status_code == 200:
                     for item in r_tracks.json().get('results', []):
@@ -125,7 +163,7 @@ class CatalogSearchWorker(QThread):
 
                         duration_s = item.get('trackTimeMillis', 0) // 1000
                         artwork = item.get('artworkUrl100', '').replace('100x100bb', '600x600bb')
-                        results["tracks"].append({
+                        track_candidates.append({
                             "title": t_name or 'Sin título',
                             "uploader": art_name or 'Artista Desconocido',
                             "album": item.get('collectionName', ''),
@@ -133,19 +171,90 @@ class CatalogSearchWorker(QThread):
                             "duration_str": format_duration(duration_s, blank_zero=False),
                             "thumbnail": artwork,
                             "url": f"ytsearch1:{art_name} {t_name}",
-                            "id": str(item.get('trackId', ''))
+                            "id": str(item.get('trackId', '')),
+                            "rank": 0
                         })
-                        if len(results["tracks"]) >= self.limits["tracks"]:
-                            break
             except Exception as e:
-                logger.warning(f"Error buscando canciones: {e}")
+                logger.debug(f"Error consultando iTunes tracks: {e}")
 
-            # 3. Buscar álbumes (iTunes con deduplicación)
+            # C. Puntuación multivariable y ordenación por relevancia estilo Spotify
+            def _calc_score(t):
+                title = t.get('title', '').lower()
+                artist = t.get('uploader', '').lower()
+                rank = t.get('rank', 0)
+                score = 0.0
+
+                # Coincidencia con título
+                if title == q_lower:
+                    score += 1000.0
+                elif title.startswith(q_lower):
+                    score += 700.0
+                elif q_lower in title:
+                    score += 400.0
+
+                # Coincidencia con artista
+                if artist == q_lower:
+                    score += 850.0
+                elif artist.startswith(q_lower):
+                    score += 550.0
+                elif q_lower in artist:
+                    score += 350.0
+
+                # Palabras individuales
+                q_words = [w for w in q_lower.split() if len(w) > 2]
+                if q_words and all(w in title or w in artist for w in q_words):
+                    score += 200.0
+
+                # Popularidad global de escuchas (Deezer rank)
+                score += min(1000.0, rank / 1000.0)
+
+                # Penalizar versiones secundarias si el usuario no las pidió expresamente
+                for word in ('remix', 'karaoke', 'tribute', 'tributo', 'cover', 'instrumental'):
+                    if word in title and word not in q_lower:
+                        score -= 250.0
+
+                return score
+
+            track_candidates.sort(key=_calc_score, reverse=True)
+            results["tracks"] = track_candidates[:self.limits["tracks"]]
+
+            # 3. Buscar álbumes (Deezer + iTunes con prioridad a paquetes completos)
+            album_candidates = []
+            try:
+                r_dz_alb = http.get(
+                    'https://api.deezer.com/search/album',
+                    params={'q': self.query, 'limit': min(30, self.limits['albums'] + 10)},
+                    timeout=4
+                )
+                if r_dz_alb.status_code == 200:
+                    for it in r_dz_alb.json().get('data', []):
+                        if self.is_cancelled:
+                            return
+                        title = it.get('title', '').strip()
+                        art = it.get('artist', {}).get('name', '').strip()
+                        key = (title.lower(), art.lower())
+                        if not title or key in seen_album_keys:
+                            continue
+                        seen_album_keys.add(key)
+                        track_count = int(it.get('nb_tracks', 0) or 0)
+                        cover = it.get('cover_big') or it.get('cover_medium') or it.get('cover') or ''
+                        album_candidates.append({
+                            "id": it.get('id'),
+                            "name": title,
+                            "artist": art,
+                            "year": (it.get('release_date') or '')[:4],
+                            "track_count": track_count,
+                            "cover": cover,
+                            "type": "single" if track_count <= 2 else "album"
+                        })
+            except Exception as e:
+                logger.debug(f"Error consultando Deezer álbumes: {e}")
+
             try:
                 r_alb = http.get(
                     'https://itunes.apple.com/search',
-                    params={'term': self.query, 'entity': 'album', 'limit': min(200, self.limits['albums'] + 8)},
-                    timeout=5
+                    params={'term': self.query, 'entity': 'album', 'limit': min(30, self.limits['albums'] + 8)},
+                    timeout=4
                 )
                 if r_alb.status_code == 200:
                     for item in r_alb.json().get('results', []):
@@ -161,7 +270,7 @@ class CatalogSearchWorker(QThread):
                         artwork = item.get('artworkUrl100', '').replace('100x100bb', '600x600bb')
                         track_count = int(item.get('trackCount', 0) or 0)
                         is_single = track_count <= 2 or col_name.lower().endswith(' - single')
-                        results["albums"].append({
+                        album_candidates.append({
                             "id": item.get('collectionId'),
                             "name": col_name,
                             "artist": art_name,
@@ -170,14 +279,12 @@ class CatalogSearchWorker(QThread):
                             "cover": artwork,
                             "type": "single" if is_single else "album"
                         })
-                        if len(results["albums"]) >= self.limits["albums"] * 2:
-                            break
-
-                # Priorizar álbumes completos (paquetes) sobre singles de 1 cancion
-                results["albums"].sort(key=lambda a: (0 if a.get("type") == "album" else 1, -a.get("track_count", 0)))
-                results["albums"] = results["albums"][:self.limits["albums"]]
             except Exception as e:
-                logger.warning(f"Error buscando álbumes: {e}")
+                logger.debug(f"Error consultando iTunes álbumes: {e}")
+
+            # Priorizar álbumes completos (paquetes) sobre singles de 1 cancion
+            album_candidates.sort(key=lambda a: (0 if a.get("type") == "album" else 1, -a.get("track_count", 0)))
+            results["albums"] = album_candidates[:self.limits["albums"]]
 
             if not self.is_cancelled:
                 self.results_ready.emit(results)

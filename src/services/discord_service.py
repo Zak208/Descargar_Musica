@@ -11,7 +11,17 @@ import threading
 import time
 import uuid
 
-from config import get_discord_rpc_enabled, get_discord_client_id
+from config import load_settings
+
+DEFAULT_DISCORD_CLIENT_ID = "1200000000000000000"
+
+
+def get_discord_rpc_enabled() -> bool:
+    return bool(load_settings().get("discord_rpc", True))
+
+
+def get_discord_client_id() -> str:
+    return str(load_settings().get("discord_client_id", DEFAULT_DISCORD_CLIENT_ID))
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +55,9 @@ class DiscordRPCService:
             return cls._instance
 
     def start(self):
-        if not get_discord_rpc_enabled():
+        from services.network_service import private_mode
+        if not get_discord_rpc_enabled() or private_mode():
+            self.clear_presence()
             return
         if self._running:
             return
@@ -60,7 +72,8 @@ class DiscordRPCService:
         self._disconnect()
 
     def update_presence(self, info: dict, position_s: int = 0, is_playing: bool = True):
-        if not get_discord_rpc_enabled() or not info:
+        from services.network_service import private_mode
+        if not get_discord_rpc_enabled() or private_mode() or not info:
             self.clear_presence()
             return
         if not self._running:
@@ -166,7 +179,8 @@ class DiscordRPCService:
                 if self._queue:
                     item = self._queue.pop(0)
 
-            if not get_discord_rpc_enabled():
+            from services.network_service import private_mode
+            if not get_discord_rpc_enabled() or private_mode():
                 self._send_clear()
                 continue
 

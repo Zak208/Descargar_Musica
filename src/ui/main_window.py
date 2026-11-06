@@ -1456,6 +1456,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
     def on_seek_changed(self, value):
         if not getattr(self, 'is_updating_seek', False):
             self.player.setPosition(value)
+            self._update_discord_rpc()
 
     def format_time(self, ms: int) -> str:
         if ms <= 0:
