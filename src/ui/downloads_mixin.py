@@ -249,15 +249,34 @@ class DownloadsMixin:
         tracks = album.get("tracks", [])
         if not tracks:
             return
-        name = album.get("name", "Álbum")
+        name = album.get("name") or album.get("album") or "Álbum"
+        artist = album.get("artist") or album.get("uploader") or ""
+        cover = album.get("cover") or ""
+        year = album.get("year") or ""
         playlist_id = PlaylistService.create_playlist(name)
+
+        prepared_tracks = []
         for track in tracks:
-            PlaylistService.add_track_to_playlist(playlist_id, track)
-        if album.get("cover"):
-            job = PlaylistCoverFromUrl(playlist_id, album["cover"])
+            t = dict(track)
+            t["album_bundle"] = True
+            if not t.get("album"):
+                t["album"] = name
+            if not t.get("uploader") and artist:
+                t["uploader"] = artist
+            if not t.get("album_artist") and artist:
+                t["album_artist"] = artist
+            if not t.get("year") and year:
+                t["year"] = year
+            if cover and not t.get("thumbnail"):
+                t["thumbnail"] = cover
+            prepared_tracks.append(t)
+            PlaylistService.add_track_to_playlist(playlist_id, t)
+
+        if cover:
+            job = PlaylistCoverFromUrl(playlist_id, cover)
             job.done.connect(lambda _pid: self.refresh_playlists_sidebar())
             self._cover_jobs.append(job)
             job.start()
         self.refresh_playlists_sidebar()
-        self.start_batch_download(tracks)
+        self.start_batch_download(prepared_tracks)
         self.notify(f"Lista «{name}» creada. Se están descargando sus canciones.")

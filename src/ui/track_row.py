@@ -161,12 +161,12 @@ class TrackRow(QFrame, HoverFader):
         return btn
 
     def _load_cover(self):
-        url = self.item_info.get("thumbnail")
         local = self.item_info.get("local_path")
-        if url:
-            loader = ImageLoaderThread(url, False, (ROW_COVER, ROW_COVER), 5)
-        elif local and os.path.isfile(local):
+        url = self.item_info.get("thumbnail")
+        if local and os.path.isfile(local):
             loader = LocalCoverLoader(local, False, (ROW_COVER, ROW_COVER), 5)
+        elif url:
+            loader = ImageLoaderThread(url, False, (ROW_COVER, ROW_COVER), 5)
         else:
             return
         loader.image_loaded.connect(self._set_cover)
@@ -208,7 +208,7 @@ class TrackRow(QFrame, HoverFader):
             self.dl_btn.set_done(animate=self._was_downloading)
             self._was_downloading = False
             self.dl_btn.setToolTip("Descargada en tu equipo")
-            self.dl_btn.setEnabled(False)
+            self.dl_btn.setCursor(Qt.ArrowCursor)
         elif pending and not self._downloading:
             self.dl_btn.set_idle()
             self.dl_btn.setIcon(icon("clock.svg", "#FFD166"))
@@ -313,7 +313,7 @@ class TrackRow(QFrame, HoverFader):
         self.refresh_state()
 
     def _download(self):
-        if self.item_info.get("local_path") or self._downloading:
+        if self.item_info.get("local_path") or self._downloading or self.dl_btn._mode in ("busy", "done"):
             return
         self._downloading = True
         self._was_downloading = True

@@ -85,6 +85,7 @@ class SmoothProgress(QWidget):
 
     def paintEvent(self, _event):
         p = QPainter(self)
+        p.eraseRect(self.rect())
         p.setRenderHint(QPainter.Antialiasing)
         r = self.height() / 2
         rect = QRectF(self.rect())
@@ -325,6 +326,12 @@ class DownloadStateButton(QPushButton):
             clock().unsubscribe(self._token)
             self._token = None
         super().hideEvent(event)
+
+    def mousePressEvent(self, event):
+        if self._mode in ("busy", "done"):
+            event.accept()
+            return
+        super().mousePressEvent(event)
 
     def _tick(self, dt):
         self._spin = (self._spin + dt * 0.36) % 360.0

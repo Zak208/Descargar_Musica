@@ -134,10 +134,10 @@ class NowPlayingFull(QDialog, AmbientBackdrop):
     def _load_cover(self, info: dict):
         size = self._cover_size
         url, local = info.get("thumbnail"), info.get("local_path")
-        if url:
-            loader = ImageLoaderThread(url, False, (size, size), 18)
-        elif local and os.path.isfile(local):
+        if local and os.path.isfile(local):
             loader = LocalCoverLoader(local, False, (size, size), 18)
+        elif url:
+            loader = ImageLoaderThread(url, False, (size, size), 18)
         else:
             self.cover_box.cover.clear()
             return

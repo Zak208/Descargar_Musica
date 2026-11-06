@@ -289,12 +289,12 @@ class SongResultCard(QFrame, HoverFader):
         menu.exec(self.menu_btn.mapToGlobal(self.menu_btn.rect().bottomLeft()))
 
     def load_thumbnail(self):
-        url = self.item_info.get('thumbnail')
         local = self.item_info.get('local_path')
-        if url:
-            loader = ImageLoaderThread(url, False, (COVER_SIZE, COVER_SIZE), 6)
-        elif local and os.path.isfile(local):
+        url = self.item_info.get('thumbnail')
+        if local and os.path.isfile(local):
             loader = LocalCoverLoader(local, False, (COVER_SIZE, COVER_SIZE), 6)
+        elif url:
+            loader = ImageLoaderThread(url, False, (COVER_SIZE, COVER_SIZE), 6)
         else:
             return
         loader.image_loaded.connect(self._set_thumb)

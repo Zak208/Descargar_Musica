@@ -598,10 +598,10 @@ class NowPlayingPanel(QFrame):
     def _load_cover(self, info):
         url, local = info.get("thumbnail"), info.get("local_path")
         side = self.cover.width()
-        if url:
-            loader = ImageLoaderThread(url, False, (side, side), 12)
-        elif local and os.path.isfile(local):
+        if local and os.path.isfile(local):
             loader = LocalCoverLoader(local, False, (side, side), 12)
+        elif url:
+            loader = ImageLoaderThread(url, False, (side, side), 12)
         else:
             self.cover.clear()
             return
@@ -737,10 +737,10 @@ class NowPlayingPanel(QFrame):
         self.next_title.setText(nxt.get("title", ""))
         self.next_artist.setText(nxt.get("uploader", ""))
         url, local = nxt.get("thumbnail"), nxt.get("local_path")
-        if url:
-            loader = ImageLoaderThread(url, False, (48, 48), 6)
-        elif local and os.path.isfile(local):
+        if local and os.path.isfile(local):
             loader = LocalCoverLoader(local, False, (48, 48), 6)
+        elif url:
+            loader = ImageLoaderThread(url, False, (48, 48), 6)
         else:
             self.next_cover.clear()
             return
