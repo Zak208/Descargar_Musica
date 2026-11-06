@@ -1476,7 +1476,10 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
 
         self._use_default_audio_device()
 
-        self.player.setSource(QUrl(stream_url))
+        from services.streaming_proxy import StreamingProxy
+        proxied_url = StreamingProxy.get_instance().get_stream_url(stream_url)
+
+        self.player.setSource(QUrl(proxied_url))
         self.player.play()
         self.player_status.setText("Reproduciendo")
         self.btn_play_pause.set_state(True)
@@ -1657,6 +1660,12 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         try:
             from services.discord_service import DiscordRPCService
             DiscordRPCService.get_instance().stop()
+        except Exception:
+            pass
+
+        try:
+            from services.streaming_proxy import StreamingProxy
+            StreamingProxy.get_instance().stop()
         except Exception:
             pass
 

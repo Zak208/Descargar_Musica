@@ -1,8 +1,11 @@
 """Lógica de reproducción estilo Spotify: contexto (lista que suena), historial, anterior/siguiente y aleatorio."""
+import logging
 import os
 import random
 
 from PySide6.QtMultimedia import QMediaPlayer
+
+logger = logging.getLogger(__name__)
 
 RESTART_THRESHOLD_MS = 20000  # 'anterior' reinicia la canción si ya han pasado 20 s
 
@@ -198,6 +201,83 @@ class PlaybackMixin:
         if self.player.playbackState() != QMediaPlayer.PlayingState:
             self.player.play()
 
+    def _try_autoplay(self, xf: int = 0) -> bool:
+        from config import load_settings
+        if not load_settings().get("autoplay_enabled", True):
+            return False
+        info = self.current_item_info
+        if not info:
+            return False
+        artist = info.get("uploader") or info.get("artist") or ""
+        title = info.get("title") or ""
+        if not artist and not title:
+            return False
+
+        if not hasattr(self, "_autoplay_history"):
+            self._autoplay_history = set()
+        current_key = (title.lower().strip(), artist.lower().strip())
+        self._autoplay_history.add(current_key)
+
+        candidates = []
+        from services.network_service import is_online, private_mode
+        if is_online() and not private_mode() and artist:
+            try:
+                from services import http
+                r = http.get(
+                    "https://api.deezer.com/search",
+                    params={"q": artist, "order": "RANKING", "limit": 15},
+                    timeout=3
+                )
+                if r.status_code == 200:
+                    for it in r.json().get("data", []):
+                        t_name = it.get("title", "").strip()
+                        art_name = it.get("artist", {}).get("name", "").strip()
+                        key = (t_name.lower(), art_name.lower())
+                        if key in self._autoplay_history:
+                            continue
+                        self._autoplay_history.add(key)
+                        album_obj = it.get("album", {})
+                        art_w = album_obj.get("cover_big") or album_obj.get("cover_medium") or ""
+                        dur = int(it.get("duration", 0) or 0)
+                        from services.timefmt import format_duration
+                        candidates.append({
+                            "title": t_name,
+                            "uploader": art_name,
+                            "album": album_obj.get("title", ""),
+                            "duration_secs": dur,
+                            "duration_str": format_duration(dur, blank_zero=False),
+                            "thumbnail": art_w,
+                            "url": f"ytsearch1:{art_name} {t_name}",
+                            "id": str(it.get("id", "")),
+                            "is_autoplay": True
+                        })
+                        if len(candidates) >= 5:
+                            break
+            except Exception as e:
+                logger.debug(f"Error buscando autoplay online: {e}")
+
+        if not candidates and hasattr(self, "_lib_items") and self._lib_items:
+            import random
+            available = [
+                i for i in self._lib_items
+                if (i.get("title", "").lower().strip(), (i.get("uploader") or "").lower().strip()) not in self._autoplay_history
+            ]
+            if available:
+                random.shuffle(available)
+                candidates = available[:5]
+
+        if not candidates:
+            return False
+
+        nxt = candidates[0]
+        nxt["is_autoplay"] = True
+        self.playback_queue.extend(candidates[1:])
+        self._context.append(nxt)
+        if hasattr(self, "notify"):
+            self.notify(f"Reproducción automática · {nxt.get('title', '')}")
+        self._play_entry(nxt, crossfade_ms=xf)
+        return True
+
     def play_next(self, natural: bool = False):
         """Siguiente: primero la cola manual, luego lo que se dejó atrás con 'anterior', luego la lista.
         `natural`: lo pide el fundido cruzado al acercarse el final de la canción."""
@@ -220,6 +300,9 @@ class PlaybackMixin:
         if nxt is not None:
             self._shuffle_plan = [t for t in self._shuffle_plan if not self._same_track(t, nxt)]
             self._play_entry(nxt, crossfade_ms=xf)
+            return
+        # Si no hay más temas, continuar con Autoplay inteligente
+        if self._try_autoplay(xf):
             return
         # Fin de la lista: se detiene pero el reproductor sigue visible
         self.player.stop()

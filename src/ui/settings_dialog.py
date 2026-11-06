@@ -179,6 +179,11 @@ class SettingsDialog(InlineDialog):
         self.chk_normalize.setChecked(bool(load_settings().get("normalize_volume", True)))
         self.chk_normalize.toggled.connect(lambda on: self.window_ref.set_normalize(on))
         play_lay.addWidget(self.chk_normalize)
+
+        self.chk_autoplay = QCheckBox("Reproducción automática (seguir con canciones similares al terminar)")
+        self.chk_autoplay.setChecked(bool(load_settings().get("autoplay_enabled", True)))
+        self.chk_autoplay.toggled.connect(lambda on: self._save_flag("autoplay_enabled", on))
+        play_lay.addWidget(self.chk_autoplay)
         fade_row = QHBoxLayout()
         fade_row.addWidget(QLabel("Fundido entre canciones"))
         self.fade_combo = NoWheelComboBox()
