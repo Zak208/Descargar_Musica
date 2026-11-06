@@ -159,16 +159,23 @@ class CatalogSearchWorker(QThread):
                         seen_album_keys.add(album_key)
 
                         artwork = item.get('artworkUrl100', '').replace('100x100bb', '600x600bb')
+                        track_count = int(item.get('trackCount', 0) or 0)
+                        is_single = track_count <= 2 or col_name.lower().endswith(' - single')
                         results["albums"].append({
                             "id": item.get('collectionId'),
                             "name": col_name,
                             "artist": art_name,
                             "year": item.get('releaseDate', '')[:4],
-                            "track_count": item.get('trackCount', 0),
-                            "cover": artwork
+                            "track_count": track_count,
+                            "cover": artwork,
+                            "type": "single" if is_single else "album"
                         })
-                        if len(results["albums"]) >= self.limits["albums"]:
+                        if len(results["albums"]) >= self.limits["albums"] * 2:
                             break
+
+                # Priorizar álbumes completos (paquetes) sobre singles de 1 cancion
+                results["albums"].sort(key=lambda a: (0 if a.get("type") == "album" else 1, -a.get("track_count", 0)))
+                results["albums"] = results["albums"][:self.limits["albums"]]
             except Exception as e:
                 logger.warning(f"Error buscando álbumes: {e}")
 
@@ -195,39 +202,71 @@ class ArtistDetailsWorker(QThread):
         try:
             avatar = self.avatar or get_artist_avatar(self.artist_name)
 
-            # Top canciones del artista (sin duplicados)
+            # Top canciones del artista por popularidad real (Deezer API / iTunes)
             top_tracks = []
             seen_song_names = set()
-            try:
-                r_songs = http.get(
-                    'https://itunes.apple.com/lookup',
-                    params={'id': self.artist_id, 'entity': 'song', 'limit': 15},
-                    timeout=6
-                )
-                if r_songs.status_code == 200:
-                    for item in r_songs.json().get('results', []):
-                        if item.get('wrapperType') == 'track':
-                            s_name = item.get('trackName', '').strip()
-                            if not s_name or s_name.lower() in seen_song_names:
-                                continue
-                            seen_song_names.add(s_name.lower())
 
-                            duration_s = item.get('trackTimeMillis', 0) // 1000
-                            artwork = item.get('artworkUrl100', '').replace('100x100bb', '600x600bb')
-                            top_tracks.append({
-                                "title": s_name,
-                                "uploader": item.get('artistName', self.artist_name),
-                                "album": item.get('collectionName', ''),
-                                "duration_secs": duration_s,
-                                "duration_str": format_duration(duration_s, blank_zero=False),
-                                "thumbnail": artwork,
-                                "url": f"ytsearch1:{self.artist_name} {s_name}",
-                                "id": str(item.get('trackId', ''))
-                            })
-                            if len(top_tracks) >= 8:
-                                break
+            # 1. Intentar Deezer para ranking por número de reproducciones / popularidad
+            try:
+                r_dz = http.get('https://api.deezer.com/search/artist', params={'q': self.artist_name}, timeout=4)
+                if r_dz.status_code == 200:
+                    dz_data = r_dz.json().get('data', [])
+                    if dz_data:
+                        dz_art = dz_data[0]
+                        dz_id = dz_art.get('id')
+                        r_top = http.get(f'https://api.deezer.com/artist/{dz_id}/top', params={'limit': 30}, timeout=5)
+                        if r_top.status_code == 200:
+                            for item in r_top.json().get('data', []):
+                                s_name = (item.get('title_short') or item.get('title', '')).strip()
+                                if not s_name or s_name.lower() in seen_song_names:
+                                    continue
+                                seen_song_names.add(s_name.lower())
+                                duration_s = int(item.get('duration', 0) or 0)
+                                alb_obj = item.get('album', {})
+                                artwork = alb_obj.get('cover_big') or alb_obj.get('cover_medium', '')
+                                top_tracks.append({
+                                    "title": s_name,
+                                    "uploader": item.get('artist', {}).get('name', self.artist_name),
+                                    "album": alb_obj.get('title', ''),
+                                    "duration_secs": duration_s,
+                                    "duration_str": format_duration(duration_s, blank_zero=False),
+                                    "thumbnail": artwork,
+                                    "url": f"ytsearch1:{self.artist_name} {s_name}",
+                                    "id": f"dz_{item.get('id', '')}"
+                                })
             except Exception as e:
-                logger.warning(f"Error obteniendo canciones del artista: {e}")
+                logger.warning(f"Error consultando top tracks de Deezer para {self.artist_name}: {e}")
+
+            # 2. Fallback o complemento con iTunes si Deezer devolvió pocas pistas
+            if len(top_tracks) < 5:
+                try:
+                    r_songs = http.get(
+                        'https://itunes.apple.com/lookup',
+                        params={'id': self.artist_id, 'entity': 'song', 'limit': 50},
+                        timeout=6
+                    )
+                    if r_songs.status_code == 200:
+                        for item in r_songs.json().get('results', []):
+                            if item.get('wrapperType') == 'track':
+                                s_name = item.get('trackName', '').strip()
+                                if not s_name or s_name.lower() in seen_song_names:
+                                    continue
+                                seen_song_names.add(s_name.lower())
+
+                                duration_s = item.get('trackTimeMillis', 0) // 1000
+                                artwork = item.get('artworkUrl100', '').replace('100x100bb', '600x600bb')
+                                top_tracks.append({
+                                    "title": s_name,
+                                    "uploader": item.get('artistName', self.artist_name),
+                                    "album": item.get('collectionName', ''),
+                                    "duration_secs": duration_s,
+                                    "duration_str": format_duration(duration_s, blank_zero=False),
+                                    "thumbnail": artwork,
+                                    "url": f"ytsearch1:{self.artist_name} {s_name}",
+                                    "id": str(item.get('trackId', ''))
+                                })
+                except Exception as e:
+                    logger.warning(f"Error obteniendo canciones del artista en iTunes: {e}")
 
             # Álbumes del artista (sin duplicados ni reediciones repetidas)
             albums = []
@@ -235,7 +274,7 @@ class ArtistDetailsWorker(QThread):
             try:
                 r_albums = http.get(
                     'https://itunes.apple.com/lookup',
-                    params={'id': self.artist_id, 'entity': 'album', 'limit': 30},
+                    params={'id': self.artist_id, 'entity': 'album', 'limit': 100},
                     timeout=6
                 )
                 if r_albums.status_code == 200:
@@ -248,16 +287,22 @@ class ArtistDetailsWorker(QThread):
                             seen_album_names.add(norm_alb)
 
                             artwork = item.get('artworkUrl100', '').replace('100x100bb', '600x600bb')
+                            t_cnt = int(item.get('trackCount', 0) or 0)
+                            is_sgl = t_cnt <= 2 or norm_alb.endswith(' - single')
                             albums.append({
                                 "id": item.get('collectionId'),
                                 "name": alb_title,
                                 "artist": item.get('artistName', self.artist_name),
                                 "year": item.get('releaseDate', '')[:4],
-                                "track_count": item.get('trackCount', 0),
-                                "cover": artwork
+                                "track_count": t_cnt,
+                                "cover": artwork,
+                                "type": "single" if is_sgl else "album"
                             })
             except Exception as e:
                 logger.warning(f"Error obteniendo álbumes del artista: {e}")
+
+            # Álbumes completos primero, luego sencillos
+            albums.sort(key=lambda a: (0 if a.get("type") == "album" else 1, -a.get("track_count", 0)))
 
             if not self.is_cancelled:
                 self.details_ready.emit({
@@ -320,6 +365,7 @@ class AlbumDetailsWorker(QThread):
                         "url": f"ytsearch1:{artist_name} {item.get('trackName')}",
                         "id": str(item.get('trackId', ''))
                     })
+
 
             if not self.is_cancelled:
                 self.details_ready.emit({

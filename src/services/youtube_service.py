@@ -389,7 +389,7 @@ class DownloadWorker(QThread):
         first = first_artist(artist)
         if self.organize == "artist":
             return base / sanitize_filename(first or "Artista desconocido")
-        if self.organize == "artist_album":
+        if self.organize == "artist_album" or (self.item_info.get("album_bundle") and album):
             return base / sanitize_filename(first or "Artista desconocido") / sanitize_filename(album or "Sin álbum")
         return base
 

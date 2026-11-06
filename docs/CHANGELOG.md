@@ -3,6 +3,25 @@
 Formato: `MAYOR.MENOR.PARCHE`. MAYOR = cambios que rompen datos o uso, MENOR = funciones nuevas, PARCHE = arreglos.
 Cada versión subida a GitHub tiene su etiqueta `vX.Y.Z` (pestaña *Releases/Tags*).
 
+## 1.18.0
+**Discord Rich Presence nativo**
+- **Sincronización en tiempo real con Discord y Vencord**: presencia de estado que muestra el título de la canción, artista, álbum, carátula y el tiempo transcurrido sincronizado.
+- Conexión ligera y asíncrona mediante el Named Pipe oficial de Windows (`discord-ipc-0` a `9`) con fallback transparente para CustomRPC.
+- Interruptor interactivo en Ajustes para habilitar o deshabilitar la presencia con un clic.
+
+**Catálogo, discografías y popularidad**
+- **Top temas por popularidad real**: las canciones en los perfiles de artistas ahora se consultan y ordenan según su número de reproducciones globales con el servicio de Deezer, idéntico a Spotify.
+- **Álbumes completos separados de singles**: los álbumes con 3 o más canciones se presentan como paquetes completos con prioridad sobre sencillos. Las descargas de álbumes se organizan automáticamente en carpetas `Artista/Álbum/`.
+- **Discografía ampliada**: hasta 100 álbumes y 50 temas disponibles en perfiles de artistas.
+
+**Reproductor y streaming más robusto**
+- **Autorecuperación de caídas y buffering**: detección y reanudación automática de reproducciones congeladas o cortes prematuros de YouTube (`StalledMedia` / `EndOfMedia`), restaurando el audio en el punto exacto donde se detuvo.
+- **Reproducción al primer clic**: en perfiles de artistas, listas y resultados de búsqueda, un clic sobre la carátula o fila inicia la música inmediatamente. Si la canción ya está descargada en tu equipo, se reproduce al instante desde el disco.
+- **Actualización fiable de carátulas**: al cambiar de canción desde cualquier sección, la carátula inferior se actualiza de inmediato mediante carga asíncrona en segundo plano sin congelarse en la imagen de la lista anterior.
+
+**Arreglos visuales y de interacción**
+- **Descargas limpias sin artefactos**: eliminado el recuadro morado residual que salía sobre el botón `+` al pulsar descargar; los botones de acción ya no roban el foco de teclado. Capas de animación con fondo translúcido y coordenadas absolutas corregidas.
+
 ## 1.17.2
 **Arreglos**
 - **Arrastrar el panel derecho muy deprisa daba saltos**: en cada movimiento se recalculaba el tamaño mínimo de la ventana, lo que cambiaba su tamaño y, con él, el límite del panel. Ahora la ventana no se toca mientras arrastras (el mínimo se recalcula al soltar) y el ancho sigue exactamente al ratón.

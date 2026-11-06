@@ -227,6 +227,17 @@ class SettingsDialog(InlineDialog):
         acc_lay.addWidget(self.chk_contrast)
         root.addWidget(acc_box)
 
+        # --- Discord ---
+        discord_box, discord_lay = _group(
+            "Discord Rich Presence",
+            "Muestra en tu perfil de Discord la canción que estás escuchando, el artista y el tiempo transcurrido. "
+            "Funciona tanto con la aplicación oficial de Discord como con Vencord.")
+        self.chk_discord = QCheckBox("Mostrar en Discord lo que estoy escuchando")
+        self.chk_discord.setChecked(bool(load_settings().get("discord_rpc", True)))
+        self.chk_discord.toggled.connect(self._discord_toggled)
+        discord_lay.addWidget(self.chk_discord)
+        root.addWidget(discord_box)
+
         # --- Conexión ---
         net_box, net_lay = _group(
             "Conexión",
@@ -463,6 +474,21 @@ class SettingsDialog(InlineDialog):
         idx = self.theme_combo.findData(key)
         if idx >= 0:
             self.theme_combo.setCurrentIndex(idx)
+
+    def _discord_toggled(self, on: bool):
+        self._save_flag("discord_rpc", on)
+        try:
+            from services.discord_service import DiscordRPCService
+            if not on:
+                DiscordRPCService.get_instance().clear_presence()
+                DiscordRPCService.get_instance().stop()
+            else:
+                DiscordRPCService.get_instance().start()
+                win = self.window()
+                if win and hasattr(win, "_update_discord_rpc"):
+                    win._update_discord_rpc()
+        except Exception:
+            pass
 
     def refresh_download_dir(self):
         self.lbl_download_dir.setText(str(get_download_dir()))

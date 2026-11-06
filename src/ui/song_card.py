@@ -165,6 +165,7 @@ class SongResultCard(QFrame, HoverFader):
         self.heart_btn.setIconSize(QSize(18, 18))
         self.heart_btn.setToolTip("Guardar en una lista")
         self.heart_btn.setCursor(Qt.PointingHandCursor)
+        self.heart_btn.setFocusPolicy(Qt.NoFocus)
         self.heart_btn.clicked.connect(self.toggle_favorite_card)
         press_feedback(self.heart_btn)
         hover_layout.addWidget(self.heart_btn)
@@ -176,6 +177,7 @@ class SongResultCard(QFrame, HoverFader):
         self.menu_btn.setIconSize(QSize(18, 18))
         self.menu_btn.setToolTip("Más opciones")
         self.menu_btn.setCursor(Qt.PointingHandCursor)
+        self.menu_btn.setFocusPolicy(Qt.NoFocus)
         self.menu_btn.clicked.connect(self.show_track_menu)
         hover_layout.addWidget(self.menu_btn)
 
@@ -185,6 +187,7 @@ class SongResultCard(QFrame, HoverFader):
         self.open_folder_btn.setIconSize(QSize(18, 18))
         self.open_folder_btn.setToolTip("Ver en carpeta")
         self.open_folder_btn.setCursor(Qt.PointingHandCursor)
+        self.open_folder_btn.setFocusPolicy(Qt.NoFocus)
         self.open_folder_btn.clicked.connect(self.open_in_folder)
         hover_layout.addWidget(self.open_folder_btn)
         # Importante: se muestra u oculta DESPUÉS de meterlo en su contenedor. Si se hacía antes, el botón
@@ -208,6 +211,7 @@ class SongResultCard(QFrame, HoverFader):
         self.preview_btn.setIconSize(QSize(18, 18))
         self.preview_btn.setToolTip("Escuchar vista previa")
         self.preview_btn.setCursor(Qt.PointingHandCursor)
+        self.preview_btn.setFocusPolicy(Qt.NoFocus)
         self.preview_btn.clicked.connect(self.toggle_preview)
         press_feedback(self.preview_btn)
         layout.addWidget(self.preview_btn)
@@ -223,6 +227,7 @@ class SongResultCard(QFrame, HoverFader):
         self.download_btn.setIconSize(QSize(16, 16))
         self.download_btn.setFixedWidth(DOWNLOAD_COL)
         self.download_btn.setCursor(Qt.PointingHandCursor)
+        self.download_btn.setFocusPolicy(Qt.NoFocus)
         self.download_btn.clicked.connect(self.start_download)
         ripple_feedback(self.download_btn)
         layout.addWidget(self.download_btn)
@@ -327,7 +332,19 @@ class SongResultCard(QFrame, HoverFader):
 
     def mousePressEvent(self, event):
         self._press_pos = event.position().toPoint() if event.button() == Qt.LeftButton else None
+        if event.button() == Qt.LeftButton and hasattr(self, 'thumb_label'):
+            if self.thumb_label.geometry().contains(event.position().toPoint()):
+                self.toggle_preview()
+                event.accept()
+                return
         super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.toggle_preview()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
 
     def mouseMoveEvent(self, event):
         """Arrastrar el resultado hacia una lista de la barra lateral lo añade a ella."""

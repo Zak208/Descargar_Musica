@@ -1,7 +1,7 @@
 """Anillo de foco para quien usa el teclado: al moverse con Tab (o Mayús+Tab) se dibuja un contorno del color del tema
 alrededor del control que tiene el foco, y se desliza al siguiente. Con el ratón no aparece. Es una capa transparente
 que solo se pinta cuando cambia el foco: en reposo no hace nada."""
-from PySide6.QtCore import Qt, QObject, QEvent, QRect, QRectF, QVariantAnimation, QEasingCurve
+from PySide6.QtCore import Qt, QObject, QEvent, QRect, QRectF, QVariantAnimation, QEasingCurve, QPoint
 from PySide6.QtGui import QPainter, QPen, QColor
 from PySide6.QtWidgets import QApplication, QWidget, QPushButton, QLineEdit, QComboBox, QCheckBox, QSlider
 
@@ -45,7 +45,13 @@ class FocusRingFilter(QObject):
         try:
             t = event.type()
             if t == QEvent.FocusIn:
+                if QApplication.mouseButtons() != Qt.NoButton:
+                    self.ring.hide()
+                    self._target = None
+                    return False
                 if isinstance(obj, FOCUSABLE) and event.reason() in KEYBOARD_REASONS:
+                    if obj.isHidden() or not obj.isEnabled():
+                        return False
                     self._follow(obj)
             elif t in (QEvent.MouseButtonPress, QEvent.FocusOut, QEvent.Hide) and self._target is not None:
                 if t == QEvent.MouseButtonPress or obj is self._target:
@@ -58,7 +64,7 @@ class FocusRingFilter(QObject):
     def _follow(self, widget: QWidget):
         if widget.window() is not self.window:
             return
-        top_left = widget.mapTo(self.window, widget.rect().topLeft())
+        top_left = self.window.mapFromGlobal(widget.mapToGlobal(QPoint(0, 0)))
         target = QRect(top_left, widget.size()).adjusted(-3, -3, 3, 3)
         self._target = widget
         self.ring.raise_()

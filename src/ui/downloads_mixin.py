@@ -203,7 +203,7 @@ class DownloadsMixin:
         elif is_network_error(result.get("error")):
             self.queue_download(info)
 
-    def quick_download(self, info: dict, on_done=None):
+    def quick_download(self, info: dict, on_done=None, start_pos=None):
         """Descarga una canción directamente (sin pasar por la lista de resultados). Sin conexión queda pendiente."""
         if str(info.get("id") or info.get("url") or info.get("title")) in self._batch_keys():
             self.notify(f"«{info.get('title', 'canción')}» ya se está descargando.")
@@ -224,7 +224,7 @@ class DownloadsMixin:
                 if on_done is not None:
                     on_done({"success": False, "cancelled": True})
                 return
-        self.fly_to(info, self.topbar.btn_downloads)
+        self.fly_to(info, self.topbar.btn_downloads, start_global=start_pos)
         worker = DownloadWorker(info, str(get_download_dir()), get_audio_quality())
         self.downloads.track(worker, info)
         _ACTIVE_THREADS.add(worker)

@@ -191,5 +191,8 @@ class AlbumDetailsPage(QWidget):
 
     def _on_download_album(self):
         tracks = self.album_data.get("tracks", [])
+        album_name = self.album_data.get("name", "")
+        artist_name = self.album_data.get("artist", "")
         if tracks:
-            self.download_all_requested.emit(tracks)
+            marked = [dict(t, album=t.get("album") or album_name, uploader=t.get("uploader") or artist_name, album_bundle=True) for t in tracks]
+            self.download_all_requested.emit(marked)

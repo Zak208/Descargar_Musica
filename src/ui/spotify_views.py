@@ -87,7 +87,11 @@ class AlbumCard(QFrame):
         name_label.setWordWrap(True)
         layout.addWidget(name_label)
 
-        year_text = f"{album_info.get('year', '')} • {album_info.get('artist', '')}"
+        year = album_info.get('year', '')
+        t_cnt = int(album_info.get('track_count', 0) or 0)
+        is_sgl = album_info.get('type') == 'single' or t_cnt <= 2
+        type_str = "Sencillo" if is_sgl else (f"{t_cnt} canciones" if t_cnt > 0 else "Álbum")
+        year_text = f"{year} • {type_str}" if year else type_str
         sub_label = QLabel(year_text)
         sub_label.setStyleSheet("color: #888888; font-size: 11px;")
         sub_label.setAlignment(Qt.AlignLeft)

@@ -146,6 +146,14 @@ class PlaybackMixin:
         self._forward.clear()
 
     def _play_entry(self, info: dict, pixmap=None, crossfade_ms: int = 0):
+        if not info.get('local_path') and hasattr(self, "resolve_local"):
+            try:
+                local = self.resolve_local(info)
+                if local:
+                    info['local_path'] = local
+                    info['already_downloaded'] = True
+            except Exception:
+                pass
         if info.get('local_path'):
             self._xf_request = int(crossfade_ms)
             try:

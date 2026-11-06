@@ -1009,6 +1009,14 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
     def play_preview(self, item_info: dict, btn: QPushButton = None, pixmap=None):
         # Canciones ya descargadas (desde playlists, favoritos o la cola): se reproducen desde el disco
         local = item_info.get('local_path')
+        if not local and hasattr(self, "resolve_local"):
+            try:
+                local = self.resolve_local(item_info)
+                if local:
+                    item_info['local_path'] = local
+                    item_info['already_downloaded'] = True
+            except Exception:
+                pass
         if local:
             if os.path.isfile(local):
                 self.play_local_file(local)
@@ -1046,8 +1054,24 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self._refresh_lyrics_if_open()
         self._on_track_changed()
 
-        if pixmap:
+        if pixmap and not pixmap.isNull():
             self.player_thumb.setPixmap(pixmap)
+        else:
+            from ui.covers import placeholder_cover
+            from ui.imageloader import ImageLoaderThread, LocalCoverLoader
+            self.player_thumb.setPixmap(placeholder_cover(title, 56, 6))
+            thumb_url = item_info.get("thumbnail")
+            local_c = item_info.get("local_path")
+            if thumb_url:
+                loader = ImageLoaderThread(thumb_url, False, (56, 56), 6)
+                loader.image_loaded.connect(lambda p, info=item_info: self.player_thumb.setPixmap(p) if self.current_item_info is info else None)
+                self._player_cover_loader = loader
+                loader.start()
+            elif local_c and os.path.isfile(local_c):
+                loader = LocalCoverLoader(local_c, False, (56, 56), 6)
+                loader.image_loaded.connect(lambda p, info=item_info: self.player_thumb.setPixmap(p) if self.current_item_info is info else None)
+                self._player_cover_loader = loader
+                loader.start()
         self.player_status.setText("Cargando...")
         self.btn_play_pause.setEnabled(False)
 
@@ -1324,6 +1348,19 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self._selected_row = None
         self.page_playlist.update_selection_bar([])
 
+    def _update_discord_rpc(self):
+        try:
+            from services.discord_service import DiscordRPCService
+            info = self.current_item_info
+            if not info:
+                DiscordRPCService.get_instance().clear_presence()
+                return
+            is_playing = self.player.playbackState() == QMediaPlayer.PlayingState
+            pos_s = self.player.position() // 1000
+            DiscordRPCService.get_instance().update_presence(info, pos_s, is_playing)
+        except Exception as e:
+            logging.debug(f"Error actualizando Discord RPC: {e}")
+
     def _on_track_changed(self):
         """La canción que suena cambió: se marca en la lista y se actualiza el panel lateral."""
         for page in (self.page_playlist,):
@@ -1347,6 +1384,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             self.set_now_playing_visible(True)     # al reproducir, el panel aparece solo (como en Spotify)
         elif self.now_panel.isVisible():
             self.now_panel.set_track(self.current_item_info)
+        self._update_discord_rpc()
 
     def toggle_now_playing(self):
         """Abre o cierra el panel lateral derecho «En reproducción» (si lo cierras tú, no se vuelve a abrir solo)."""
@@ -1455,10 +1493,32 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self.btn_play_pause.set_state(False)
         self.player.stop()
 
+    def _recover_stalled(self, pos_ms: int):
+        try:
+            if not self.player:
+                return
+            if self.player.playbackState() != QMediaPlayer.PlayingState:
+                self.player.play()
+            if pos_ms > 0 and abs(self.player.position() - pos_ms) > 2000:
+                self.player.setPosition(pos_ms)
+        except Exception as e:
+            logging.debug(f"Error recuperando reproducción: {e}")
+
     def handle_media_status(self, status):
         if status == QMediaPlayer.InvalidMedia:
             self.handle_player_error(QMediaPlayer.FormatError, "Formato multimedia no compatible.")
+        elif status == QMediaPlayer.StalledMedia:
+            self.player_status.setText("Reanudando...")
+            pos = self.player.position()
+            QTimer.singleShot(1500, lambda: self._recover_stalled(pos))
         elif status == QMediaPlayer.EndOfMedia:
+            dur = self.player.duration()
+            pos = self.player.position()
+            if dur > 10000 and pos < (dur - 3000) and not (self.current_item_info or {}).get("local_path"):
+                logging.warning(f"Corte prematuro de streaming a los {pos/1000:.1f} s de {dur/1000:.1f} s. Reanudando...")
+                self.player_status.setText("Recuperando conexión...")
+                QTimer.singleShot(1000, lambda: self._recover_stalled(pos))
+                return
             if self._sleep_end_of_track:
                 self.on_end_of_track()          # el temporizador pide parar al terminar esta canción
             elif self.is_loop_enabled:
@@ -1473,6 +1533,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
 
     def handle_playback_state(self, state):
         self.update_system_status(state == QMediaPlayer.PlayingState)
+        self._update_discord_rpc()
         self.playing_changed.emit(state == QMediaPlayer.PlayingState)
         self.dj_tick()                                # «En pausa» o la cuenta atrás de la mezcla
         if state == QMediaPlayer.PlayingState:
@@ -1592,6 +1653,11 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self.shutdown_playback_options()
 
         self.stop_background_work()
+        try:
+            from services.discord_service import DiscordRPCService
+            DiscordRPCService.get_instance().stop()
+        except Exception:
+            pass
 
         if getattr(self, "full_player", None) is not None:
             try:

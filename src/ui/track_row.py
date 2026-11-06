@@ -154,6 +154,7 @@ class TrackRow(QFrame, HoverFader):
         btn.setObjectName("IconBtn")
         btn.setIconSize(QSize(18, 18))
         btn.setFixedSize(ICON_COL, ICON_COL)
+        btn.setFocusPolicy(Qt.NoFocus)
         btn.setToolTip(tip)
         btn.setCursor(Qt.PointingHandCursor)
         btn.clicked.connect(slot)
@@ -320,7 +321,8 @@ class TrackRow(QFrame, HoverFader):
         tracker = getattr(self.parent_window, "downloads", None)
         if tracker is not None:
             tracker.changed.connect(self._on_downloads_changed)
-        self.parent_window.quick_download(dict(self.item_info), on_done=self._download_done)
+        start_center = self.dl_btn.mapToGlobal(self.dl_btn.rect().center())
+        self.parent_window.quick_download(dict(self.item_info), on_done=self._download_done, start_pos=start_center)
 
     def _download_fraction(self):
         getter = getattr(self.parent_window, "download_fraction", None)
@@ -400,8 +402,17 @@ class TrackRow(QFrame, HoverFader):
     def mousePressEvent(self, event):
         self._press_pos = event.position().toPoint() if event.button() == Qt.LeftButton else None
         if event.button() == Qt.LeftButton:
-            if self._hot and self.idx_label.geometry().contains(event.position().toPoint()):
-                self.play()          # un clic sobre el símbolo ▶ reproduce directamente
+            pt = event.position().toPoint()
+            # Clic directo sobre el número/icono play o la portada
+            if self.idx_label.geometry().contains(pt) or self.cover.geometry().contains(pt):
+                self.play()
+                event.accept()
+                return
+            # En perfiles de artista y álbumes (list_mode=False), un clic simple reproduce la canción
+            if not self.list_mode and not event.modifiers():
+                self.play()
+                if hasattr(self.parent_window, "select_row"):
+                    self.parent_window.select_row(self)
                 event.accept()
                 return
             if hasattr(self.parent_window, "select_row"):

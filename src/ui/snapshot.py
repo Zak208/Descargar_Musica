@@ -24,6 +24,7 @@ class Layer(QWidget):
         super().__init__(host)
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.setAttribute(Qt.WA_NoSystemBackground)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.pix = pixmap
         self.opacity = 1.0
         self.dx = 0.0
@@ -93,6 +94,7 @@ class _Flyer(QWidget):
         super().__init__(host)
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.setAttribute(Qt.WA_NoSystemBackground)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.pix = pixmap
         self.setFixedSize(size, size)
         self.scale_f = 1.0
@@ -158,6 +160,7 @@ class _Traveler(QWidget):
         super().__init__(host)
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.setAttribute(Qt.WA_NoSystemBackground)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.pix = pixmap
         self.radius = radius
 
