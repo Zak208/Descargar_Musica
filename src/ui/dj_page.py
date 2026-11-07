@@ -76,32 +76,30 @@ class DeckScreen(QFrame):
         # Barra superior de la pantalla: etiqueta de Deck, Badges de modo y tiempo
         top_row = QHBoxLayout()
         top_row.setSpacing(4)
-        self.deck_tag = QLabel(deck_label)
+        self.deck_tag = QLabel(deck_label, self)
         self.deck_tag.setStyleSheet(f"font-size: 11px; font-weight: 900; color: {accent_color}; letter-spacing: 1.5px; background: transparent;")
         top_row.addWidget(self.deck_tag)
 
-        # Badges de modos de hardware CDJ
-        self.badge_mt = QLabel("MT")
+        # Badges de modos de hardware CDJ (siempre con parent=self para evitar ventanas flotantes)
+        self.badge_mt = QLabel("MT", self)
         self.badge_mt.setStyleSheet("font-size: 8px; font-weight: 900; color: #22EC6A; background: #12301A; border-radius: 2px; padding: 1px 3px;")
         self.badge_mt.setToolTip("Master Tempo / Key Lock activado")
-        self.badge_mt.setVisible(True)
 
-        self.badge_quantize = QLabel("QUANT")
+        self.badge_quantize = QLabel("QUANT", self)
         self.badge_quantize.setStyleSheet("font-size: 8px; font-weight: 900; color: #FF4444; background: #331515; border-radius: 2px; padding: 1px 3px;")
         self.badge_quantize.setToolTip("Quantize activado (snap a compases y beats)")
         self.badge_quantize.setVisible(False)
 
-        self.badge_slip = QLabel("SLIP")
+        self.badge_slip = QLabel("SLIP", self)
         self.badge_slip.setStyleSheet("font-size: 8px; font-weight: 900; color: #FF8822; background: #332010; border-radius: 2px; padding: 1px 3px;")
         self.badge_slip.setToolTip("Slip Mode activado (tiempo continuo de fondo)")
         self.badge_slip.setVisible(False)
 
-        self.badge_vinyl = QLabel("VINYL")
+        self.badge_vinyl = QLabel("VINYL", self)
         self.badge_vinyl.setStyleSheet(f"font-size: 8px; font-weight: 900; color: {accent_color}; background: #152238; border-radius: 2px; padding: 1px 3px;")
         self.badge_vinyl.setToolTip("Vinyl Mode activado (scratch y needle drop)")
-        self.badge_vinyl.setVisible(True)
 
-        self.badge_loop = QLabel("LOOP")
+        self.badge_loop = QLabel("LOOP", self)
         self.badge_loop.setStyleSheet("font-size: 8px; font-weight: 900; color: #FFDD44; background: #332A10; border-radius: 2px; padding: 1px 3px;")
         self.badge_loop.setToolTip("Bucle activo")
         self.badge_loop.setVisible(False)
@@ -112,23 +110,23 @@ class DeckScreen(QFrame):
         top_row.addWidget(self.badge_vinyl)
         top_row.addWidget(self.badge_loop)
 
-        self.on_air_badge = QLabel("• EN EL AIRE")
+        self.on_air_badge = QLabel("• EN EL AIRE", self)
         self.on_air_badge.setStyleSheet("font-size: 9px; font-weight: 800; color: #FF3344; background: #331015; border-radius: 3px; padding: 1px 4px;")
         self.on_air_badge.setVisible(False)
         top_row.addWidget(self.on_air_badge)
         top_row.addStretch()
 
-        self.time_lbl = QLabel("-00:00")
+        self.time_lbl = QLabel("-00:00", self)
         self.time_lbl.setStyleSheet("font-size: 12px; font-weight: 800; color: #FFFFFF; font-family: monospace; background: transparent;")
         top_row.addWidget(self.time_lbl)
         layout.addLayout(top_row)
 
         # Título y artista estilo VirtualDJ
-        self.title_lbl = ElidedLabel("Arrastra una canción en este deck para cargarlo")
+        self.title_lbl = ElidedLabel("Arrastra una canción en este deck para cargarlo", self)
         self.title_lbl.setStyleSheet("font-size: 13px; font-weight: bold; color: #FFFFFF; background: transparent;")
         layout.addWidget(self.title_lbl)
 
-        self.artist_lbl = ElidedLabel("---")
+        self.artist_lbl = ElidedLabel("---", self)
         self.artist_lbl.setStyleSheet("font-size: 11px; color: #A0A0B0; background: transparent;")
         layout.addWidget(self.artist_lbl)
 
@@ -136,16 +134,16 @@ class DeckScreen(QFrame):
         tech_row = QHBoxLayout()
         tech_row.setSpacing(6)
 
-        self.bpm_box = QLabel("--- BPM")
+        self.bpm_box = QLabel("--- BPM", self)
         self.bpm_box.setStyleSheet(f"font-size: 11px; font-weight: 900; color: {accent_color}; background: #181822; border-radius: 4px; padding: 2px 6px;")
         self.lbl_bpm = self.bpm_box  # Alias de compatibilidad
         tech_row.addWidget(self.bpm_box)
 
-        self.key_box = QLabel("--- KEY")
+        self.key_box = QLabel("--- KEY", self)
         self.key_box.setStyleSheet("font-size: 11px; font-weight: 800; color: #E0E0FF; background: #222235; border-radius: 4px; padding: 2px 6px;")
         tech_row.addWidget(self.key_box)
 
-        self.pitch_box = QLabel("±0.00%")
+        self.pitch_box = QLabel("±0.00%", self)
         self.pitch_box.setStyleSheet("font-size: 10px; font-weight: 700; color: #888899; background: transparent;")
         tech_row.addWidget(self.pitch_box)
 
@@ -153,12 +151,12 @@ class DeckScreen(QFrame):
         layout.addLayout(tech_row)
 
         # Waveform minimapa del deck estilo VirtualDJ
-        self.overview_waveform = DjOverviewWaveform(accent_color=accent_color, height=20)
+        self.overview_waveform = DjOverviewWaveform(accent_color=accent_color, height=20, parent=self)
         self.overview_waveform.seekRequested.connect(self.seekRequested)
         layout.addWidget(self.overview_waveform)
 
         # Barra de progreso con gradiente
-        self.progress_bar = QFrame()
+        self.progress_bar = QFrame(self)
         self.progress_bar.setFixedHeight(3)
         self.progress_bar.setStyleSheet("""
             QFrame {

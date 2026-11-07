@@ -3,6 +3,13 @@
 Formato: `MAYOR.MENOR.PARCHE`. MAYOR = cambios que rompen datos o uso, MENOR = funciones nuevas, PARCHE = arreglos.
 Cada versión subida a GitHub tiene su etiqueta `vX.Y.Z` (pestaña *Releases/Tags*).
 
+## 1.27.1
+**Solución de Actualización Automática y Corrección de Autocomprobación Selftest en GitHub Releases**
+- **Corrección de Publicación Automática de Versiones**:
+  - Resuelto el problema por el cual la aplicación informaba de que no se podía actualizar o no encontraba los archivos de descarga de la versión 1.27.0 en GitHub Releases.
+  - Corregida la comprobación interna de integridad (`--selftest`): las etiquetas informativas de estado de hardware DJ (`badge_mt`, `badge_vinyl`, etc.) en la pantalla del CDJ se instanciaban sin asignar el widget padre en su creación, lo que en entornos automatizados provocaba que el sistema de ventanas las interpretase como ventanas flotantes huérfanas bloqueando la finalización del test de empaquetado.
+  - Asegurada la asignación jerárquica estricta de `parent=self` en todos los componentes de la interfaz de la cabina DJ, garantizando que el pipeline de GitHub Actions complete la compilación y publique inmediatamente los instaladores (`Descargador_Musica-Setup-v1.27.1.exe`) y paquetes comprimidos (`Descargar_Musica-v1.27.1-windows.zip` y `.sha256`) requeridos por el actualizador integrado.
+
 ## 1.27.0
 **Corrección Integral de Previsualización en Buscador y Decks VirtualDJ Idénticos (Cyan Deck A / Red Deck B, Transporte 4 Botones, Drag & Drop y Nudge)**
 - **Previsualización de Audio 100% Funcional y Fiable en el Buscador**:
