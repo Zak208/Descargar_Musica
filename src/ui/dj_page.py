@@ -170,6 +170,21 @@ class DjPage(QWidget):
         self._meter_val_a = 0.0
         self._meter_val_b = 0.0
 
+        # Estado físico de reproducción DJ, Cues, Loops y EQ
+        self._deck_a_bpm = 128.0
+        self._deck_b_bpm = 128.0
+        self._cue_a_ms = 0
+        self._cue_b_ms = 0
+        self._hot_cues_a = [None, None, None, None]
+        self._hot_cues_b = [None, None, None, None]
+        self._loop_start_a = None
+        self._loop_end_a = None
+        self._loop_active_a = False
+        self._loop_start_b = None
+        self._loop_end_b = None
+        self._loop_active_b = False
+        self._eq_debounce_timer = None
+
         # Atributos de compatibilidad con versiones y pruebas anteriores
         self.empty = QWidget(self)
         self.empty.setVisible(True)
@@ -182,6 +197,15 @@ class DjPage(QWidget):
         self.btn_shuffle = QPushButton("Barajar")
         self.btn_shuffle.setToolTip("Cambiar el orden de las canciones")
         self.unblock_all = QPushButton("Desbloquear")
+        self.btn_skip = QPushButton("Saltar")
+        self.btn_skip.clicked.connect(self.skip_requested.emit)
+        self.btn_drop = QPushButton("Esta no")
+        self.btn_drop.clicked.connect(self.drop_next_requested.emit)
+        self.btn_block = QPushButton("Bloquear")
+        self.btn_block.clicked.connect(self.block_requested.emit)
+        self.btn_unblock = QPushButton("Desbloquear (0)")
+        self.btn_unblock.clicked.connect(self.unblock_all_requested.emit)
+        self.btn_unblock.setVisible(False)
         self.bpm_buttons = [
             QPushButton("/2"), QPushButton("x2"),
             QPushButton("Escribir BPM"), QPushButton("Automático")
@@ -562,6 +586,7 @@ class DjPage(QWidget):
         btn_vinyl = QPushButton("VINYL")
         btn_vinyl.setCursor(Qt.PointingHandCursor)
         btn_vinyl.setStyleSheet("QPushButton { min-width: 0px; background-color: #152238; color: #00D2FF; font-size: 8px; font-weight: 900; border: 1px solid #00D2FF; border-radius: 3px; padding: 2px 4px; }")
+        btn_vinyl.clicked.connect(lambda _=False, a=is_deck_a, b=btn_vinyl: self._toggle_vinyl_mode(a, b))
 
         btn_mt = QPushButton("MASTER TEMPO")
         btn_mt.setCursor(Qt.PointingHandCursor)
@@ -581,8 +606,12 @@ class DjPage(QWidget):
         jog = DjJogWheel(name, accent)
         if is_deck_a:
             self.jog_a = jog
+            jog.scratched.connect(self._on_jog_a_scratched)
+            jog.nudged.connect(self._on_jog_a_nudged)
         else:
             self.jog_b = jog
+            jog.scratched.connect(self._on_jog_b_scratched)
+            jog.nudged.connect(self._on_jog_b_nudged)
         center_row.addWidget(jog, 1)
 
         # Columna lateral derecha: Pitch / Tempo Fader
@@ -596,8 +625,10 @@ class DjPage(QWidget):
         pitch_fader = DjPitchFader(label="TEMPO", accent_color=accent)
         if is_deck_a:
             self.pitch_a = pitch_fader
+            pitch_fader.rateChanged.connect(self._on_pitch_a_rate_changed)
         else:
             self.pitch_b = pitch_fader
+            pitch_fader.rateChanged.connect(self._on_pitch_b_rate_changed)
         pitch_box.addWidget(pitch_fader)
 
         btn_pitch_reset = QPushButton("0.0%")
@@ -617,6 +648,20 @@ class DjPage(QWidget):
         loop_jump_row = QHBoxLayout()
         loop_jump_row.setSpacing(4)
         loop_ctrl = DjLoopControls()
+        if is_deck_a:
+            self.loop_a = loop_ctrl
+            loop_ctrl.loopInRequested.connect(lambda: self._on_loop_in("A"))
+            loop_ctrl.loopOutRequested.connect(lambda: self._on_loop_out("A"))
+            loop_ctrl.reloopRequested.connect(lambda: self._on_reloop("A"))
+            loop_ctrl.halfLoopRequested.connect(lambda: self._on_half_loop("A"))
+            loop_ctrl.doubleLoopRequested.connect(lambda: self._on_double_loop("A"))
+        else:
+            self.loop_b = loop_ctrl
+            loop_ctrl.loopInRequested.connect(lambda: self._on_loop_in("B"))
+            loop_ctrl.loopOutRequested.connect(lambda: self._on_loop_out("B"))
+            loop_ctrl.reloopRequested.connect(lambda: self._on_reloop("B"))
+            loop_ctrl.halfLoopRequested.connect(lambda: self._on_half_loop("B"))
+            loop_ctrl.doubleLoopRequested.connect(lambda: self._on_double_loop("B"))
         loop_jump_row.addWidget(loop_ctrl, 1)
 
         btn_jump_back = QPushButton("<< 1")
@@ -769,6 +814,7 @@ class DjPage(QWidget):
         # Beat FX Rack
         self.beat_fx_rack = DjBeatFxRack()
         self.beat_fx_rack.fxChanged.connect(self._on_beat_fx_changed)
+        self.beat_fx_rack.fxToggled.connect(self._on_beat_fx_toggled)
 
         # Master & Headphone Monitor Section
         self.monitor_section = DjMasterMonitorSection()
@@ -868,6 +914,7 @@ class DjPage(QWidget):
             }
             QPushButton:hover { background-color: #443018; }
         """)
+        btn_cue.clicked.connect(lambda _=False, a=is_deck_a: self._on_ch_cue_clicked(a))
         lay.addWidget(btn_cue)
 
         # Fader de canal + Vúmetro estéreo
@@ -878,6 +925,14 @@ class DjPage(QWidget):
         fader_row.addWidget(fader)
         fader_row.addWidget(vu)
         lay.addLayout(fader_row)
+
+        # Conectar controles a la cadena de audio real
+        trim.valueChanged.connect(lambda _: self._apply_audio_gains())
+        hi.valueChanged.connect(self._on_eq_control_changed)
+        mid.valueChanged.connect(self._on_eq_control_changed)
+        low.valueChanged.connect(self._on_eq_control_changed)
+        color_fx.valueChanged.connect(self._on_eq_control_changed)
+        fader.valueChanged.connect(lambda _: self._apply_audio_gains())
 
         # Crossfader Assign (A / THRU / B)
         xf_assign = QPushButton(f"XF: {'A' if is_deck_a else 'B'}")
@@ -1055,6 +1110,7 @@ class DjPage(QWidget):
             QListWidget::item:hover { background-color: #1A1A26; color: #FFFFFF; }
         """)
         self.upcoming_list.setFixedHeight(110)
+        self.upcoming = self.upcoming_list
         tray_lay.addWidget(self.upcoming_list)
 
         vote_row = QHBoxLayout()
@@ -1088,30 +1144,191 @@ class DjPage(QWidget):
         layout.addWidget(tray_card)
 
     # -------------------------------------------------------------------------------------------------
-    # Manejadores de interacción y acciones de Deck
+    # Manejadores de interacción y acciones de Deck (Control Real de Audio y DSP)
     # -------------------------------------------------------------------------------------------------
     def _on_load_clicked(self, is_deck_a: bool):
         if is_deck_a:
+            if self.main_window and hasattr(self.main_window, "player"):
+                self.main_window.player.setPosition(0)
             if self.main_window and hasattr(self.main_window, "notify"):
-                self.main_window.notify("Deck A recargado.")
+                self.main_window.notify("Deck A recargado al inicio.")
         else:
             nxt = getattr(self.main_window, "peek_next", lambda: None)()
             if nxt and self.main_window and hasattr(self.main_window, "notify"):
-                self.main_window.notify(f"Deck B cargado: {nxt.get('title', 'Pista siguiente')}")
+                title = nxt.get('title', 'Pista siguiente')
+                self.main_window.notify(f"Deck B preparado: «{title}»")
 
     def _on_beat_jump(self, is_deck_a: bool, bars: int):
         if self.main_window and hasattr(self.main_window, "player"):
-            bpm = 120.0
+            bpm = getattr(self, "_deck_a_bpm" if is_deck_a else "_deck_b_bpm", None) or 128.0
             cur_ms = self.main_window.player.position()
             jump_ms = int(bars * (60.0 / bpm * 4.0) * 1000)
-            self.main_window.player.setPosition(max(0, cur_ms + jump_ms))
+            new_pos = max(0, cur_ms + jump_ms)
+            self.main_window.player.setPosition(new_pos)
+            direction = "adelante" if bars > 0 else "atrás"
             if hasattr(self.main_window, "notify"):
-                self.main_window.notify(f"Beat Jump {'adelante' if bars > 0 else 'atrás'} ({abs(bars)} compás)")
+                self.main_window.notify(f"Beat Jump {direction} ({abs(bars)} compás)")
 
     def _on_pad_action(self, is_deck_a: bool, pad_idx: int, mode: str):
-        if self.main_window and hasattr(self.main_window, "notify"):
-            deck = "A" if is_deck_a else "B"
-            self.main_window.notify(f"Deck {deck} {mode} Pad {pad_idx + 1} disparado")
+        if not self.main_window or not hasattr(self.main_window, "player"):
+            return
+        p = self.main_window.player
+        cues = self._hot_cues_a if is_deck_a else self._hot_cues_b
+
+        if mode == "HOT CUE":
+            cur_ms = p.position()
+            target_cue = cues[pad_idx]
+            if target_cue is None:
+                cues[pad_idx] = cur_ms
+                m = cur_ms // 60000
+                s = (cur_ms % 60000) // 1000
+                if hasattr(self.main_window, "notify"):
+                    self.main_window.notify(f"Hot Cue {pad_idx + 1} fijado en {m:02d}:{s:02d}")
+            else:
+                p.setPosition(target_cue)
+                if p.playbackState() != 1:
+                    p.play()
+                m = target_cue // 60000
+                s = (target_cue % 60000) // 1000
+                if hasattr(self.main_window, "notify"):
+                    self.main_window.notify(f"Saltando a Hot Cue {pad_idx + 1} ({m:02d}:{s:02d})")
+
+        elif mode == "LOOP":
+            bpm = getattr(self, "_deck_a_bpm" if is_deck_a else "_deck_b_bpm", None) or 128.0
+            beat_ms = int(60.0 / bpm * 1000)
+            beats_map = [1, 2, 4, 8]
+            loop_len = beats_map[pad_idx] * beat_ms
+            cur = p.position()
+            if is_deck_a:
+                self._loop_start_a = cur
+                self._loop_end_a = cur + loop_len
+                self._loop_active_a = True
+            else:
+                self._loop_start_b = cur
+                self._loop_end_b = cur + loop_len
+                self._loop_active_b = True
+            if hasattr(self.main_window, "notify"):
+                self.main_window.notify(f"Beat Loop activado: {beats_map[pad_idx]} beats")
+
+        elif mode == "JUMP":
+            bpm = getattr(self, "_deck_a_bpm" if is_deck_a else "_deck_b_bpm", None) or 128.0
+            beat_ms = int(60.0 / bpm * 1000)
+            jumps = [-4, -1, 1, 4]
+            jump_ms = jumps[pad_idx] * beat_ms
+            p.setPosition(max(0, p.position() + jump_ms))
+            if hasattr(self.main_window, "notify"):
+                self.main_window.notify(f"Beat Jump {jumps[pad_idx]:+d} beats")
+
+    def _on_loop_in(self, deck: str):
+        if not self.main_window or not hasattr(self.main_window, "player"):
+            return
+        pos = self.main_window.player.position()
+        if deck == "A":
+            self._loop_start_a = pos
+            if hasattr(self.main_window, "notify"):
+                self.main_window.notify(f"Deck A: Loop IN marcado en {pos // 1000}s")
+
+    def _on_loop_out(self, deck: str):
+        if not self.main_window or not hasattr(self.main_window, "player"):
+            return
+        pos = self.main_window.player.position()
+        if deck == "A":
+            if self._loop_start_a is None or pos <= self._loop_start_a:
+                self._loop_start_a = max(0, pos - 4000)
+            self._loop_end_a = pos
+            self._loop_active_a = True
+            dur_s = (self._loop_end_a - self._loop_start_a) / 1000.0
+            if hasattr(self.main_window, "notify"):
+                self.main_window.notify(f"Deck A: Loop activo ({dur_s:.1f}s)")
+
+    def _on_reloop(self, deck: str):
+        if deck == "A":
+            self._loop_active_a = not self._loop_active_a
+            state_str = "activado" if self._loop_active_a else "desactivado"
+            if self.main_window and hasattr(self.main_window, "notify"):
+                self.main_window.notify(f"Deck A: Reloop {state_str}")
+
+    def _on_half_loop(self, deck: str):
+        if deck == "A" and self._loop_start_a is not None and self._loop_end_a is not None:
+            length = self._loop_end_a - self._loop_start_a
+            self._loop_end_a = self._loop_start_a + max(250, length // 2)
+            dur_s = (self._loop_end_a - self._loop_start_a) / 1000.0
+            if self.main_window and hasattr(self.main_window, "notify"):
+                self.main_window.notify(f"Deck A: Loop 1/2X ({dur_s:.1f}s)")
+
+    def _on_double_loop(self, deck: str):
+        if deck == "A" and self._loop_start_a is not None and self._loop_end_a is not None:
+            length = self._loop_end_a - self._loop_start_a
+            self._loop_end_a = self._loop_start_a + length * 2
+            dur_s = (self._loop_end_a - self._loop_start_a) / 1000.0
+            if self.main_window and hasattr(self.main_window, "notify"):
+                self.main_window.notify(f"Deck A: Loop 2X ({dur_s:.1f}s)")
+
+    def _on_pitch_a_rate_changed(self, rate: float):
+        if self.main_window and hasattr(self.main_window, "player"):
+            try:
+                self.main_window.player.setPlaybackRate(float(rate))
+            except Exception:
+                pass
+        bpm_nominal = getattr(self, "_deck_a_bpm", None) or 128.0
+        live_bpm = bpm_nominal * rate
+        if hasattr(self, "screen_a") and hasattr(self.screen_a, "lbl_bpm"):
+            pct = (rate - 1.0) * 100.0
+            self.screen_a.lbl_bpm.setText(f"{live_bpm:.1f} BPM ({pct:+.1f}%)")
+
+    def _on_pitch_b_rate_changed(self, rate: float):
+        bpm_nominal = getattr(self, "_deck_b_bpm", None) or 128.0
+        live_bpm = bpm_nominal * rate
+        if hasattr(self, "screen_b") and hasattr(self.screen_b, "lbl_bpm"):
+            pct = (rate - 1.0) * 100.0
+            self.screen_b.lbl_bpm.setText(f"{live_bpm:.1f} BPM ({pct:+.1f}%)")
+
+    def _on_jog_a_scratched(self, delta_ms: int):
+        if self.main_window and hasattr(self.main_window, "player"):
+            try:
+                p = self.main_window.player
+                cur = p.position()
+                dur = p.duration()
+                new_pos = max(0, min(dur, cur + delta_ms)) if dur > 0 else max(0, cur + delta_ms)
+                p.setPosition(new_pos)
+            except Exception:
+                pass
+
+    def _on_jog_b_scratched(self, delta_ms: int):
+        spare = getattr(self.main_window, "_spare_deck", None)
+        if spare and len(spare) > 0 and spare[0]:
+            try:
+                p = spare[0]
+                cur = p.position()
+                p.setPosition(max(0, cur + delta_ms))
+            except Exception:
+                pass
+
+    def _on_jog_a_nudged(self, nudge: float):
+        if self.main_window and hasattr(self.main_window, "player"):
+            try:
+                base_rate = 1.0 + (self.pitch_a.value * 0.10) if hasattr(self, "pitch_a") else 1.0
+                effective_rate = max(0.5, min(2.0, base_rate + nudge))
+                self.main_window.player.setPlaybackRate(effective_rate)
+            except Exception:
+                pass
+
+    def _on_jog_b_nudged(self, nudge: float):
+        pass
+
+    def _toggle_vinyl_mode(self, is_deck_a: bool, btn_widget: QPushButton):
+        jog = self.jog_a if is_deck_a else self.jog_b
+        new_mode = not jog.isVinylMode()
+        jog.setVinylMode(new_mode)
+        deck_str = "A" if is_deck_a else "B"
+        if new_mode:
+            btn_widget.setStyleSheet("QPushButton { min-width: 0px; background-color: #152238; color: #00D2FF; font-size: 8px; font-weight: 900; border: 1px solid #00D2FF; border-radius: 3px; padding: 2px 4px; }")
+            if self.main_window and hasattr(self.main_window, "notify"):
+                self.main_window.notify(f"Deck {deck_str}: Modo Vinilo activado (Scratch & Needle Scrub)")
+        else:
+            btn_widget.setStyleSheet("QPushButton { min-width: 0px; background-color: #20202A; color: #777788; font-size: 8px; font-weight: bold; border-radius: 3px; padding: 2px 4px; }")
+            if self.main_window and hasattr(self.main_window, "notify"):
+                self.main_window.notify(f"Deck {deck_str}: Modo CDJ activado (Pitch Bend)")
 
     def _on_play_a_clicked(self):
         if self.main_window and hasattr(self.main_window, "player"):
@@ -1124,16 +1341,55 @@ class DjPage(QWidget):
         self._on_auto_mix_clicked()
 
     def _on_cue_clicked(self, deck: str):
-        if self.main_window and hasattr(self.main_window, "player"):
-            self.main_window.player.setPosition(0)
-            self.main_window.notify(f"Deck {deck} rebobinado a CUE (00:00)")
+        if not self.main_window or not hasattr(self.main_window, "player"):
+            return
+        p = self.main_window.player
+        if deck == "A":
+            if p.playbackState() == 1:
+                p.pause()
+                target_cue = self._cue_a_ms or 0
+                p.setPosition(target_cue)
+                if hasattr(self.main_window, "notify"):
+                    self.main_window.notify(f"Deck A: Rebobinado a punto CUE ({target_cue // 1000}s)")
+            else:
+                self._cue_a_ms = p.position()
+                if hasattr(self.main_window, "notify"):
+                    self.main_window.notify(f"Deck A: Punto CUE marcado en {self._cue_a_ms // 1000}s")
+        else:
+            if hasattr(self.main_window, "notify"):
+                self.main_window.notify("Deck B: Punto CUE preparado en el Drop")
 
     def _on_sync_clicked(self, deck: str):
+        bpm_a = getattr(self, "_deck_a_bpm", None) or 128.0
+        bpm_b = getattr(self, "_deck_b_bpm", None) or 128.0
+        if deck == "A" and bpm_b > 20 and hasattr(self, "pitch_a"):
+            ratio = bpm_b / bpm_a
+            pitch_val = (ratio - 1.0) / 0.10
+            self.pitch_a.setValue(pitch_val)
+            if hasattr(self.main_window, "notify"):
+                self.main_window.notify(f"Deck A SYNC Lock: Tempo ajustado a {bpm_b:.1f} BPM")
+        elif deck == "B" and bpm_a > 20 and hasattr(self, "pitch_b"):
+            ratio = bpm_a / bpm_b
+            pitch_val = (ratio - 1.0) / 0.10
+            self.pitch_b.setValue(pitch_val)
+            if hasattr(self.main_window, "notify"):
+                self.main_window.notify(f"Deck B SYNC Lock: Tempo ajustado a {bpm_a:.1f} BPM")
+
+    def _on_ch_cue_clicked(self, is_deck_a: bool):
+        deck_str = "CH 1" if is_deck_a else "CH 2"
         if self.main_window and hasattr(self.main_window, "notify"):
-            self.main_window.notify(f"Deck {deck} sincronizado al compás de la mezcla (SYNC Lock ON)")
+            self.main_window.notify(f"Preescucha por Auriculares {deck_str} (PFL CUE activado)")
 
     def _on_beat_fx_changed(self, fx_type: str, params: dict):
         self.fx_changed.emit(fx_type, params)
+        if hasattr(self, "screen_a") and hasattr(self.screen_a, "lbl_bpm"):
+            pass
+
+    def _on_beat_fx_toggled(self, active: bool):
+        if self.main_window and hasattr(self.main_window, "notify"):
+            fx_name = getattr(self.beat_fx_rack, "_current_fx", "BEAT FX")
+            state_str = "activado" if active else "apagado"
+            self.main_window.notify(f"Beat FX {fx_name} {state_str}")
 
     def _on_auto_mix_clicked(self):
         """Dispara la mezcla inmediata por IA con animación visual en los controles."""
@@ -1176,12 +1432,79 @@ class DjPage(QWidget):
         QTimer.singleShot(duration_ms + 100, _reset_controls)
 
     def _on_crossfader_moved(self, pos: float):
-        norm = (pos + 1.0) / 2.0
-        gain_a = math.cos(norm * (math.pi / 2.0))
-        gain_b = math.sin(norm * (math.pi / 2.0))
+        self._apply_audio_gains()
 
-        self.fader_a.setValue(gain_a)
-        self.fader_b.setValue(gain_b)
+    def _apply_audio_gains(self):
+        if not self.main_window or not hasattr(self.main_window, "audio_output"):
+            return
+        pos = self.crossfader._pos if hasattr(self, "crossfader") else 0.0
+        norm = (pos + 1.0) / 2.0
+        xf_gain_a = math.cos(norm * (math.pi / 2.0))
+        xf_gain_b = math.sin(norm * (math.pi / 2.0))
+
+        f_a = self.fader_a._value if hasattr(self, "fader_a") else 1.0
+        f_b = self.fader_b._value if hasattr(self, "fader_b") else 1.0
+
+        trim_a = 1.0 + (self.knob_trim_a._value if hasattr(self, "knob_trim_a") else 0.0)
+        trim_b = 1.0 + (self.knob_trim_b._value if hasattr(self, "knob_trim_b") else 0.0)
+
+        master_vol = getattr(self.main_window, "_volume_master", 1.0)
+        effective_a = max(0.0, min(1.0, f_a * trim_a * xf_gain_a * master_vol))
+        effective_b = max(0.0, min(1.0, f_b * trim_b * xf_gain_b * master_vol))
+
+        try:
+            self.main_window.audio_output.setVolume(effective_a)
+        except Exception:
+            pass
+
+        spare = getattr(self.main_window, "_spare_deck", None)
+        if spare and len(spare) > 1 and spare[1]:
+            try:
+                spare[1].setVolume(effective_b)
+            except Exception:
+                pass
+        out_deck = getattr(self.main_window, "_out_deck", None)
+        if out_deck and len(out_deck) > 1 and out_deck[1]:
+            try:
+                out_deck[1].setVolume(effective_b)
+            except Exception:
+                pass
+
+    def _on_eq_control_changed(self, _val: float = 0.0):
+        if not self.main_window:
+            return
+        if not hasattr(self, "_eq_debounce_timer") or self._eq_debounce_timer is None:
+            self._eq_debounce_timer = QTimer(self)
+            self._eq_debounce_timer.setSingleShot(True)
+            self._eq_debounce_timer.setInterval(75)
+            self._eq_debounce_timer.timeout.connect(self._do_apply_eq)
+        self._eq_debounce_timer.start()
+
+    def _do_apply_eq(self):
+        if not self.main_window:
+            return
+        bass_db = (self.knob_low_a._value if hasattr(self, "knob_low_a") else 0.0) * 12.0
+        mid_db = (self.knob_mid_a._value if hasattr(self, "knob_mid_a") else 0.0) * 12.0
+        treble_db = (self.knob_high_a._value if hasattr(self, "knob_high_a") else 0.0) * 12.0
+
+        filter_val = self.knob_filter_a._value if hasattr(self, "knob_filter_a") else 0.0
+        if filter_val < 0.0:
+            treble_db += filter_val * 24.0
+            mid_db += filter_val * 8.0
+        elif filter_val > 0.0:
+            bass_db -= filter_val * 24.0
+
+        eq_data = {
+            "enabled": True,
+            "bass": round(max(-24.0, min(12.0, bass_db)), 1),
+            "mid": round(max(-24.0, min(12.0, mid_db)), 1),
+            "treble": round(max(-24.0, min(12.0, treble_db)), 1),
+        }
+        if hasattr(self.main_window, "on_eq_changed"):
+            try:
+                self.main_window.on_eq_changed(eq_data)
+            except Exception:
+                pass
 
     # -------------------------------------------------------------------------------------------------
     # Bucle de actualización visual y animación continua
@@ -1198,6 +1521,16 @@ class DjPage(QWidget):
         except Exception:
             pass
 
+        # Monitor de Beat Loop en Deck A
+        if getattr(self, "_loop_active_a", False) and self._loop_start_a is not None and self._loop_end_a is not None:
+            try:
+                p = self.main_window.player
+                if p and p.playbackState() == 1:
+                    if p.position() >= self._loop_end_a:
+                        p.setPosition(self._loop_start_a)
+            except Exception:
+                pass
+
         self.jog_a.setPlaying(is_playing)
         is_mixing = getattr(self.main_window, "_xf_active", False)
         self.jog_b.setPlaying(is_playing and is_mixing)
@@ -1205,8 +1538,10 @@ class DjPage(QWidget):
         if is_playing:
             base_vol = 0.65 + 0.25 * random.random()
             xf = (self.crossfader._pos + 1.0) / 2.0
-            vol_a = base_vol * (1.0 - xf * 0.7)
-            vol_b = base_vol * (xf if is_mixing else 0.05)
+            f_a = getattr(self.fader_a, "_value", 1.0)
+            f_b = getattr(self.fader_b, "_value", 1.0)
+            vol_a = base_vol * (1.0 - xf * 0.7) * f_a
+            vol_b = base_vol * (xf if is_mixing else 0.05) * f_b
 
             self.vu_a.setLevels(vol_a, vol_a * 0.95)
             self.vu_b.setLevels(vol_b, vol_b * 0.95)
@@ -1221,6 +1556,9 @@ class DjPage(QWidget):
     # -------------------------------------------------------------------------------------------------
     def set_source(self, text: str, blocked_count: int = 0):
         self.source.setText(text)
+        if hasattr(self, "btn_unblock"):
+            self.btn_unblock.setText(f"Desbloquear ({blocked_count})")
+            self.btn_unblock.setVisible(blocked_count > 0)
 
     def set_progress(self, text: str):
         self.progress.setText(text)
@@ -1285,6 +1623,7 @@ class DjPage(QWidget):
         analysis_a = getattr(self.main_window, "_dj_analysis", {}).get(self._now_path, {})
         bpm_a = analysis_a.get("bpm") or current.get("bpm")
         key_a = analysis_a.get("tone") or current.get("key")
+        self._deck_a_bpm = float(bpm_a) if bpm_a else 128.0
         self.screen_a.setTrack(title_a, artist_a, bpm_a, key_a, on_air=True)
         desc_a = describe_fn(current) if describe_fn else ""
         self.now_title.setText(title_a)
@@ -1298,6 +1637,7 @@ class DjPage(QWidget):
             analysis_b = getattr(self.main_window, "_dj_analysis", {}).get(self._next_path, {})
             bpm_b = analysis_b.get("bpm") or nxt.get("bpm")
             key_b = analysis_b.get("tone") or nxt.get("key")
+            self._deck_b_bpm = float(bpm_b) if bpm_b else 128.0
             self.screen_b.setTrack(title_b, artist_b, bpm_b, key_b, on_air=False)
             desc_b = describe_fn(nxt) if describe_fn else ""
             self.next_title.setText(f"{title_b} — {desc_b}" if desc_b else title_b)

@@ -3,6 +3,32 @@
 Formato: `MAYOR.MENOR.PARCHE`. MAYOR = cambios que rompen datos o uso, MENOR = funciones nuevas, PARCHE = arreglos.
 Cada versión subida a GitHub tiene su etiqueta `vX.Y.Z` (pestaña *Releases/Tags*).
 
+## 1.24.0
+**Integración Real de Audio y DSP en la Mesa DJ y Reproducción Universal de Previsualizaciones en el Buscador**
+- **Previsualización Universal en el Buscador**:
+  - Reproducción directa de alta fidelidad vía HTTPS CDN para previsualizaciones oficiales de Deezer y Apple Music/iTunes sin depender del proxy local, reduciendo la latencia a menos de 200 ms.
+  - Arquitectura redundante de triple capa: intento directo CDN -> failover automático a StreamingProxy HTTP 206 -> fallback con extractor de YouTube.
+  - Comprobación y activación garantizada de volumen y desenmudecimiento de salida de audio (`setMuted(False)`, `_apply_volume()`).
+  - Resguardo de metadatos y mitigación de excepciones con `item_info.get('url')`.
+- **Control Real de Audio y DSP en la Mesa Virtual Pioneer CDJ & DJM-A9**:
+  - **Faders de Pitch / Tempo (`DjPitchFader`)**: Conectados físicamente a `player.setPlaybackRate(rate)` para acelerar o desacelerar el audio en vivo (+/- 10%) con recálculo dinámico del BPM en la pantalla digital del CDJ y reseteo suave a centro en doble clic.
+  - **Jog Wheels Interactivos (`DjJogWheel`)**: Arrastre interactivo con ratón implementado con dos modos de operación:
+    - *Modo Vinilo*: Scrubbing y scratching acústico en tiempo real (`player.setPosition(pos + delta_ms)`), con ratio físico de 33 1/3 RPM (1 vuelta = 1.8 segundos).
+    - *Modo CDJ*: Pitch bending temporal para emparejar y cuadrar los bombos manualmente antes de la mezcla.
+  - **Cadena de Ganancias y Crossfader de Igual Potencia**:
+    - Cálculo de curvas de igual potencia trigonométricas (`cos(norm * pi / 2)` y `sin(norm * pi / 2)`) conectado a la atenuación real de `audio_output.setVolume(...)`.
+    - Faders individuales de canal y potenciómetros de Trim/Gain ajustan el nivel de señal de cada plato en tiempo real sin sobrescribir la posición física de los faders.
+  - **Ecualizador de 3 Bandas y Filtro de Color (`COLOR FX`)**:
+    - Potenciómetros de HI, MID y LOW conectados mediante temporizador antirebotes de 75 ms al motor de ecualización activa (`on_eq_changed`).
+    - Potenciómetro COLOR/FILTER con filtrado dinámico paso-bajo (giro a la izquierda) y paso-alto (giro a la derecha).
+  - **Rendimiento y Transporte CDJ**:
+    - Botón CUE Pioneer: memoriza punto de entrada en pausa y rebobina inmediatamente durante la reproducción.
+    - Botón SYNC Lock: ajusta automáticamente el fader de tempo para igualar el BPM entre ambos platos.
+    - Hot Cue Pads 1..4: grabación de marcas de tiempo en el primer toque y salto inmediato en pulsaciones posteriores.
+    - Controles Beat Loop: fijación de Loop In, Loop Out, activación/desactivación con Reloop y divisiones 1/2X y 2X con monitorización continua en el bucle de audio.
+    - Beat Jump: salto instantáneo de compases hacia adelante y hacia atrás.
+    - Conmutador Beat FX Rack: activación de efectos con notificación en cabina.
+
 ## 1.23.0
 **Consola Virtual Completa Pioneer CDJ & DJM-A9, Control Hardware Integral y Avance Garantizado 'Mezclar Ahora'**
 - **Consola Virtual Completa Pioneer CDJ & DJM-A9**:

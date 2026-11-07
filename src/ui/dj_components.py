@@ -163,7 +163,11 @@ class DjRotaryKnob(QWidget):
 
 
 class DjJogWheel(QWidget):
-    """Plato / Jog Wheel realista de DJ con vinilo, estrías, ribete metálico y rotación continua."""
+    """Plato / Jog Wheel realista de DJ con vinilo, estrías, ribete metálico, rotación y scratch interactivo con ratón."""
+    scratched = Signal(int)     # delta en milisegundos para scrub/scratch
+    nudged = Signal(float)      # factor para pitch bend temporal en modo CDJ (-0.08 a +0.08)
+    vinylModeChanged = Signal(bool)
+
     def __init__(self, deck_name="DECK A", accent_color="#1ED760", parent=None):
         super().__init__(parent)
         self.deck_name = deck_name
@@ -171,15 +175,29 @@ class DjJogWheel(QWidget):
         self._angle = 0.0
         self._playing = False
         self._pixmap = None
+        self._vinyl_mode = True
+        self._dragging = False
+        self._last_mouse_angle = 0.0
+        self.setCursor(Qt.OpenHandCursor)
         self._timer = QTimer(self)
         self._timer.setInterval(25)  # 40 fps
         self._timer.timeout.connect(self._rotate_step)
         self.setMinimumSize(60, 60)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setToolTip(f"{deck_name}: Arrastra para scratch o needle scrub (Modo Vinilo)")
+
+    def setVinylMode(self, enabled: bool):
+        self._vinyl_mode = bool(enabled)
+        self.vinylModeChanged.emit(self._vinyl_mode)
+        mode_str = "Vinilo (Scratch)" if self._vinyl_mode else "CDJ (Pitch Bend)"
+        self.setToolTip(f"{self.deck_name}: Modo {mode_str}. Arrastra para manipular el audio.")
+
+    def isVinylMode(self) -> bool:
+        return self._vinyl_mode
 
     def setPlaying(self, playing: bool):
         self._playing = bool(playing)
-        if self._playing and not self._timer.isActive():
+        if self._playing and not self._timer.isActive() and not self._dragging:
             self._timer.start()
         elif not self._playing and self._timer.isActive():
             self._timer.stop()
@@ -190,8 +208,52 @@ class DjJogWheel(QWidget):
         self.update()
 
     def _rotate_step(self):
-        self._angle = (self._angle + 2.5) % 360.0
-        self.update()
+        if not self._dragging:
+            self._angle = (self._angle + 2.5) % 360.0
+            self.update()
+
+    def _calc_angle(self, pos: QPointF) -> float:
+        cx = self.width() / 2.0
+        cy = self.height() / 2.0
+        return math.degrees(math.atan2(pos.y() - cy, pos.x() - cx))
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._dragging = True
+            self.setCursor(Qt.ClosedHandCursor)
+            self._last_mouse_angle = self._calc_angle(event.position())
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self._dragging:
+            cur_angle = self._calc_angle(event.position())
+            delta = cur_angle - self._last_mouse_angle
+            if delta > 180.0:
+                delta -= 360.0
+            elif delta < -180.0:
+                delta += 360.0
+            self._last_mouse_angle = cur_angle
+            self._angle = (self._angle + delta) % 360.0
+            self.update()
+
+            if self._vinyl_mode:
+                delta_ms = int(delta * 5.0)
+                if delta_ms != 0:
+                    self.scratched.emit(delta_ms)
+            else:
+                nudge = max(-0.08, min(0.08, delta * 0.005))
+                self.nudged.emit(nudge)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._dragging = False
+            self.setCursor(Qt.OpenHandCursor)
+            if not self._vinyl_mode:
+                self.nudged.emit(0.0)
+            if self._playing and not self._timer.isActive():
+                self._timer.start()
+            event.accept()
 
     def paintEvent(self, event):
         p = QPainter(self)

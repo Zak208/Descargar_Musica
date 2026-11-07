@@ -1035,7 +1035,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         if hasattr(self, 'dj_engine_on') and self.dj_engine_on():
             self.dj_engine_leave()
 
-        url = item_info['url']
+        url = item_info.get('url') or ''
         title = item_info.get('title', 'Desconocido')
         artist = item_info.get('uploader', 'Desconocido')
 
@@ -1054,6 +1054,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
 
         self._remember_current(item_info)
         self._retrying_preview = False
+        self._retried_proxy = False
         self._eq_source_path = None
         self._eq_active_render = None
         self.current_preview_btn = btn
@@ -1085,7 +1086,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
                 self._player_cover_loader = loader
                 loader.start()
         # Si la pista ya trae URL directa de vista previa (Deezer / iTunes CDN), se reproduce al instante
-        preview_audio = item_info.get("preview_url")
+        preview_audio = item_info.get("preview_url") or item_info.get("previewUrl") or item_info.get("preview")
         if preview_audio:
             self._finish_crossfade()
             self._on_preview_ready(preview_audio)
@@ -1494,18 +1495,41 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             self.player.stop()
 
         self._use_default_audio_device()
+        try:
+            self.audio_output.setMuted(False)
+            self._apply_volume()
+        except Exception:
+            pass
 
-        if stream_url.startswith("http://") or stream_url.startswith("https://"):
+        # Si es un enlace CDN directo (Deezer, iTunes) o un archivo directo de audio (.mp3, .m4a, .aac), reproducir directamente vía HTTPS
+        is_direct_cdn = (
+            "dzcdn.net" in stream_url
+            or "apple.com" in stream_url
+            or "mzstatic.com" in stream_url
+            or "itunes" in stream_url
+            or ".mp3" in stream_url
+            or ".m4a" in stream_url
+            or ".aac" in stream_url
+        )
+        if is_direct_cdn:
+            self.player.setSource(QUrl(stream_url))
+        elif stream_url.startswith("http://") or stream_url.startswith("https://"):
             from services.streaming_proxy import StreamingProxy
             proxied_url = StreamingProxy.get_instance().get_stream_url(stream_url)
+            self.player.setSource(QUrl.fromUserInput(proxied_url))
         else:
-            proxied_url = stream_url
+            self.player.setSource(QUrl.fromUserInput(stream_url))
 
-        self.player.setSource(QUrl.fromUserInput(proxied_url))
+        try:
+            self._fade_factor = 1.0
+        except Exception:
+            pass
         self.player.play()
         self.player_status.setText("Reproduciendo")
         self.btn_play_pause.set_state(True)
         self.btn_play_pause.setEnabled(True)
+        if self.current_preview_btn:
+            self._safe_set_btn_text(self.current_preview_btn, " Pausa", "pause.svg")
 
     def _on_preview_error(self, error_msg):
         self.player_status.setText(friendly_error(error_msg))
@@ -1514,6 +1538,19 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self.player.stop()
 
     def handle_player_error(self, error, error_string):
+        if (
+            getattr(self, "current_item_info", None)
+            and self.current_item_info.get("preview_url")
+            and not getattr(self, "_retried_proxy", False)
+        ):
+            self._retried_proxy = True
+            p_url = self.current_item_info.get("preview_url")
+            from services.streaming_proxy import StreamingProxy
+            proxied = StreamingProxy.get_instance().get_stream_url(p_url)
+            self.player.setSource(QUrl.fromUserInput(proxied))
+            self.player.play()
+            return
+
         if (
             getattr(self, "current_item_info", None)
             and self.current_item_info.get("preview_url")
@@ -1592,6 +1629,12 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         for card in self.findChildren(SongResultCard):
             try:
                 card.update_playing_state(self.is_current(card.item_info) and state == QMediaPlayer.PlayingState)
+            except Exception:
+                pass
+        from ui.track_row import TrackRow
+        for row in self.findChildren(TrackRow):
+            try:
+                row.set_playing(self.is_current(row.item_info) and state == QMediaPlayer.PlayingState)
             except Exception:
                 pass
         if self._full_player_visible():
