@@ -7,10 +7,10 @@ Incluye:
 - DjFader: Fader vertical de volumen de canal con escala en dB.
 """
 import math
-from PySide6.QtCore import Qt, Signal, QRectF, QPointF, QTimer, QSize, Property, QPropertyAnimation, QEasingCurve
+from PySide6.QtCore import Qt, Signal, QRectF, QPointF, QTimer, Property, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import (
     QPainter, QColor, QPen, QBrush, QLinearGradient, QRadialGradient, QConicalGradient,
-    QFont, QPainterPath, QPixmap
+    QPainterPath, QPixmap
 )
 from PySide6.QtWidgets import QWidget, QSizePolicy
 

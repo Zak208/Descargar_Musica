@@ -14,8 +14,7 @@ Soporta:
 import os
 import math
 import random
-from PySide6.QtCore import Qt, Signal, QSize, QTimer, QRectF, QPointF
-from PySide6.QtGui import QIcon, QPixmap, QColor, QFont, QPainter, QBrush, QPen
+from PySide6.QtCore import Qt, Signal, QSize, QTimer
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame,
     QListWidget, QAbstractItemView, QMenu, QScrollArea, QSizePolicy
@@ -26,7 +25,6 @@ from ui.dj_votes_mixin import TAG_LABELS
 from ui.icons import icon
 from ui.widgets import ElidedLabel
 from ui.dj_components import DjRotaryKnob, DjJogWheel, DjVuMeter, DjCrossfader, DjFader
-from ui.covers import placeholder_cover
 
 UPCOMING_SHOWN = 30
 COMPACT_MIN_W = 50
@@ -40,12 +38,12 @@ class DeckScreen(QFrame):
         self.accent_color = accent_color
         self.setObjectName("PanelCard")
         self.setAttribute(Qt.WA_StyledBackground, True)
-        self.setStyleSheet(f"""
-            QFrame#PanelCard {{
+        self.setStyleSheet("""
+            QFrame#PanelCard {
                 background-color: #121216;
                 border: 1px solid #252530;
                 border-radius: 8px;
-            }}
+            }
         """)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setMinimumHeight(115)
@@ -102,11 +100,11 @@ class DeckScreen(QFrame):
         # Mini barra de progreso / forma de onda simulada
         self.progress_bar = QFrame()
         self.progress_bar.setFixedHeight(6)
-        self.progress_bar.setStyleSheet(f"""
-            QFrame {{
+        self.progress_bar.setStyleSheet("""
+            QFrame {
                 background-color: #22222A;
                 border-radius: 3px;
-            }}
+            }
         """)
         layout.addWidget(self.progress_bar)
 
