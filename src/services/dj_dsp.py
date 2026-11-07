@@ -272,3 +272,78 @@ def render_transition(a, b, plan, sample_rate: int = SAMPLE_RATE):
            + (bass_a - fade_a)[:, None] * _lowpass(a, LOW_HZ, sample_rate)
            + (bass_b - fade_b)[:, None] * _lowpass(b, LOW_HZ, sample_rate))
     return out.astype(np.float32)
+
+
+# ------------------------------------------------------------------ filtros modelados y tallado de medios
+
+def resonant_filter(audio, cutoff_hz: float, kind: str = "lp", q: float = 0.707, order: int = 4,
+                    sample_rate: int = SAMPLE_RATE):
+    """Filtro resonante modelado (HPF o LPF) con factor de calidad Q musical.
+
+    kind: 'lp' (paso bajo) o 'hp' (paso alto).
+    cutoff_hz: frecuencia de corte en Hz (0 < cutoff_hz < sample_rate / 2).
+    q: resonancia musical (0.1 a 10.0; 0.707 = Butterworth plano sin pico; > 1.0 realce en corte).
+    order: orden del filtro (por defecto 4, caída de 24 dB/octava).
+    Devuelve float32 con la misma forma que audio.
+    Filtro de fase cero en frecuencia: no desfasa ni desalinea el audio."""
+    np = _np()
+    arr, was_1d = _as_2d(audio)
+    n = len(arr)
+    if n == 0:
+        return np.zeros_like(arr) if not was_1d else np.zeros(0, dtype=np.float32)
+    cutoff_hz = float(cutoff_hz)
+    q = min(max(float(q), 0.1), 10.0)
+    order = max(1, int(order))
+    if not (0.0 < cutoff_hz < sample_rate / 2.0):
+        raise ValueError("cutoff_hz debe estar entre 0 y sample_rate / 2")
+
+    pad = int(sample_rate * max(0.1, 20.0 / max(cutoff_hz, 20.0)))
+    size = _fast_len(n + pad)
+    spec = np.fft.rfft(arr.T.astype(np.float64), n=size, axis=1)
+    freqs = np.fft.rfftfreq(size, 1.0 / sample_rate)
+    f = np.maximum(freqs, 1e-4)
+    ratio = f / cutoff_hz
+
+    denom = np.sqrt((1.0 - ratio ** 2) ** 2 + (ratio / q) ** 2)
+    denom = np.maximum(denom, 1e-12)
+    if kind == "lp":
+        base_h = 1.0 / denom
+    elif kind == "hp":
+        base_h = (ratio ** 2) / denom
+    else:
+        raise ValueError("kind debe ser 'lp' o 'hp'")
+
+    h = base_h ** (order / 2.0)
+    filtered = np.fft.irfft(spec * h[None, :], n=size, axis=1)[:, :n].T
+    out = filtered.astype(np.float32)
+    return out.ravel() if was_1d else out
+
+
+def mid_carve(audio, center_hz: float = 1500.0, width_oct: float = 1.0, gain_db: float = -6.0,
+              sample_rate: int = SAMPLE_RATE):
+    """Atenuación paramétrica de medios (Mid-Carve) para despejar el espacio de frecuencias
+    vocales (800 Hz a 3 kHz) durante la mezcla simultánea de dos temas y evitar saturación o emborronamiento.
+
+    center_hz: frecuencia central de la campana (por defecto 1500 Hz).
+    width_oct: anchura en octavas de la campana.
+    gain_db: ganancia en dB (por defecto -6 dB de atenuación)."""
+    np = _np()
+    arr, was_1d = _as_2d(audio)
+    n = len(arr)
+    if n == 0:
+        return np.zeros_like(arr) if not was_1d else np.zeros(0, dtype=np.float32)
+    center_hz = float(center_hz)
+    gain_lin = 10.0 ** (float(gain_db) / 20.0)
+
+    pad = int(sample_rate * 0.05)
+    size = _fast_len(n + pad)
+    spec = np.fft.rfft(arr.T.astype(np.float64), n=size, axis=1)
+    freqs = np.fft.rfftfreq(size, 1.0 / sample_rate)
+    f = np.maximum(freqs, 1e-4)
+
+    bell = np.exp(-0.5 * (np.log2(f / center_hz) / max(0.1, width_oct / 2.0)) ** 2)
+    mask = 1.0 + (gain_lin - 1.0) * bell
+
+    filtered = np.fft.irfft(spec * mask[None, :], n=size, axis=1)[:, :n].T
+    out = filtered.astype(np.float32)
+    return out.ravel() if was_1d else out

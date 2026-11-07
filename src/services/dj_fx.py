@@ -423,3 +423,235 @@ def stutter(audio, bpm: float, division: int = 16, repeats: int = 4, sample_rate
     keep = up_idx < n
     gain[up_idx[keep]] *= np.tile(dj_dsp._ramp(ramp, down=False), len(bounds))[keep.ravel()]
     return (out * gain[:, None]).astype(np.float32)
+
+
+# ------------------------------------------------------------------ efectos avanzados DJ
+
+def tempo_delay(audio, bpm: float, beats: float = 0.75, feedback: float = 0.5, mix: float = 0.5,
+                ping_pong: bool = True, ducking: float = 0.0, tail_s: float = None,
+                sample_rate: int = SAMPLE_RATE):
+    """Tempo Delay rítmico estéreo sincronizado a compás (1/2, 3/4, 1T).
+
+    Parámetros:
+      bpm: tempo en pulsos por minuto (debe ser positivo).
+      beats: figura rítmica (0.5 = 1/2 compás, 0.75 = 3/4 con puntillo, 1.0 = 1 pulso).
+      feedback: realimentación de 0 a 0.95.
+      mix: balance efecto de 0 a 1.
+      ping_pong: si True, los ecos rebotan alternando entre el canal izquierdo y derecho.
+      ducking: atenuación de 0 a 1 de las repeticiones mientras la señal seca tiene volumen alto,
+               haciendo que los ecos florezcan en los huecos y pausas sin saturar la mezcla.
+      tail_s: segundos de cola tras el final (None = automático hasta -60 dB)."""
+    np = _np()
+    _check_sr(sample_rate)
+    bpm = _finite(bpm, "bpm")
+    beats = _finite(beats, "beats")
+    if bpm <= 0 or beats <= 0:
+        raise ValueError("bpm y beats deben ser positivos")
+    feedback = min(max(_finite(feedback, "feedback"), 0.0), MAX_FEEDBACK)
+    mix = min(max(_finite(mix, "mix"), 0.0), 1.0)
+    ducking = min(max(_finite(ducking, "ducking"), 0.0), 1.0)
+
+    delay_s = beats * 60.0 / bpm
+    if tail_s is None:
+        tail_s = echo_tail_s(delay_s, feedback)
+    tail_s = min(max(0.0, _finite(tail_s, "tail_s")), MAX_TAIL_S)
+
+    x = _stereo(audio)
+    n = len(x)
+    tail_n = max(0, int(round(tail_s * sample_rate)))
+    total = n + tail_n
+    out = np.zeros((total, 2), dtype=np.float64)
+    if total == 0:
+        return out.astype(np.float32)
+    out[:n] = x
+
+    if n and mix > 0.0:
+        d = max(1, int(round(delay_s * sample_rate)))
+        ch = 2
+        m = -(-total // d)
+        xb = np.zeros((m * d, ch), dtype=np.float64)
+        have = min(n, m * d)
+        xb[:have] = x[:have]
+        xb = xb.reshape(m, d, ch)
+        y = np.zeros_like(xb)
+        last_in = min(m - 1, -(-n // d))
+
+        if not ping_pong:
+            for k in range(1, last_in + 1):
+                y[k] = xb[k - 1] + feedback * y[k - 1]
+            if last_in + 1 < m:
+                powers = feedback ** np.arange(1, m - last_in, dtype=np.float64)
+                y[last_in + 1:] = y[last_in][None] * powers[:, None, None]
+        else:
+            # Ping-Pong: rebote alterno entre canales I y D
+            for k in range(1, m):
+                in_k = xb[k - 1] if k - 1 <= last_in else np.zeros((d, 2), dtype=np.float64)
+                if k == 1:
+                    # Inyección inicial estéreo hacia canal izquierdo
+                    in_mono = 0.5 * (in_k[:, 0] + in_k[:, 1])
+                    y[1, :, 0] = in_mono
+                    y[1, :, 1] = 0.0
+                else:
+                    y[k, :, 0] = in_k[:, 0] + feedback * y[k - 1, :, 1]
+                    y[k, :, 1] = in_k[:, 1] + feedback * y[k - 1, :, 0]
+
+        wet = y.reshape(m * d, ch)[:total]
+
+        # Ducking envolvente
+        if ducking > 0.0 and n > 0:
+            amp = np.max(np.abs(x), axis=1)
+            win = max(1, min(int(0.05 * sample_rate), n))
+            smoothed = np.convolve(amp, np.ones(win, dtype=np.float64) / win, mode="same")
+            peak_lvl = float(np.percentile(smoothed, 90)) if len(smoothed) else 1.0
+            norm_env = np.clip(smoothed / max(peak_lvl, 1e-4), 0.0, 1.0)
+            duck_mult = np.ones(total, dtype=np.float64)
+            duck_mult[:n] = 1.0 - (ducking * norm_env)
+            wet = wet * duck_mult[:, None]
+
+        out += mix * wet
+
+    if tail_n:
+        _fade_out(out[n:], min(tail_n, int(TAIL_FADE_S * sample_rate)))
+    return limit_peak(out)
+
+
+def dub_tape_echo(audio, bpm: float = None, delay_s: float = None, beats: float = 0.75,
+                  feedback: float = 0.55, mix: float = 0.5, low_cut_hz: float = 250.0,
+                  high_cut_hz: float = 5000.0, saturation: float = 0.3, freeze: bool = False,
+                  freeze_at_s: float = None, tail_s: float = None,
+                  sample_rate: int = SAMPLE_RATE):
+    """Dub / Tape Echo profesional con corte de graves/agudos, saturación tipo cinta (tanh)
+    y soporte para Echo Freeze (congelación infinita).
+
+    freeze: si es True, bloquea el bucle de realimentación en 0.995 y corta la entrada para crear
+            una cama ambiental sostenida.
+    freeze_at_s: instante en segundos a partir del cual se congela la señal."""
+    np = _np()
+    _check_sr(sample_rate)
+    if delay_s is None:
+        bpm = _finite(bpm if bpm and bpm > 0 else 120.0, "bpm")
+        beats = _finite(beats, "beats")
+        delay_s = beats * 60.0 / bpm
+    else:
+        delay_s = _finite(delay_s, "delay_s")
+    delay_s = min(max(delay_s, MIN_DELAY_S), MAX_DELAY_S)
+
+    if freeze:
+        feedback = 0.99
+        if tail_s is None:
+            tail_s = 6.0
+    else:
+        feedback = min(max(_finite(feedback, "feedback"), 0.0), MAX_FEEDBACK)
+
+    mix = min(max(_finite(mix, "mix"), 0.0), 1.0)
+    saturation = min(max(_finite(saturation, "saturation"), 0.0), 2.0)
+    x = _stereo(audio).copy()
+    n = len(x)
+
+    if freeze_at_s is not None and 0.0 <= freeze_at_s < n / sample_rate:
+        freeze_idx = int(round(freeze_at_s * sample_rate))
+        x[freeze_idx:] = 0.0
+
+    if tail_s is None:
+        tail_s = echo_tail_s(delay_s, feedback)
+    tail_s = min(max(0.0, _finite(tail_s, "tail_s")), MAX_TAIL_S)
+
+    tail_n = max(0, int(round(tail_s * sample_rate)))
+    total = n + tail_n
+    out = np.zeros((total, 2), dtype=np.float64)
+    if total == 0:
+        return out.astype(np.float32)
+    out[:n] = x
+
+    if n and mix > 0.0:
+        d = max(1, int(round(delay_s * sample_rate)))
+        ch = 2
+        m = -(-total // d)
+        xb = np.zeros((m * d, ch), dtype=np.float64)
+        have = min(n, m * d)
+        xb[:have] = x[:have]
+        xb = xb.reshape(m, d, ch)
+        y = np.zeros_like(xb)
+        last_in = min(m - 1, -(-n // d))
+
+        for k in range(1, m):
+            in_tap = xb[k - 1] if k - 1 <= last_in else np.zeros((d, ch), dtype=np.float64)
+            prev = y[k - 1]
+            # Saturación analógica de cinta
+            if saturation > 0.0:
+                prev = np.tanh(prev * (1.0 + saturation)) / (1.0 + saturation)
+            y[k] = in_tap + feedback * prev
+
+        wet = y.reshape(m * d, ch)[:total]
+        # Corte de graves en la cola
+        if low_cut_hz > 20.0 and len(wet) > 0:
+            wet = dj_dsp.kill_low(wet, sample_rate=sample_rate).astype(np.float64)
+
+        out += mix * wet
+
+    if tail_n:
+        _fade_out(out[n:], min(tail_n, int(TAIL_FADE_S * sample_rate)))
+    return limit_peak(out)
+
+
+def washout_reverb(audio, decay_s: float = 3.5, mix_start: float = 0.0, mix_end: float = 0.85,
+                   hpf_start_hz: float = 20.0, hpf_end_hz: float = 1800.0, tail_s: float = None,
+                   sample_rate: int = SAMPLE_RATE, seed: int = 42):
+    """Space / Washout Reverb con cola envolvente:
+    Aplica barrido ascendente de filtro paso alto (HPF) y rampa creciente de reverberación
+    para crear salidas etéreas sin colisión ni cortes secos.
+
+    mix_start: nivel inicial de reverb (por defecto 0.0).
+    mix_end: nivel de reverb al final del audio seco (por defecto 0.85).
+    hpf_start_hz a hpf_end_hz: rango de frecuencia del barrido de paso alto."""
+    np = _np()
+    _check_sr(sample_rate)
+    decay_s = min(max(_finite(decay_s, "decay_s"), 0.1), 10.0)
+    mix_start = min(max(_finite(mix_start, "mix_start"), 0.0), 1.0)
+    mix_end = min(max(_finite(mix_end, "mix_end"), 0.0), 1.0)
+    if tail_s is None:
+        tail_s = decay_s
+    tail_s = min(max(0.0, _finite(tail_s, "tail_s")), MAX_TAIL_S)
+
+    x = _stereo(audio)
+    n = len(x)
+    tail_n = max(0, int(round(tail_s * sample_rate)))
+    total = n + tail_n
+    if total == 0:
+        return np.zeros((0, 2), dtype=np.float32)
+
+    # Filtrado paso alto progresivo
+    if n > 0 and hpf_end_hz > hpf_start_hz:
+        x_filtered = filter_sweep(x, "hp", hpf_start_hz, min(hpf_end_hz, sample_rate / 2.0 * 0.95),
+                                  sample_rate=sample_rate)
+    else:
+        x_filtered = x
+
+    ir_len = max(int(round((decay_s + REVERB_PREDELAY_S) * sample_rate)), tail_n)
+    ir = _impulse(decay_s, ir_len, sample_rate, seed)
+    size = dj_dsp._fast_len(n + ir_len)
+    raw_wet = np.fft.irfft(np.fft.rfft(x_filtered.astype(np.float64), n=size, axis=0)
+                           * np.fft.rfft(ir, n=size, axis=0), n=size, axis=0)
+    wet = np.zeros((total, 2), dtype=np.float64)
+    take = min(total, len(raw_wet))
+    wet[:take] = raw_wet[:take]
+
+    # Envolvente de mezcla: de mix_start a mix_end durante n, y mix_end durante la cola
+    mix_env = np.ones(total, dtype=np.float64) * mix_end
+    if n > 0:
+        mix_env[:n] = np.linspace(mix_start, mix_end, n)
+
+    out = np.zeros((total, 2), dtype=np.float64)
+    out[:n] = x
+    out += wet * mix_env[:, None]
+
+    if tail_n:
+        _fade_out(out[n:], min(tail_n, int(TAIL_FADE_S * sample_rate)))
+    return limit_peak(out)
+
+
+def space_reverb(audio, decay_s: float = 2.5, mix: float = 0.4, tail_s: float = None,
+                 sample_rate: int = SAMPLE_RATE, seed: int = 42):
+    """Reverberación espacial de sala amplia para uso interactivo en el rack de efectos."""
+    return reverb_tail(audio, decay_s=decay_s, mix=mix, tail_s=tail_s,
+                       sample_rate=sample_rate, seed=seed)

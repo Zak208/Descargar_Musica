@@ -259,6 +259,14 @@ class SongResultCard(QFrame, HoverFader):
         saved = bool(PlaylistService.lists_containing(self.item_info))
         self.heart_btn.setIcon(save_icon(saved, ACTION_HOT if self._hot else ACTION_IDLE))
 
+    def update_playing_state(self, playing: bool):
+        if playing:
+            self.preview_btn.setIcon(icon("pause_black.svg"))
+            self.title_label.setStyleSheet("font-size: 14px; color: #1ED760; font-weight: bold; background: transparent;")
+        else:
+            self.preview_btn.setIcon(icon("play_black.svg"))
+            self.title_label.setStyleSheet("font-size: 14px; background: transparent;")
+
     def toggle_favorite_card(self):
         if self.parent_window and hasattr(self.parent_window, "save_button_clicked"):
             self.parent_window.save_button_clicked(dict(self.item_info), self.heart_btn)

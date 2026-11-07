@@ -3,6 +3,23 @@
 Formato: `MAYOR.MENOR.PARCHE`. MAYOR = cambios que rompen datos o uso, MENOR = funciones nuevas, PARCHE = arreglos.
 Cada versión subida a GitHub tiene su etiqueta `vX.Y.Z` (pestaña *Releases/Tags*).
 
+## 1.20.0
+**Corrección de Álbumes y Previsualización Instantánea CDN**
+- **Carga robusta de álbumes (Deezer + iTunes)**: Resolución del error «Algo salió mal» al abrir álbumes de Deezer con IDs numéricos o alfanuméricos mediante un sistema de resolución híbrida transparente (`dz_` + fallback a Deezer/iTunes) y señal polimórfica en `AlbumCard`.
+- **Previsualización instantánea a 0 ms**: Integración directa de los streams oficiales de 30 segundos (`preview_url`) proporcionados por los CDN de Deezer e iTunes en los resultados de búsqueda, canciones de artistas y álbumes, eliminando la espera de scraping de YouTube y los bloqueos de bots.
+- **Iconografía y estado activo en tarjetas de búsqueda**: Botones de reproducción circulares (`RoundPlayBtn`) con iconos contrastados (`play_black.svg` / `pause_black.svg`), feedback de pausa y resaltado verde Spotify (`#1ED760`) en la canción activa.
+
+**Sistema DJ Profesional: DSP Modelado, Filtros Resonantes y Rack de Efectos**
+- **Filtros Resonantes Modelados (HPF & LPF con Q musical)**: Implementación de barridos de filtro de fase cero en frecuencia en `dj_dsp.py`, con resonancia paramétrica Q entre 0.1 y 10.0 y orden seleccionable (caída de 24 dB/octava).
+- **Tallado de Medios Paramétrico (*Mid-Frequency Carving*)**: Atenuación quirúrgica (-6.00 dB) en 1.500 Hz centrada en la banda vocal durante el solape de dos temas, eliminando emborronamiento y colisiones vocales sin alterar graves (80 Hz) ni agudos (7 kHz).
+- **Unidad de Efectos Avanzada en `dj_fx.py`**:
+  - *Tempo Delay Rítmico Estéreo*: Sincronizado a compás (1/2, 3/4, 1T) con rebote *Ping-Pong* y atenuación inteligente (*ducking*) para que las repeticiones florezcan en los silencios sin ensuciar la mezcla.
+  - *Dub / Tape Echo con Saturación Analógica*: Retardo cálido con corte de graves y soporte para *Echo Freeze* sostenido.
+  - *Space / Washout Reverb*: Reverberación difusa de gran sala con barrido de paso alto progresivo y cola envolvente para salidas limpias de canciones secas.
+  - *Limitador Suave Infranqueable*: Techo máximo estrictamente limitado a +/- 0.9900 con compresión analógica suave sin clics en todas las combinaciones de efectos.
+- **Nuevos Tipos de Transición Profesional**: `smart_filter_eq` (mezcla inteligente de alta energía con Mid-Carve), `delay_drop` (corte rítmico con delay en compás) y `reverb_wash` (disolución envolvente en transiciones de choque tonal o caídas de energía).
+- **Perfiles de Mezcla y Rack FX Interactivo en `DjPage`**: Selector de perfil de sesión (`🎧 Club`, `📻 Radio`, `☕ Chill`) y panel de control táctil con botones de estado para Filtros, Delay, Ping-Pong, Tape Echo, Echo Freeze y Washout Reverb.
+
 ## 1.19.0
 **Streaming Proxy local y Autoplay infinito**
 - **StreamingProxy HTTP 206 local**: Servidor proxy loopback multihilo en `127.0.0.1` con soporte nativo de solicitudes parciales `Range: bytes=X-Y` (HTTP 206) y reintentos ante estrangulamiento o cortes de YouTube, eliminando pausas a mitad de canción o bloqueos a 00:00.

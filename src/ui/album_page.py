@@ -138,6 +138,16 @@ class AlbumDetailsPage(QWidget):
         for b in (self.btn_play, self.btn_download_album, self.btn_save_list):
             b.setEnabled(False)
 
+    def show_error(self, message: str = ""):
+        self.title_lbl.setText("No se pudo cargar el álbum")
+        self.meta_lbl.setText(message)
+        clear_layout(self.tracks_container)
+        lbl = QLabel(message or "Algo no ha ido bien al obtener las canciones de este álbum.")
+        lbl.setObjectName("SectionSubtitle")
+        lbl.setAlignment(Qt.AlignCenter)
+        lbl.setStyleSheet("font-size: 14px; padding: 40px; background: transparent;")
+        self.tracks_container.addWidget(lbl)
+
     def load_album_data(self, data: dict, main_window):
         self.album_data = data
         self.title_lbl.setText(data.get("name", "Álbum"))

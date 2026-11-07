@@ -48,7 +48,7 @@ class HorizontalCarouselScrollArea(QScrollArea):
 
 
 class AlbumCard(QFrame):
-    clicked = Signal(int)  # album_id
+    clicked = Signal(object)  # album_id (int o str)
 
     def __init__(self, album_info: dict, parent=None):
         super().__init__(parent)

@@ -23,7 +23,7 @@ AVATAR = 168
 
 class ArtistProfilePage(QWidget):
     back_clicked = Signal()
-    album_selected = Signal(int)
+    album_selected = Signal(object)
     download_all_requested = Signal(list)
 
     def __init__(self, window, parent=None):

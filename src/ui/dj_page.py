@@ -46,6 +46,10 @@ class DjPage(QWidget):
     unblock_all_requested = Signal()
     bpm_requested = Signal(str, str)         # (ruta de la canción, «half», «double», «set» o «auto»)
     vote_requested = Signal(int, list)       # (+1 o -1, motivos marcados) de la mezcla que toca
+    profile_requested = Signal(str)          # 'club', 'radio', 'chill'
+    fx_changed = Signal(str, dict)           # ('filter', {'mode': 'hpf'}), etc.
+    freeze_requested = Signal(bool)          # True / False
+    washout_requested = Signal()             # Washout trigger
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -198,6 +202,133 @@ class DjPage(QWidget):
         buttons.addStretch()
         sess.addLayout(buttons)
 
+        # --- perfil de mezcla (Club, Radio, Chill) ---
+        prof_card = QFrame()
+        prof_card.setObjectName("PanelCard")
+        prof_card.setAttribute(Qt.WA_StyledBackground, True)
+        prof_lay = QVBoxLayout(prof_card)
+        prof_lay.setContentsMargins(14, 10, 14, 10)
+        prof_lay.setSpacing(6)
+
+        prof_cap = QLabel("PERFIL DE MEZCLA")
+        prof_cap.setStyleSheet("font-size: 11px; font-weight: 800; color: #B3B3B3; letter-spacing: 1px; background: transparent;")
+        prof_lay.addWidget(prof_cap)
+
+        prof_row = QHBoxLayout()
+        prof_row.setSpacing(8)
+        self.btn_prof_club = QPushButton("🎧 Club")
+        self.btn_prof_club.setObjectName("TopPillBtn")
+        self.btn_prof_club.setCursor(Qt.PointingHandCursor)
+        self.btn_prof_club.setToolTip("Mezclas largas de 16-32 compases con cambio de graves y Mid-Carve vocal")
+        self.btn_prof_club.clicked.connect(lambda: self.profile_requested.emit("club"))
+
+        self.btn_prof_radio = QPushButton("📻 Radio")
+        self.btn_prof_radio.setObjectName("TopPillBtn")
+        self.btn_prof_radio.setCursor(Qt.PointingHandCursor)
+        self.btn_prof_radio.setToolTip("Cortes rápidos de 4-8 compases, delay drop y transiciones dinámicas")
+        self.btn_prof_radio.clicked.connect(lambda: self.profile_requested.emit("radio"))
+
+        self.btn_prof_chill = QPushButton("☕ Chill")
+        self.btn_prof_chill.setObjectName("TopPillBtn")
+        self.btn_prof_chill.setCursor(Qt.PointingHandCursor)
+        self.btn_prof_chill.setToolTip("Fundidos progresivos, washout reverb envolvente y transiciones atmosféricas")
+        self.btn_prof_chill.clicked.connect(lambda: self.profile_requested.emit("chill"))
+
+        self._profile_buttons = {
+            "club": self.btn_prof_club,
+            "radio": self.btn_prof_radio,
+            "chill": self.btn_prof_chill,
+        }
+        for b in self._profile_buttons.values():
+            prof_row.addWidget(b)
+        prof_row.addStretch()
+        prof_lay.addLayout(prof_row)
+        sess.addWidget(prof_card)
+
+        # --- rack de efectos DJ ---
+        fx_card = QFrame()
+        fx_card.setObjectName("PanelCard")
+        fx_card.setAttribute(Qt.WA_StyledBackground, True)
+        fx_lay = QVBoxLayout(fx_card)
+        fx_lay.setContentsMargins(14, 10, 14, 10)
+        fx_lay.setSpacing(6)
+
+        fx_cap = QLabel("RACK DE EFECTOS DJ")
+        fx_cap.setStyleSheet("font-size: 11px; font-weight: 800; color: #B3B3B3; letter-spacing: 1px; background: transparent;")
+        fx_lay.addWidget(fx_cap)
+
+        fx_row1 = QHBoxLayout()
+        fx_row1.setSpacing(8)
+
+        self.btn_fx_filter = _tight(QPushButton("Filtro: OFF"), extra=6)
+        self.btn_fx_filter.setObjectName("TopPillBtn")
+        self.btn_fx_filter.setCursor(Qt.PointingHandCursor)
+        self.btn_fx_filter.setToolTip("Filtro resonante modelado Q: OFF, HPF (paso alto) o LPF (paso bajo)")
+        self.btn_fx_filter.clicked.connect(self._cycle_filter)
+        fx_row1.addWidget(self.btn_fx_filter)
+
+        self.btn_fx_echo = _tight(QPushButton("Eco: OFF"), extra=6)
+        self.btn_fx_echo.setObjectName("TopPillBtn")
+        self.btn_fx_echo.setCursor(Qt.PointingHandCursor)
+        self.btn_fx_echo.setToolTip("Eco de cinta con saturación analógica y corte de graves")
+        self.btn_fx_echo.clicked.connect(self._toggle_echo)
+        fx_row1.addWidget(self.btn_fx_echo)
+
+        self.btn_fx_reverb = _tight(QPushButton("Reverb: OFF"), extra=6)
+        self.btn_fx_reverb.setObjectName("TopPillBtn")
+        self.btn_fx_reverb.setCursor(Qt.PointingHandCursor)
+        self.btn_fx_reverb.setToolTip("Reverberación espacial envolvente")
+        self.btn_fx_reverb.clicked.connect(self._toggle_reverb)
+        fx_row1.addWidget(self.btn_fx_reverb)
+
+        fx_row1.addStretch()
+        fx_lay.addLayout(fx_row1)
+
+        fx_row2 = QHBoxLayout()
+        fx_row2.setSpacing(8)
+
+        self.btn_fx_delay = _tight(QPushButton("Delay: 3/4"), extra=6)
+        self.btn_fx_delay.setObjectName("TopPillBtn")
+        self.btn_fx_delay.setCursor(Qt.PointingHandCursor)
+        self.btn_fx_delay.setToolTip("Tempo delay rítmico estéreo: 3/4, 1/2, 1T u OFF")
+        self.btn_fx_delay.clicked.connect(self._cycle_delay)
+        fx_row2.addWidget(self.btn_fx_delay)
+
+        self.btn_fx_pingpong = _tight(QPushButton("Ping-Pong"), extra=6)
+        self.btn_fx_pingpong.setObjectName("TopPillBtn")
+        self.btn_fx_pingpong.setCursor(Qt.PointingHandCursor)
+        self.btn_fx_pingpong.setToolTip("Activa o desactiva rebote alternado en estéreo")
+        self.btn_fx_pingpong.clicked.connect(self._toggle_pingpong)
+        fx_row2.addWidget(self.btn_fx_pingpong)
+
+        self.btn_fx_freeze = _tight(QPushButton("❄ Freeze"), extra=6)
+        self.btn_fx_freeze.setObjectName("TopPillBtn")
+        self.btn_fx_freeze.setCursor(Qt.PointingHandCursor)
+        self.btn_fx_freeze.setToolTip("Congela el eco en un bucle sostenido infinito")
+        self.btn_fx_freeze.clicked.connect(self._toggle_freeze)
+        fx_row2.addWidget(self.btn_fx_freeze)
+
+        self.btn_fx_washout = _tight(QPushButton("Washout"), extra=6)
+        self.btn_fx_washout.setObjectName("TopPillBtn")
+        self.btn_fx_washout.setCursor(Qt.PointingHandCursor)
+        self.btn_fx_washout.setToolTip("Dispara un barrido ascendente con washout reverb envolvente")
+        self.btn_fx_washout.clicked.connect(self.washout_requested.emit)
+        fx_row2.addWidget(self.btn_fx_washout)
+
+        fx_row2.addStretch()
+        fx_lay.addLayout(fx_row2)
+        sess.addWidget(fx_card)
+
+        self._current_profile = "club"
+        self._fx_state = {
+            "filter_mode": "OFF",
+            "delay_time": "3/4",
+            "ping_pong": True,
+            "echo_active": False,
+            "freeze_active": False,
+            "reverb_active": False,
+        }
+
         nxt = QHBoxLayout()
         nxt_cap = QLabel("A continuación:")
         nxt_cap.setStyleSheet("font-weight: 700;")
@@ -238,6 +369,7 @@ class DjPage(QWidget):
         self._apply_labels()
         if not active:
             return
+        self.set_profile(self._current_profile)
         now = now or {}
         self._now_path = now.get("local_path", "")
         for btn in self.bpm_buttons:
@@ -331,6 +463,63 @@ class DjPage(QWidget):
 
     def set_vote_status(self, text: str):
         self.vote_status.setText(text)
+
+    def set_profile(self, profile: str):
+        profile = (profile or "club").lower()
+        self._current_profile = profile
+        for name, btn in self._profile_buttons.items():
+            if name == profile:
+                btn.setStyleSheet("QPushButton { background: #1ED760; color: #000000; font-weight: bold; border-radius: 12px; }")
+            else:
+                btn.setStyleSheet("")
+
+    def _cycle_filter(self):
+        modes = ["OFF", "HPF", "LPF"]
+        cur = self._fx_state.get("filter_mode", "OFF")
+        nxt = modes[(modes.index(cur) + 1) % len(modes)]
+        self._fx_state["filter_mode"] = nxt
+        self.btn_fx_filter.setText(f"Filtro: {nxt}")
+        self.btn_fx_filter.setStyleSheet("QPushButton { background: #1ED760; color: #000000; font-weight: bold; }" if nxt != "OFF" else "")
+        self.fx_changed.emit("filter", {"mode": nxt.lower(), "q": 1.5})
+
+    def _cycle_delay(self):
+        times = ["3/4", "1/2", "1T", "OFF"]
+        cur = self._fx_state.get("delay_time", "3/4")
+        nxt = times[(times.index(cur) + 1) % len(times)]
+        self._fx_state["delay_time"] = nxt
+        self.btn_fx_delay.setText(f"Delay: {nxt}")
+        self.btn_fx_delay.setStyleSheet("QPushButton { background: #1ED760; color: #000000; font-weight: bold; }" if nxt != "OFF" else "")
+        self.fx_changed.emit("delay", {"beats": nxt, "active": nxt != "OFF"})
+
+    def _toggle_pingpong(self):
+        cur = self._fx_state.get("ping_pong", True)
+        nxt = not cur
+        self._fx_state["ping_pong"] = nxt
+        self.btn_fx_pingpong.setStyleSheet("QPushButton { background: #1ED760; color: #000000; font-weight: bold; }" if nxt else "")
+        self.fx_changed.emit("ping_pong", {"enabled": nxt})
+
+    def _toggle_echo(self):
+        cur = self._fx_state.get("echo_active", False)
+        nxt = not cur
+        self._fx_state["echo_active"] = nxt
+        self.btn_fx_echo.setText(f"Eco Tape: {'ON' if nxt else 'OFF'}")
+        self.btn_fx_echo.setStyleSheet("QPushButton { background: #1ED760; color: #000000; font-weight: bold; }" if nxt else "")
+        self.fx_changed.emit("echo", {"active": nxt})
+
+    def _toggle_freeze(self):
+        cur = self._fx_state.get("freeze_active", False)
+        nxt = not cur
+        self._fx_state["freeze_active"] = nxt
+        self.btn_fx_freeze.setStyleSheet("QPushButton { background: #38ef7d; color: #000000; font-weight: bold; }" if nxt else "")
+        self.freeze_requested.emit(nxt)
+
+    def _toggle_reverb(self):
+        cur = self._fx_state.get("reverb_active", False)
+        nxt = not cur
+        self._fx_state["reverb_active"] = nxt
+        self.btn_fx_reverb.setText(f"Reverb: {'ON' if nxt else 'OFF'}")
+        self.btn_fx_reverb.setStyleSheet("QPushButton { background: #1ED760; color: #000000; font-weight: bold; }" if nxt else "")
+        self.fx_changed.emit("reverb", {"active": nxt})
 
     def set_countdown(self, text: str):
         if self.countdown.text() != text:

@@ -882,7 +882,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self.artist_worker.error_occurred.connect(lambda err: self.notify(friendly_error(err)))
         self.artist_worker.start()
 
-    def open_album_details(self, album_id: int):
+    def open_album_details(self, album_id):
         """Abre la página detallada de un álbum."""
         self.previous_page_before_album = self.stacked_widget.currentIndex()
         self.switch_to_page(Page.ALBUM)
@@ -891,7 +891,12 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
 
         self.album_worker = AlbumDetailsWorker(album_id)
         self.album_worker.details_ready.connect(lambda data: self.page_album.load_album_data(data, self))
-        self.album_worker.error_occurred.connect(lambda err: self.notify(friendly_error(err)))
+        def _on_album_err(err):
+            msg = friendly_error(err)
+            self.notify(msg)
+            if hasattr(self.page_album, "show_error"):
+                self.page_album.show_error(msg)
+        self.album_worker.error_occurred.connect(_on_album_err)
         self.album_worker.start()
 
     # ---------- una miniatura vuela hasta donde ha ido la canción ----------
@@ -1072,6 +1077,13 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
                 loader.image_loaded.connect(lambda p, info=item_info: self.player_thumb.setPixmap(p) if self.current_item_info is info else None)
                 self._player_cover_loader = loader
                 loader.start()
+        # Si la pista ya trae URL directa de vista previa (Deezer / iTunes CDN), se reproduce al instante
+        preview_audio = item_info.get("preview_url")
+        if preview_audio:
+            self._finish_crossfade()
+            self._on_preview_ready(preview_audio)
+            return
+
         self.player_status.setText("Cargando...")
         self.btn_play_pause.setEnabled(False)
 
@@ -1549,6 +1561,11 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
                     self.set_now_playing_visible(True)
         if hasattr(self, "home_continue"):
             self.home_continue.refresh()
+        for card in self.findChildren(SongResultCard):
+            try:
+                card.update_playing_state(self.is_current(card.item_info) and state == QMediaPlayer.PlayingState)
+            except Exception:
+                pass
         if self._full_player_visible():
             self.full_player.set_playing(state == QMediaPlayer.PlayingState)
         if getattr(self, "taskbar", None) is not None and self.taskbar.ok:

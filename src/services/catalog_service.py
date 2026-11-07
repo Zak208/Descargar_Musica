@@ -136,6 +136,7 @@ class CatalogSearchWorker(QThread):
                             "duration_secs": duration_s,
                             "duration_str": format_duration(duration_s, blank_zero=False),
                             "thumbnail": artwork,
+                            "preview_url": it.get('preview') or '',
                             "url": f"ytsearch1:{art_name} {t_name}",
                             "id": str(it.get('id', '')),
                             "rank": int(it.get('rank', 0) or 0)
@@ -170,6 +171,7 @@ class CatalogSearchWorker(QThread):
                             "duration_secs": duration_s,
                             "duration_str": format_duration(duration_s, blank_zero=False),
                             "thumbnail": artwork,
+                            "preview_url": item.get('previewUrl') or '',
                             "url": f"ytsearch1:{art_name} {t_name}",
                             "id": str(item.get('trackId', '')),
                             "rank": 0
@@ -239,7 +241,7 @@ class CatalogSearchWorker(QThread):
                         track_count = int(it.get('nb_tracks', 0) or 0)
                         cover = it.get('cover_big') or it.get('cover_medium') or it.get('cover') or ''
                         album_candidates.append({
-                            "id": it.get('id'),
+                            "id": f"dz_{it.get('id')}",
                             "name": title,
                             "artist": art,
                             "year": (it.get('release_date') or '')[:4],
@@ -338,6 +340,7 @@ class ArtistDetailsWorker(QThread):
                                     "duration_secs": duration_s,
                                     "duration_str": format_duration(duration_s, blank_zero=False),
                                     "thumbnail": artwork,
+                                    "preview_url": item.get('preview') or '',
                                     "url": f"ytsearch1:{self.artist_name} {s_name}",
                                     "id": f"dz_{item.get('id', '')}"
                                 })
@@ -369,6 +372,7 @@ class ArtistDetailsWorker(QThread):
                                     "duration_secs": duration_s,
                                     "duration_str": format_duration(duration_s, blank_zero=False),
                                     "thumbnail": artwork,
+                                    "preview_url": item.get('previewUrl') or '',
                                     "url": f"ytsearch1:{self.artist_name} {s_name}",
                                     "id": str(item.get('trackId', ''))
                                 })
@@ -429,61 +433,129 @@ class AlbumDetailsWorker(QThread):
     details_ready = Signal(dict)
     error_occurred = Signal(str)
 
-    def __init__(self, album_id: int, parent=None):
+    def __init__(self, album_id, parent=None):
         super().__init__(parent)
         self.album_id = album_id
         self.is_cancelled = False
 
     def run(self):
         try:
-            r = http.get(
-                'https://itunes.apple.com/lookup',
-                params={'id': self.album_id, 'entity': 'song'},
-                timeout=6
-            )
-            if r.status_code != 200:
-                self.error_occurred.emit("No se pudo obtener información del álbum.")
-                return
+            raw_id = str(self.album_id or "").strip()
+            is_deezer = raw_id.startswith("dz_")
+            clean_id = raw_id.replace("dz_", "").strip()
 
-            results = r.json().get('results', [])
-            if not results:
-                self.error_occurred.emit("Álbum no encontrado.")
-                return
+            # 1. Si es ID de Deezer (o explícito con prefijo dz_)
+            if is_deezer:
+                try:
+                    r_dz = http.get(f"https://api.deezer.com/album/{clean_id}", timeout=6)
+                    if r_dz.status_code == 200:
+                        data = r_dz.json()
+                        if not data.get("error") and "tracks" in data:
+                            self._parse_deezer(data)
+                            return
+                except Exception as e:
+                    logger.debug(f"Error consultando Deezer album {clean_id}: {e}")
 
-            album_info = results[0]
-            artist_name = album_info.get('artistName', 'Artista Desconocido')
-            album_name = album_info.get('collectionName', 'Álbum')
-            year = album_info.get('releaseDate', '')[:4]
-            artwork = album_info.get('artworkUrl100', '').replace('100x100bb', '600x600bb')
+            # 2. Intentar iTunes (por collectionId estándar)
+            if clean_id.isdigit():
+                try:
+                    r_it = http.get(
+                        "https://itunes.apple.com/lookup",
+                        params={"id": clean_id, "entity": "song"},
+                        timeout=6
+                    )
+                    if r_it.status_code == 200:
+                        results = r_it.json().get("results", [])
+                        if results:
+                            self._parse_itunes(results)
+                            return
+                except Exception as e:
+                    logger.debug(f"Error consultando iTunes album {clean_id}: {e}")
 
-            tracks = []
-            for item in results[1:]:
-                if item.get('wrapperType') == 'track':
-                    duration_s = item.get('trackTimeMillis', 0) // 1000
-                    track_no = item.get('trackNumber', len(tracks) + 1)
-                    tracks.append({
-                        "track_number": track_no,
-                        "title": item.get('trackName', 'Pista'),
-                        "uploader": artist_name,
-                        "album": album_name,
-                        "duration_secs": duration_s,
-                        "duration_str": format_duration(duration_s, blank_zero=False),
-                        "thumbnail": artwork,
-                        "url": f"ytsearch1:{artist_name} {item.get('trackName')}",
-                        "id": str(item.get('trackId', ''))
-                    })
-
+            # 3. Fallback a Deezer si iTunes no devolvió resultados o si clean_id era de Deezer
+            try:
+                r_dz = http.get(f"https://api.deezer.com/album/{clean_id}", timeout=6)
+                if r_dz.status_code == 200:
+                    data = r_dz.json()
+                    if not data.get("error") and "tracks" in data:
+                        self._parse_deezer(data)
+                        return
+            except Exception as e:
+                logger.debug(f"Error en fallback Deezer album {clean_id}: {e}")
 
             if not self.is_cancelled:
-                self.details_ready.emit({
-                    "id": self.album_id,
-                    "name": album_name,
-                    "artist": artist_name,
-                    "year": year,
-                    "cover": artwork,
-                    "tracks": tracks
-                })
+                self.error_occurred.emit("Álbum no encontrado.")
 
         except Exception as e:
             if not self.is_cancelled:
                 self.error_occurred.emit(str(e))
+
+    def _parse_deezer(self, dz_data: dict):
+        album_name = dz_data.get("title", "Álbum")
+        artist_name = dz_data.get("artist", {}).get("name", "Artista Desconocido")
+        year = (dz_data.get("release_date") or "")[:4]
+        artwork = dz_data.get("cover_xl") or dz_data.get("cover_big") or dz_data.get("cover_medium") or dz_data.get("cover") or ""
+        tracks = []
+        for i, item in enumerate(dz_data.get("tracks", {}).get("data", [])):
+            duration_s = int(item.get("duration", 0) or 0)
+            track_no = item.get("track_position") or (i + 1)
+            t_title = (item.get("title_short") or item.get("title", "Pista")).strip()
+            t_artist = item.get("artist", {}).get("name", artist_name)
+            tracks.append({
+                "track_number": track_no,
+                "title": t_title,
+                "uploader": t_artist,
+                "album": album_name,
+                "duration_secs": duration_s,
+                "duration_str": format_duration(duration_s, blank_zero=False),
+                "thumbnail": artwork,
+                "preview_url": item.get("preview") or "",
+                "url": f"ytsearch1:{t_artist} {t_title}",
+                "id": "dz_" + str(item.get("id", ""))
+            })
+
+        if not self.is_cancelled:
+            self.details_ready.emit({
+                "id": self.album_id,
+                "name": album_name,
+                "artist": artist_name,
+                "year": year,
+                "cover": artwork,
+                "tracks": tracks
+            })
+
+    def _parse_itunes(self, results: list):
+        album_info = results[0]
+        artist_name = album_info.get("artistName", "Artista Desconocido")
+        album_name = album_info.get("collectionName", "Álbum")
+        year = album_info.get("releaseDate", "")[:4]
+        artwork = album_info.get("artworkUrl100", "").replace("100x100bb", "600x600bb")
+
+        tracks = []
+        for item in results[1:]:
+            if item.get("wrapperType") == "track":
+                duration_s = item.get("trackTimeMillis", 0) // 1000
+                track_no = item.get("trackNumber", len(tracks) + 1)
+                t_name = item.get("trackName", "Pista")
+                tracks.append({
+                    "track_number": track_no,
+                    "title": t_name,
+                    "uploader": artist_name,
+                    "album": album_name,
+                    "duration_secs": duration_s,
+                    "duration_str": format_duration(duration_s, blank_zero=False),
+                    "thumbnail": artwork,
+                    "preview_url": item.get("previewUrl") or "",
+                    "url": f"ytsearch1:{artist_name} {t_name}",
+                    "id": str(item.get("trackId", ""))
+                })
+
+        if not self.is_cancelled:
+            self.details_ready.emit({
+                "id": self.album_id,
+                "name": album_name,
+                "artist": artist_name,
+                "year": year,
+                "cover": artwork,
+                "tracks": tracks
+            })

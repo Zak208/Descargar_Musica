@@ -371,7 +371,7 @@ class EngineSession:
     """Sesión del DJ sobre un `MixEngine` (ver la explicación del módulo). El dueño del motor hace start()/stop() del flujo."""
 
     def __init__(self, engine, info_for, next_after, bars=16, loader=None, lead_s=45.0, lufs_stored=None, lufs_measure=None,
-                 typed=True, audio_check="light", loops=False, tempo_ramp=False, entry_gain=True):
+                 typed=True, audio_check="light", loops=False, tempo_ramp=False, entry_gain=True, profile="club"):
         if loader is None:
             from services import pcm_loader
             loader = pcm_loader.load
@@ -387,6 +387,7 @@ class EngineSession:
         self.loops = bool(loops)        # bucles de 4 u 8 compases antes de la mezcla (loops.needs_loop); ver docs/MOTOR_DJ.md
         self.tempo_ramp = bool(tempo_ramp)  # B vuelve a su tempo en 3 tramos de 2 s en vez de en el empalme de 20 ms
         self.entry_gain = bool(entry_gain)  # ganancia de entrada de B igualada a lo último de A (ver docs/MOTOR_DJ.md)
+        self.profile = str(profile or "club").lower()
         self._loader = loader
         self._lufs_stored = lufs_stored or _stored_lufs
         self._lufs_measure = lufs_measure or _measured_lufs
@@ -996,7 +997,7 @@ class EngineSession:
         if not self.typed or ctx is None:
             return default, ""
         try:
-            return transition_types.choose_type(ctx.info_a, ctx.info_b, plan, ctx.bpm_a)
+            return transition_types.choose_type(ctx.info_a, ctx.info_b, plan, ctx.bpm_a, profile=getattr(self, "profile", None))
         except Exception as e:                                  # una regla de ayuda nunca debe romper la mezcla
             log.warning("no se pudo elegir el tipo de transición: %s", e)
             return default, ""

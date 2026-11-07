@@ -50,6 +50,8 @@ class DjMixin:
         self._dj_an_restart = False
         self._dj_an_progress = (0, 0)  # (analizadas, por analizar) en la tanda en marcha
         self._dj_mix = None            # (ruta de la que suena, su duración, (ruta de la siguiente, plan)) de la próxima mezcla
+        self._dj_profile = "club"      # 'club', 'radio', 'chill'
+        self._dj_fx = {}
         self._dj_refresh_timer = QTimer()
         self._dj_refresh_timer.setSingleShot(True)
         self._dj_refresh_timer.setInterval(REFRESH_DELAY_MS)
@@ -68,6 +70,10 @@ class DjMixin:
         self.page_dj.unblock_all_requested.connect(self.dj_unblock_all)
         self.page_dj.bpm_requested.connect(self.dj_bpm)
         self.page_dj.vote_requested.connect(self.dj_vote)
+        self.page_dj.profile_requested.connect(self.set_dj_profile)
+        self.page_dj.fx_changed.connect(self.set_dj_fx)
+        self.page_dj.freeze_requested.connect(self.dj_freeze_echo)
+        self.page_dj.washout_requested.connect(self.dj_washout)
         self.stacked_widget.addWidget(self.page_dj)
         assert self.stacked_widget.indexOf(self.page_dj) == Page.DJ
 
@@ -664,3 +670,37 @@ class DjMixin:
             text = f"La mezcla empieza en {self.format_time(left)}" if left > 0 else "Mezclando con la siguiente…"
         page.set_countdown(text)
         page.set_vote_target(self.dj_vote_text())          # al empezar la mezcla se vota esa y no la anterior
+
+    # ------------------------------------------------------------ perfiles y rack FX DJ
+    def set_dj_profile(self, profile: str):
+        profile = (profile or "club").lower()
+        self._dj_profile = profile
+        if hasattr(self, "page_dj") and self.page_dj:
+            self.page_dj.set_profile(profile)
+        if hasattr(self, "_dj_engine_session") and self._dj_engine_session:
+            self._dj_engine_session.profile = profile
+            self._dj_engine_session.bars = 4 if profile == "radio" else 16
+            try:
+                self._dj_engine_session.replan()
+            except Exception:
+                pass
+        desc = {
+            "club": "Club (mezclas de 16-32 compases y Mid-Carve vocal)",
+            "radio": "Radio (cortes dinámicos de 4 compases y delay drops)",
+            "chill": "Chill (fundidos suaves con washout reverb envolvente)",
+        }.get(profile, profile)
+        self.notify(f"Perfil DJ activo: {desc}")
+
+    def set_dj_fx(self, effect_name: str, params: dict):
+        self._dj_fx[effect_name] = params
+        val = params.get("mode") or params.get("beats") or ("ON" if params.get("active") or params.get("enabled") else "OFF")
+        self.notify(f"Rack FX DJ: {effect_name.capitalize()} → {val}")
+
+    def dj_freeze_echo(self, active: bool):
+        self._dj_fx["freeze"] = active
+        self.notify("Echo Freeze ACTIVADO: cola de eco sostenida" if active else "Echo Freeze desactivado")
+
+    def dj_washout(self):
+        self.notify("Disparando Washout Reverb envolvente...")
+        if self.dj_session_active():
+            self.dj_skip()
