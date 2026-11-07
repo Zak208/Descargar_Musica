@@ -288,15 +288,63 @@ class PreviewAudioWorker(QThread):
     ready = Signal(str)
     error = Signal(str)
 
-    def __init__(self, url: str, parent=None):
+    def __init__(self, url: str = "", preview_url: str = "", parent=None):
         super().__init__(parent)
-        self.url = url
+        self.url = url or ""
+        self.preview_url = preview_url or ""
         self.is_cancelled = False
 
     def run(self):
         self.loading.emit()
+        import hashlib
+        import requests
+        from services import http
+
+        cache_dir = Path("app_data/preview_cache")
         try:
-            # Usar ba/b y cliente android para sortear el error 403 Forbidden de YouTube
+            cache_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+
+        # 1. Probar primero preview directa de CDN (Deezer, iTunes, MP3/M4A)
+        if self.preview_url:
+            try:
+                h = hashlib.md5(self.preview_url.encode()).hexdigest()
+                cached_file = cache_dir / f"{h}.mp3"
+                if cached_file.exists() and cached_file.stat().st_size > 10000:
+                    if not self.is_cancelled:
+                        self.ready.emit(str(cached_file.resolve()))
+                        return
+
+                resp = http.get(self.preview_url, timeout=7)
+                if resp.status_code == 200 and len(resp.content) > 10000:
+                    tmp = cached_file.with_suffix(".tmp")
+                    tmp.write_bytes(resp.content)
+                    tmp.replace(cached_file)
+                    if not self.is_cancelled:
+                        self.ready.emit(str(cached_file.resolve()))
+                        return
+            except Exception as e:
+                logger.debug(f"Error descargando vista previa CDN: {e}")
+
+        if self.is_cancelled:
+            return
+
+        # 2. Si no hay preview CDN o falló, usar YouTube
+        yt_target = self.url or (f"ytsearch1:{self.preview_url}" if self.preview_url else "")
+        if not yt_target:
+            if not self.is_cancelled:
+                self.error.emit("No se pudo obtener el audio directo de esta pista.")
+            return
+
+        try:
+            h_yt = hashlib.md5(yt_target.encode()).hexdigest()
+            cached_yt = cache_dir / f"yt_{h_yt}.m4a"
+            if cached_yt.exists() and cached_yt.stat().st_size > 20000:
+                if not self.is_cancelled:
+                    self.ready.emit(str(cached_yt.resolve()))
+                    return
+
             ydl_opts = {
                 'format': 'ba/b/18/best',
                 'quiet': True,
@@ -306,7 +354,7 @@ class PreviewAudioWorker(QThread):
                 **yt_access_options(),
             }
             with _yt().YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(self.url, download=False)
+                info = ydl.extract_info(yt_target, download=False)
                 entry = None
                 if info and 'entries' in info and info['entries']:
                     entry = info['entries'][0]
@@ -330,6 +378,26 @@ class PreviewAudioWorker(QThread):
                     return
 
                 if stream_url:
+                    # Guardar primer buffer de audio local para reproducción instantánea y sin cortes en Windows
+                    try:
+                        r_stream = requests.get(stream_url, stream=True, timeout=8)
+                        tmp_yt = cached_yt.with_suffix(".tmp")
+                        with open(tmp_yt, "wb") as f_out:
+                            buffered = 0
+                            for chunk in r_stream.iter_content(chunk_size=32 * 1024):
+                                if self.is_cancelled:
+                                    break
+                                f_out.write(chunk)
+                                buffered += len(chunk)
+                                if buffered >= 700 * 1024:
+                                    break
+                        if not self.is_cancelled and buffered > 20000:
+                            tmp_yt.replace(cached_yt)
+                            self.ready.emit(str(cached_yt.resolve()))
+                            return
+                    except Exception as e_buf:
+                        logger.debug(f"Error guardando buffer local de preview: {e_buf}")
+
                     self.ready.emit(stream_url)
                 else:
                     self.error.emit("No se pudo obtener el audio directo de esta pista.")

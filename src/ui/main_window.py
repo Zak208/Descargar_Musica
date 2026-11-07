@@ -1039,13 +1039,19 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         title = item_info.get('title', 'Desconocido')
         artist = item_info.get('uploader', 'Desconocido')
 
-        if btn and self.current_preview_btn == btn and self.player.playbackState() == QMediaPlayer.PlayingState:
+        if (
+            (btn and self.current_preview_btn == btn) or self.is_current(item_info)
+        ) and self.player.playbackState() == QMediaPlayer.PlayingState:
             self.player.pause()
             return
-        elif btn and self.current_preview_btn == btn and self.player.playbackState() == QMediaPlayer.PausedState:
+        elif (
+            (btn and self.current_preview_btn == btn) or self.is_current(item_info)
+        ) and self.player.playbackState() == QMediaPlayer.PausedState:
             self.player.play()
             return
-        elif btn and self.current_preview_btn == btn and hasattr(self, 'preview_worker') and self.preview_worker and self.preview_worker.isRunning():
+        elif (
+            (btn and self.current_preview_btn == btn) or self.is_current(item_info)
+        ) and hasattr(self, 'preview_worker') and self.preview_worker and self.preview_worker.isRunning():
             self.notify("Cargando vista previa...")
             return
 
@@ -1085,14 +1091,8 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
                 loader.image_loaded.connect(lambda p, info=item_info: self.player_thumb.setPixmap(p) if self.current_item_info is info else None)
                 self._player_cover_loader = loader
                 loader.start()
-        # Si la pista ya trae URL directa de vista previa (Deezer / iTunes CDN), se reproduce al instante
-        preview_audio = item_info.get("preview_url") or item_info.get("previewUrl") or item_info.get("preview")
-        if preview_audio:
-            self._finish_crossfade()
-            self._on_preview_ready(preview_audio)
-            return
 
-        self.player_status.setText("Cargando...")
+        self.player_status.setText("Cargando vista previa...")
         self.btn_play_pause.setEnabled(False)
 
         if hasattr(self, 'preview_worker') and self.preview_worker and self.preview_worker.isRunning():
@@ -1107,9 +1107,25 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
                 pass
 
         self._finish_crossfade()
-        self.player.stop()
+        preview_audio = item_info.get("preview_url") or item_info.get("previewUrl") or item_info.get("preview") or ""
+        if preview_audio:
+            import hashlib
+            from pathlib import Path
+            cache_dir = Path("app_data/preview_cache")
+            try:
+                cache_dir.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                pass
+            h = hashlib.md5(preview_audio.encode()).hexdigest() + ".mp3"
+            cached = cache_dir / h
+            if cached.exists() and cached.stat().st_size > 10000:
+                self._on_preview_ready(str(cached.resolve()))
+                return
+            # Asignar provisionalmente la fuente para respuesta inmediata de la interfaz
+            self.player.setSource(QUrl(preview_audio))
 
-        self.preview_worker = PreviewAudioWorker(url)
+        self.player.stop()
+        self.preview_worker = PreviewAudioWorker(url=url, preview_url=preview_audio)
         self.preview_worker.ready.connect(self._on_preview_ready)
         self.preview_worker.error.connect(self._on_preview_error)
         self.preview_worker.start()
@@ -1501,24 +1517,25 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         except Exception:
             pass
 
-        # Si es un enlace CDN directo (Deezer, iTunes) o un archivo directo de audio (.mp3, .m4a, .aac), reproducir directamente vía HTTPS
-        is_direct_cdn = (
-            "dzcdn.net" in stream_url
-            or "apple.com" in stream_url
-            or "mzstatic.com" in stream_url
-            or "itunes" in stream_url
-            or ".mp3" in stream_url
-            or ".m4a" in stream_url
-            or ".aac" in stream_url
-        )
-        if is_direct_cdn:
-            self.player.setSource(QUrl(stream_url))
-        elif stream_url.startswith("http://") or stream_url.startswith("https://"):
-            from services.streaming_proxy import StreamingProxy
-            proxied_url = StreamingProxy.get_instance().get_stream_url(stream_url)
-            self.player.setSource(QUrl.fromUserInput(proxied_url))
+        # Si es un archivo local en caché, reproducir directamente con QUrl.fromLocalFile
+        if os.path.isfile(stream_url):
+            self.player.setSource(QUrl.fromLocalFile(os.path.abspath(stream_url)))
         else:
-            self.player.setSource(QUrl.fromUserInput(stream_url))
+            # Enlaces CDN directos o streaming vía HTTPS
+            is_direct_cdn = (
+                "dzcdn.net" in stream_url
+                or "apple.com" in stream_url
+                or "mzstatic.com" in stream_url
+                or "itunes" in stream_url
+            )
+            if is_direct_cdn:
+                self.player.setSource(QUrl(stream_url))
+            elif stream_url.startswith("http://") or stream_url.startswith("https://"):
+                from services.streaming_proxy import StreamingProxy
+                proxied_url = StreamingProxy.get_instance().get_stream_url(stream_url)
+                self.player.setSource(QUrl.fromUserInput(proxied_url))
+            else:
+                self.player.setSource(QUrl.fromUserInput(stream_url))
 
         try:
             self._fade_factor = 1.0

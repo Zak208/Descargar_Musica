@@ -847,16 +847,16 @@ class DjPitchFader(QWidget):
 # 2. HOT CUE & PERFORMANCE PADS (PIONEER CDJ STYLE)
 # =====================================================================================================
 class DjHotCuePads(QWidget):
-    """Pads de rendimiento multifunción (Hot Cue, Beat Loop, Beat Jump) con retroiluminación RGB."""
-    padTriggered = Signal(int, str)  # pad_index (0..3), mode ("HOT CUE" | "LOOP" | "JUMP")
-    padCleared = Signal(int)        # pad_index (0..3) para borrar Hot Cue con clic secundario
+    """Pads de rendimiento multifunción (Hot Cue, Beat Loop, Beat Jump) con 6 pads estilo VirtualDJ."""
+    padTriggered = Signal(int, str)  # pad_index (0..5), mode ("HOT CUE" | "LOOP" | "JUMP")
+    padCleared = Signal(int)        # pad_index (0..5) para borrar Hot Cue con clic secundario
 
     def __init__(self, accent_color="#1ED760", parent=None):
         super().__init__(parent)
         self.accent_color = accent_color
         self._mode = "HOT CUE"
-        self._pad_colors = ["#00FF66", "#FF8800", "#00DDFF", "#FF0088"]
-        self._active_cues = [False, False, False, False]
+        self._pad_colors = ["#00FF66", "#FF8800", "#00DDFF", "#FF0088", "#FFDD00", "#AA44FF"]
+        self._active_cues = [False] * 6
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -888,16 +888,16 @@ class DjHotCuePads(QWidget):
             mode_lay.addWidget(b)
         lay.addLayout(mode_lay)
 
-        # Fila de 4 pads
-        pads_lay = QHBoxLayout()
-        pads_lay.setSpacing(4)
+        # Rejilla de 6 pads estilo VirtualDJ (2 filas x 3 columnas: 1 2 3 / 4 5 6)
+        pads_grid = QGridLayout()
+        pads_grid.setSpacing(3)
         self._pad_buttons = []
-        labels = ("1", "2", "3", "4")
-        for i in range(4):
+        labels = ("1", "2", "3", "4", "5", "6")
+        for i in range(6):
             btn = QPushButton(labels[i])
             btn.setCursor(Qt.PointingHandCursor)
             btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-            btn.setMinimumHeight(24)
+            btn.setMinimumHeight(22)
             btn.setContextMenuPolicy(Qt.CustomContextMenu)
             btn.customContextMenuRequested.connect(lambda _pos, idx=i: self._on_pad_right_clicked(idx))
             c = self._pad_colors[i]
@@ -905,7 +905,7 @@ class DjHotCuePads(QWidget):
                 QPushButton {{
                     background-color: #161620;
                     color: {c};
-                    font-size: 11px;
+                    font-size: 10px;
                     font-weight: 900;
                     border: 1.5px solid {c};
                     border-radius: 4px;
@@ -915,8 +915,8 @@ class DjHotCuePads(QWidget):
             """)
             btn.clicked.connect(lambda _=False, idx=i: self._on_pad_clicked(idx))
             self._pad_buttons.append(btn)
-            pads_lay.addWidget(btn)
-        lay.addLayout(pads_lay)
+            pads_grid.addWidget(btn, i // 3, i % 3)
+        lay.addLayout(pads_grid)
         self._update_mode_ui()
 
     @property
@@ -2020,15 +2020,28 @@ class DjOverviewWaveform(QWidget):
     """Minimapa de recorrido completo de la pista (Overview Waveform) con cursor y salto por clic."""
     seekRequested = Signal(int)  # target_ms
 
-    def __init__(self, color="#00D2FF", parent=None):
+    def __init__(self, color="#00D2FF", accent_color=None, height=14, parent=None):
         super().__init__(parent)
-        self.color = QColor(color)
+        chosen = accent_color if accent_color is not None else color
+        self.color = QColor(chosen)
         self._pos_ms = 0
         self._dur_ms = 1
         self._cue_ms = 0
-        self.setFixedHeight(14)
+        self.setFixedHeight(int(height))
         self.setCursor(Qt.PointingHandCursor)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+    def setPosition(self, pos_ms: int):
+        self._pos_ms = max(0, int(pos_ms))
+        self.update()
+
+    def setDuration(self, dur_ms: int):
+        self._dur_ms = max(1, int(dur_ms))
+        self.update()
+
+    def setTrack(self, title: str, dur_ms: int):
+        self._dur_ms = max(1, int(dur_ms))
+        self.update()
 
     def setProgress(self, pos_ms: int, dur_ms: int, cue_ms: int = 0):
         self._pos_ms = max(0, int(pos_ms))

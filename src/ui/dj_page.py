@@ -42,7 +42,7 @@ from ui.dj_components import (
     DjPitchFader, DjHotCuePads, DjLoopControls, DjBeatFxRack,
     DjMasterMonitorSection, DjRearPanelDialog, DjEnvironmentBar,
     DjQuickReferenceGuide, DjColorFxSelector, DjTrackBrowserDialog,
-    DjMasterWaveformDisplay, DjVirtualBrowser
+    DjMasterWaveformDisplay, DjVirtualBrowser, DjOverviewWaveform
 )
 
 UPCOMING_SHOWN = 30
@@ -50,8 +50,10 @@ COMPACT_MIN_W = 50
 
 
 class DeckScreen(QFrame):
-    """Pantalla digital estilo CDJ / DJ controller con información de pista, BPM, Camelot y forma de onda."""
-    def __init__(self, deck_label="DECK A", accent_color="#1ED760", parent=None):
+    """Pantalla digital estilo CDJ / VirtualDJ con información de pista, BPM, Camelot y forma de onda."""
+    seekRequested = Signal(int)
+
+    def __init__(self, deck_label="DECK A", accent_color="#00D2FF", parent=None):
         super().__init__(parent)
         self.deck_label = deck_label
         self.accent_color = accent_color
@@ -65,7 +67,7 @@ class DeckScreen(QFrame):
             }
         """)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        self.setMinimumHeight(78)
+        self.setMinimumHeight(84)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 6, 8, 6)
@@ -95,7 +97,7 @@ class DeckScreen(QFrame):
         self.badge_slip.setVisible(False)
 
         self.badge_vinyl = QLabel("VINYL")
-        self.badge_vinyl.setStyleSheet("font-size: 8px; font-weight: 900; color: #00D2FF; background: #152238; border-radius: 2px; padding: 1px 3px;")
+        self.badge_vinyl.setStyleSheet(f"font-size: 8px; font-weight: 900; color: {accent_color}; background: #152238; border-radius: 2px; padding: 1px 3px;")
         self.badge_vinyl.setToolTip("Vinyl Mode activado (scratch y needle drop)")
         self.badge_vinyl.setVisible(True)
 
@@ -121,8 +123,8 @@ class DeckScreen(QFrame):
         top_row.addWidget(self.time_lbl)
         layout.addLayout(top_row)
 
-        # Título y artista
-        self.title_lbl = ElidedLabel("Sin pista cargada")
+        # Título y artista estilo VirtualDJ
+        self.title_lbl = ElidedLabel("Arrastra una canción en este deck para cargarlo")
         self.title_lbl.setStyleSheet("font-size: 13px; font-weight: bold; color: #FFFFFF; background: transparent;")
         layout.addWidget(self.title_lbl)
 
@@ -150,19 +152,24 @@ class DeckScreen(QFrame):
         tech_row.addStretch()
         layout.addLayout(tech_row)
 
+        # Waveform minimapa del deck estilo VirtualDJ
+        self.overview_waveform = DjOverviewWaveform(accent_color=accent_color, height=20)
+        self.overview_waveform.seekRequested.connect(self.seekRequested)
+        layout.addWidget(self.overview_waveform)
+
         # Barra de progreso con gradiente
         self.progress_bar = QFrame()
-        self.progress_bar.setFixedHeight(5)
+        self.progress_bar.setFixedHeight(3)
         self.progress_bar.setStyleSheet("""
             QFrame {
                 background-color: #22222A;
-                border-radius: 2px;
+                border-radius: 1px;
             }
         """)
         layout.addWidget(self.progress_bar)
 
-    def setTrack(self, title: str, artist: str, bpm: float = None, key: str = None, on_air: bool = False, time_str: str = "-00:00"):
-        self.title_lbl.setText(title or "Sin pista cargada")
+    def setTrack(self, title: str, artist: str, bpm: float = None, key: str = None, on_air: bool = False, time_str: str = "-00:00", duration_ms: int = 0):
+        self.title_lbl.setText(title or "Arrastra una canción en este deck para cargarlo")
         self.artist_lbl.setText(artist or "---")
         self.on_air_badge.setVisible(bool(on_air))
         self.time_lbl.setText(time_str or "-00:00")
@@ -175,6 +182,8 @@ class DeckScreen(QFrame):
             self.key_box.setVisible(True)
         else:
             self.key_box.setText("KEY: ---")
+        if duration_ms > 0:
+            self.overview_waveform.setTrack(title, duration_ms)
 
     def updatePitchDisplay(self, rate: float, nominal_bpm: float):
         bpm = float(nominal_bpm or 128.0)
@@ -186,6 +195,7 @@ class DeckScreen(QFrame):
         self.pitch_box.setStyleSheet(f"font-size: 10px; font-weight: 700; color: {color}; background: transparent;")
 
     def setTrackProgress(self, pos_ms: int, dur_ms: int):
+        self.overview_waveform.setPosition(pos_ms)
         if dur_ms > 0:
             frac = max(0.0, min(1.0, pos_ms / float(dur_ms)))
             self.progress_bar.setStyleSheet(f"""
@@ -631,14 +641,14 @@ class DjPage(QWidget):
         self.console_box_layout.setContentsMargins(10, 10, 10, 10)
         self.console_box_layout.setSpacing(8)
 
-        # ===== PLATO A (IZQUIERDA) =====
-        self.deck_a_frame = self._build_deck_side("DECK A", "#1ED760", is_deck_a=True)
+        # ===== PLATO A (IZQUIERDA - ESTILO VIRTUALDJ CYAN) =====
+        self.deck_a_frame = self._build_deck_side("DECK A", "#00D2FF", is_deck_a=True)
 
         # ===== MEZCLADOR CENTRAL (MIXER DJM-A9 & CROSSFADER) =====
         self.mixer_frame = self._build_mixer_center()
 
-        # ===== PLATO B (DERECHA) =====
-        self.deck_b_frame = self._build_deck_side("DECK B", "#FF7700", is_deck_a=False)
+        # ===== PLATO B (DERECHA - ESTILO VIRTUALDJ ROJO NEON) =====
+        self.deck_b_frame = self._build_deck_side("DECK B", "#FF3344", is_deck_a=False)
 
         # Inicializar en modo adaptativo según el ancho actual
         self._apply_responsive_layout(self.width() or 1000)
@@ -648,6 +658,10 @@ class DjPage(QWidget):
     def _build_deck_side(self, name: str, accent: str, is_deck_a: bool) -> QWidget:
         deck_code = "A" if is_deck_a else "B"
         frame = QFrame()
+        frame.setAcceptDrops(True)
+        frame.dragEnterEvent = lambda e: e.acceptProposedAction() if (e.mimeData().hasUrls() or e.mimeData().hasText()) else None
+        frame.dragMoveEvent = lambda e: e.acceptProposedAction() if (e.mimeData().hasUrls() or e.mimeData().hasText()) else None
+        frame.dropEvent = lambda e, d=deck_code: self._on_deck_drop(d, e)
         frame.setStyleSheet("""
             QFrame {
                 background-color: #14141A;
@@ -701,8 +715,9 @@ class DjPage(QWidget):
 
         lay.addLayout(top_nav)
 
-        # 2. Pantalla digital del deck (DeckScreen)
+        # 2. Pantalla digital del deck (DeckScreen) con waveform overview y búsqueda de compás
         screen = DeckScreen(name, accent)
+        screen.seekRequested.connect(lambda pos, a=is_deck_a: self._on_waveform_seek(a, pos))
         if is_deck_a:
             self.screen_a = screen
         else:
@@ -760,13 +775,18 @@ class DjPage(QWidget):
             jog.nudged.connect(self._on_jog_b_nudged)
         center_row.addWidget(jog, 1)
 
-        # Columna lateral derecha: Pitch / Tempo Fader
+        # Columna lateral derecha: Pitch / Tempo Fader con Nudge Bend (+ / -)
         pitch_box = QVBoxLayout()
         pitch_box.setSpacing(2)
         pitch_lbl = QLabel("PITCH")
         pitch_lbl.setStyleSheet("font-size: 8px; font-weight: 900; color: #888899; letter-spacing: 0.5px;")
         pitch_lbl.setAlignment(Qt.AlignCenter)
         pitch_box.addWidget(pitch_lbl)
+
+        btn_bend_up = QPushButton("+")
+        btn_bend_up.setToolTip("Pitch Bend + (acelerar compás)")
+        btn_bend_up.setCursor(Qt.PointingHandCursor)
+        btn_bend_up.setStyleSheet("QPushButton { min-width: 0px; background-color: #1A1A22; color: #AAA; font-size: 9px; font-weight: bold; border-radius: 3px; padding: 2px 4px; }")
 
         pitch_fader = DjPitchFader(label="TEMPO", accent_color=accent)
         if is_deck_a:
@@ -775,13 +795,26 @@ class DjPage(QWidget):
         else:
             self.pitch_b = pitch_fader
             pitch_fader.rateChanged.connect(self._on_pitch_b_rate_changed)
-        pitch_box.addWidget(pitch_fader)
 
         btn_pitch_reset = QPushButton("0.0%")
         btn_pitch_reset.setCursor(Qt.PointingHandCursor)
         btn_pitch_reset.setStyleSheet("QPushButton { min-width: 0px; background-color: #1A1A22; color: #AAA; font-size: 8px; font-weight: bold; border-radius: 3px; padding: 2px 4px; }")
         btn_pitch_reset.clicked.connect(pitch_fader.resetPitch)
+
+        btn_bend_down = QPushButton("-")
+        btn_bend_down.setToolTip("Pitch Bend - (frenar compás)")
+        btn_bend_down.setCursor(Qt.PointingHandCursor)
+        btn_bend_down.setStyleSheet("QPushButton { min-width: 0px; background-color: #1A1A22; color: #AAA; font-size: 9px; font-weight: bold; border-radius: 3px; padding: 2px 4px; }")
+
+        btn_bend_up.pressed.connect(lambda f=pitch_fader: f.setValue(f.value + 0.15))
+        btn_bend_up.released.connect(lambda f=pitch_fader: f.setValue(f.value - 0.15))
+        btn_bend_down.pressed.connect(lambda f=pitch_fader: f.setValue(f.value - 0.15))
+        btn_bend_down.released.connect(lambda f=pitch_fader: f.setValue(f.value + 0.15))
+
+        pitch_box.addWidget(btn_bend_up)
+        pitch_box.addWidget(pitch_fader)
         pitch_box.addWidget(btn_pitch_reset)
+        pitch_box.addWidget(btn_bend_down)
 
         center_row.addLayout(pitch_box)
         lay.addLayout(center_row)
@@ -819,7 +852,7 @@ class DjPage(QWidget):
         loop_jump_row.addWidget(btn_jump_fwd)
         perf_box.addLayout(loop_jump_row)
 
-        # 5b. Hot Cue Pads (4 pads RGB con modos Hot Cue, Loop, Jump)
+        # 5b. Hot Cue Pads (6 pads RGB estilo VirtualDJ)
         hot_pads = DjHotCuePads(accent_color=accent)
         if is_deck_a:
             self.pads_a = hot_pads
@@ -829,25 +862,9 @@ class DjPage(QWidget):
         hot_pads.padCleared.connect(lambda idx, a=is_deck_a: self._on_pad_cleared(a, idx))
         perf_box.addWidget(hot_pads)
 
-        # 5c. Botones de transporte principales: PLAY/PAUSE, CUE, SYNC
+        # 5c. Botones de transporte principales VirtualDJ: CUE, PAUSE, PLAY, SYNC
         transport_row = QHBoxLayout()
         transport_row.setSpacing(4)
-
-        btn_play = QPushButton(" ▶ PLAY")
-        btn_play.setCursor(Qt.PointingHandCursor)
-        btn_play.setStyleSheet(f"""
-            QPushButton {{
-                min-width: 0px;
-                background-color: #1A3828;
-                color: #FFFFFF;
-                font-weight: 900;
-                border: 2px solid {accent};
-                border-radius: 6px;
-                padding: 6px 10px;
-                font-size: 11px;
-            }}
-            QPushButton:hover {{ background-color: #244C36; }}
-        """)
 
         btn_cue = QPushButton("CUE")
         btn_cue.setCursor(Qt.PointingHandCursor)
@@ -859,26 +876,61 @@ class DjPage(QWidget):
                 font-weight: 900;
                 border: 2px solid #FFAA33;
                 border-radius: 6px;
-                padding: 6px 10px;
+                padding: 6px 6px;
                 font-size: 11px;
             }
             QPushButton:hover { background-color: #4C3824; }
         """)
 
-        btn_sync = QPushButton("SYNC")
-        btn_sync.setCursor(Qt.PointingHandCursor)
-        btn_sync.setStyleSheet("""
+        btn_pause = QPushButton("❚❚")
+        btn_pause.setToolTip("Pausar reproducción")
+        btn_pause.setCursor(Qt.PointingHandCursor)
+        btn_pause.setStyleSheet("""
             QPushButton {
                 min-width: 0px;
-                background-color: #1A2438;
-                color: #44AAFF;
+                background-color: #22222E;
+                color: #FFFFFF;
                 font-weight: 900;
-                border: 1.5px solid #44AAFF;
+                border: 2px solid #555566;
+                border-radius: 6px;
+                padding: 6px 6px;
+                font-size: 11px;
+            }
+            QPushButton:hover { background-color: #333345; }
+        """)
+
+        btn_play = QPushButton("▶")
+        btn_play.setToolTip("Iniciar reproducción")
+        btn_play.setCursor(Qt.PointingHandCursor)
+        btn_play.setStyleSheet(f"""
+            QPushButton {{
+                min-width: 0px;
+                background-color: #0E2214;
+                color: {accent};
+                font-weight: 900;
+                border: 2px solid {accent};
                 border-radius: 6px;
                 padding: 6px 8px;
                 font-size: 11px;
-            }
-            QPushButton:hover { background-color: #24344C; }
+            }}
+            QPushButton:hover {{ background-color: #163620; }}
+        """)
+
+        btn_sync = QPushButton("SYNC")
+        btn_sync.setToolTip("Sincronizar BPM y compás con el otro deck")
+        btn_sync.setCursor(Qt.PointingHandCursor)
+        btn_sync.setStyleSheet(f"""
+            QPushButton {{
+                min-width: 0px;
+                background-color: #122030;
+                color: {accent};
+                font-weight: 900;
+                border: 2px solid {accent};
+                border-radius: 6px;
+                padding: 6px 6px;
+                font-size: 11px;
+            }}
+            QPushButton:hover {{ background-color: #1C3048; }}
         """)
 
         if is_deck_a:
@@ -894,11 +946,14 @@ class DjPage(QWidget):
             self.btn_vinyl_a = btn_vinyl
             self.btn_mt_a = btn_mt
             self.btn_pitch_reset_a = btn_pitch_reset
+            self.btn_bend_up_a = btn_bend_up
+            self.btn_bend_down_a = btn_bend_down
             self.btn_jump_back_a = btn_jump_back
             self.btn_jump_fwd_a = btn_jump_fwd
-            self.btn_play_a, self.btn_cue_a, self.btn_sync_a = btn_play, btn_cue, btn_sync
+            self.btn_play_a, self.btn_pause_a, self.btn_cue_a, self.btn_sync_a = btn_play, btn_pause, btn_cue, btn_sync
 
             btn_play.clicked.connect(self._on_play_a_clicked)
+            btn_pause.clicked.connect(self._on_pause_a_clicked)
             btn_cue.pressed.connect(lambda: self._on_cue_pressed("A"))
             btn_cue.released.connect(lambda: self._on_cue_released("A"))
             btn_cue.clicked.connect(lambda: self._on_cue_clicked("A"))
@@ -916,18 +971,22 @@ class DjPage(QWidget):
             self.btn_vinyl_b = btn_vinyl
             self.btn_mt_b = btn_mt
             self.btn_pitch_reset_b = btn_pitch_reset
+            self.btn_bend_up_b = btn_bend_up
+            self.btn_bend_down_b = btn_bend_down
             self.btn_jump_back_b = btn_jump_back
             self.btn_jump_fwd_b = btn_jump_fwd
-            self.btn_play_b, self.btn_cue_b, self.btn_sync_b = btn_play, btn_cue, btn_sync
+            self.btn_play_b, self.btn_pause_b, self.btn_cue_b, self.btn_sync_b = btn_play, btn_pause, btn_cue, btn_sync
 
             btn_play.clicked.connect(self._on_play_b_clicked)
+            btn_pause.clicked.connect(self._on_pause_b_clicked)
             btn_cue.pressed.connect(lambda: self._on_cue_pressed("B"))
             btn_cue.released.connect(lambda: self._on_cue_released("B"))
             btn_cue.clicked.connect(lambda: self._on_cue_clicked("B"))
             btn_sync.clicked.connect(lambda: self._on_sync_clicked("B"))
 
-        transport_row.addWidget(btn_play, 2)
         transport_row.addWidget(btn_cue, 1)
+        transport_row.addWidget(btn_pause, 1)
+        transport_row.addWidget(btn_play, 2)
         transport_row.addWidget(btn_sync, 1)
         perf_box.addLayout(transport_row)
 
@@ -980,9 +1039,9 @@ class DjPage(QWidget):
         self.hud_detail.setWordWrap(True)
         hud_lay.addWidget(self.hud_detail)
 
-        # Canales de ecualización Ch 1 y Ch 2
-        self.ch1_strip = self._build_channel_strip(is_deck_a=True, accent="#1ED760")
-        self.ch2_strip = self._build_channel_strip(is_deck_a=False, accent="#FF7700")
+        # Canales de ecualización Ch 1 (Deck A Cyan) y Ch 2 (Deck B Red)
+        self.ch1_strip = self._build_channel_strip(is_deck_a=True, accent="#00D2FF")
+        self.ch2_strip = self._build_channel_strip(is_deck_a=False, accent="#FF3344")
 
         # Vúmetro Máster Central
         self.vu_master = DjVuMeter()
@@ -1883,14 +1942,32 @@ class DjPage(QWidget):
             else:
                 self.main_window.player.play()
 
+    def _on_pause_a_clicked(self):
+        if self.main_window and hasattr(self.main_window, "player"):
+            self.main_window.player.pause()
+
     def _on_play_b_clicked(self):
-        self._on_auto_mix_clicked()
+        spare = getattr(self.main_window, "_spare_deck", None)
+        if spare and len(spare) > 0 and spare[0]:
+            if spare[0].playbackState() == 1:
+                spare[0].pause()
+            else:
+                spare[0].play()
+        else:
+            self._on_auto_mix_clicked()
+
+    def _on_pause_b_clicked(self):
+        spare = getattr(self.main_window, "_spare_deck", None)
+        if spare and len(spare) > 0 and spare[0]:
+            spare[0].pause()
 
     def _on_cue_clicked(self, deck: str):
-        if not self.main_window or not hasattr(self.main_window, "player"):
+        if not self.main_window:
             return
-        p = self.main_window.player
         if deck == "A":
+            p = getattr(self.main_window, "player", None)
+            if not p:
+                return
             if p.playbackState() == 1:
                 p.pause()
                 target_cue = self._cue_a_ms or 0
@@ -1902,8 +1979,48 @@ class DjPage(QWidget):
                 if hasattr(self.main_window, "notify"):
                     self.main_window.notify(f"Deck A: Punto CUE marcado en {self._cue_a_ms // 1000}s")
         else:
-            if hasattr(self.main_window, "notify"):
-                self.main_window.notify("Deck B: Punto CUE preparado en el Drop")
+            spare = getattr(self.main_window, "_spare_deck", None)
+            if spare and len(spare) > 0 and spare[0]:
+                sp = spare[0]
+                if sp.playbackState() == 1:
+                    sp.pause()
+                    target_cue = self._cue_b_ms or 0
+                    sp.setPosition(target_cue)
+                    if hasattr(self.main_window, "notify"):
+                        self.main_window.notify(f"Deck B: Rebobinado a punto CUE ({target_cue // 1000}s)")
+                else:
+                    self._cue_b_ms = sp.position()
+                    if hasattr(self.main_window, "notify"):
+                        self.main_window.notify(f"Deck B: Punto CUE marcado en {self._cue_b_ms // 1000}s")
+            else:
+                if hasattr(self.main_window, "notify"):
+                    self.main_window.notify("Deck B: Punto CUE preparado en el Drop")
+
+    def _on_deck_drop(self, deck: str, event):
+        mime = event.mimeData()
+        if mime.hasUrls():
+            urls = mime.urls()
+            if urls:
+                path = urls[0].toLocalFile()
+                if path and os.path.isfile(path):
+                    base = os.path.splitext(os.path.basename(path))[0]
+                    track_dict = {"title": base, "artist": "Archivo local", "local_path": path, "bpm": 128.0}
+                    self._on_browser_load_deck(deck, track_dict)
+                    event.acceptProposedAction()
+                    return
+        if mime.hasText():
+            txt = mime.text()
+            if txt:
+                try:
+                    import json
+                    d = json.loads(txt)
+                    if isinstance(d, dict):
+                        self._on_browser_load_deck(deck, d)
+                        event.acceptProposedAction()
+                        return
+                except Exception:
+                    pass
+        event.acceptProposedAction()
 
     def _on_sync_clicked(self, deck: str):
         bpm_a = getattr(self, "_deck_a_bpm", None) or 128.0

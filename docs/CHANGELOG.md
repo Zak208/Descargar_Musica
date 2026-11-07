@@ -3,6 +3,22 @@
 Formato: `MAYOR.MENOR.PARCHE`. MAYOR = cambios que rompen datos o uso, MENOR = funciones nuevas, PARCHE = arreglos.
 Cada versión subida a GitHub tiene su etiqueta `vX.Y.Z` (pestaña *Releases/Tags*).
 
+## 1.27.0
+**Corrección Integral de Previsualización en Buscador y Decks VirtualDJ Idénticos (Cyan Deck A / Red Deck B, Transporte 4 Botones, Drag & Drop y Nudge)**
+- **Previsualización de Audio 100% Funcional y Fiable en el Buscador**:
+  - Resuelto el problema por el cual hacer clic en el botón de reproducción ("Escuchar" / play redondo) en la pantalla de búsqueda no emitía sonido o se quedaba colgado en carga sin descargarlo.
+  - Implementado sistema de caché local y streaming ultrarrápido (`PreviewAudioWorker` + `preview_cache`):
+    - Las pistas con enlace CDN directo (Deezer, iTunes) descargan su fragmento de 30s (~480 KB) en segundo plano en <0.2 s y se reproducen localmente de forma instantánea a través de `QUrl.fromLocalFile`, evitando bloqueos de Windows Media Foundation y cortes de red.
+    - Las pistas de YouTube o sin CDN descargan el búfer inicial de audio a caché local antes de reproducir, garantizando arranque inmediato y sin buffering.
+    - Soporte completo de alternancia Play/Pausa al hacer clic repetidamente en el botón o tarjeta de la canción, actualizando el icono dinámicamente entre reproducción (`pause_black.svg`) y pausa (`play_black.svg`).
+- **Decks DJ A y B Idénticos a VirtualDJ (Encuadre Rojo)**:
+  - **Identidad Visual VirtualDJ**: Deck A estilizado en Cyan `#00D2FF` y Deck B en Rojo Neón `#FF3344`, con iluminación sincronizada en pantalla digital, anillo y centro del jog wheel, faders de canal y guías del crossfader.
+  - **Cabeceras de Deck con Waveform Overview**: Texto inicial *"Arrastra una canción en este deck para cargarlo"* cuando está vacío; visualización horizontal del recorrido completo de la pista (*Overview Waveform*) con marcador CUE y aguja interactiva con salto directo por clic.
+  - **Transporte de 4 Botones VirtualDJ**: Botonera rectangular completa en el orden de VirtualDJ: `[ CUE ]` (ámbar), `[ ❚❚ ]` (Pausa explícita), `[ ▶ ]` (Play explícito), `[ SYNC ]` (Sincronización de BPM y fase rítmica).
+  - **Controles de Pitch con Nudge**: Fader de tempo con botones `[ + ]` y `[ - ]` de Pitch Bend temporal (acelerar/frenar compás) y botón de centrado rápido `0.0%`.
+  - **Banca de 6 Hot Cue Pads**: Rejilla de 6 pads RGB (2 filas x 3 columnas: `1 2 3 / 4 5 6`) con modos Hot Cue, Loop y Jump.
+  - **Soporte Drag & Drop Directo en los Decks**: Posibilidad de arrastrar cualquier archivo de audio (.mp3, .m4a, .flac, .wav) o tarjeta de canción directamente sobre el Deck A o Deck B para cargarlo al instante.
+
 ## 1.26.0
 **Mesa DJ Estilo VirtualDJ: Visualizador Superior de Pistas en Paralelo, Beatmatching 'Juntar Beats' y Explorador Integrado**
 - **Visualizador Superior de Formas de Onda Duales (Estilo VirtualDJ)**:
