@@ -3,6 +3,25 @@
 Formato: `MAYOR.MENOR.PARCHE`. MAYOR = cambios que rompen datos o uso, MENOR = funciones nuevas, PARCHE = arreglos.
 Cada versión subida a GitHub tiene su etiqueta `vX.Y.Z` (pestaña *Releases/Tags*).
 
+## 1.21.1
+**Diseño Responsivo y Adaptativo de la Mesa de DJ (Cero Desbordamiento en Todas las Resoluciones)**
+- **Reflow Adaptativo Inteligente de la Mesa DJ (`DjPage`)**:
+  - Detección dinámica del ancho de ventana (`resizeEvent` y `showEvent`) con conmutación fluida entre dos modos visuales:
+    - **Modo Estudio / Pantalla Ancha (>= 920 px)**: Disposición horizontal profesional en 3 columnas completas: `[Plato A] | [Mezclador Central con Crossfader] | [Plato B]`.
+    - **Modo Compacto / Pantalla Estrecha (< 920 px hasta 450 px)**: Reestructuración automática en 2 niveles estilo controlador DJ portátil (Pioneer/Traktor):
+      * *Nivel Superior*: Ambos platos (`[Plato A]` y `[Plato B]`) lado a lado ocupando el 50% del ancho cada uno, manteniendo visibilidad total de jog wheels, EQ y botones.
+      * *Nivel Inferior*: Mezclador central extendido a lo ancho con HUD de transición a la izquierda, vúmetro máster y botón «🔥 Mezclar Ahora» al centro, y un gran Crossfader horizontal que une físicamente Plato A (izquierda) y Plato B (derecha).
+- **Escalado Dinámico de Componentes DJ (`dj_components.py`)**:
+  - `DjJogWheel`: Tamaño mínimo reducido de 140x140 a 60x60, con escalado proporcional del vinilo, surcos microscópicos, reflejo especular cónico y spindle central.
+  - `DjRotaryKnob`: Tamaño mínimo reducido de 48x64 a 30x42, con radio dinámico y etiquetas autoescalables sin recorte de texto.
+  - `DjVuMeter`: Tamaño mínimo ajustado de 22x100 a 12x45 con cálculo adaptativo de segmentos LED según la altura disponible.
+  - `DjCrossfader`: Tamaño mínimo reducido de 180x50 a 100x36 con maneta y marcas proporcionales.
+  - `DjFader`: Tamaño mínimo reducido de 38x120 a 20x50 con escala optimizada.
+- **Cabeceras y Colas Flexibles en 2 Filas**:
+  - Cabecera de la mesa DJ reorganizada en 2 filas limpias (Fila 1: branding y botón empezar sesión; Fila 2: modo IA, selector de perfiles y selector de carpeta) evitando desbordamientos horizontales.
+  - Bandeja inferior de pistas dividida en título y botones de acción rápida con texto optimizado ("Saltar", "Quitar", "Barajar", "Bloquear").
+  - Botones con `min-width: 0px` para eliminar el límite rígido predeterminado del estilo Windows de Qt.
+
 ## 1.21.0
 **Mesa de DJ Virtual Interactiva, Doble Plato (Dual Deck) y Corrección de Previsualización**
 - **Solución definitiva al fallo de previsualización en resultados de búsqueda**:

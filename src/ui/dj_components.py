@@ -33,7 +33,7 @@ class DjRotaryKnob(QWidget):
         self.unit = unit
         self._dragging = False
         self._last_y = 0
-        self.setMinimumSize(48, 64)
+        self.setMinimumSize(30, 42)
         self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self.setCursor(Qt.PointingHandCursor)
         self.setToolTip(f"{label}: {self._format_value()}")
@@ -100,40 +100,40 @@ class DjRotaryKnob(QWidget):
         p.setRenderHint(QPainter.Antialiasing)
 
         w, h = self.width(), self.height()
-        knob_size = min(w - 6, h - 20)
+        knob_size = min(w - 4, h - 16)
         center_x = w / 2.0
-        center_y = knob_size / 2.0 + 3
+        center_y = knob_size / 2.0 + 2
 
         # 1. Fondo de arco / carátula
-        radius = knob_size / 2.0 - 2
+        radius = max(6.0, knob_size / 2.0 - 2)
         arc_rect = QRectF(center_x - radius, center_y - radius, radius * 2, radius * 2)
 
-        p.setPen(QPen(QColor(40, 40, 45), 3, Qt.SolidLine, Qt.RoundCap))
+        pen_w = max(2.0, min(3.0, radius * 0.25))
+        p.setPen(QPen(QColor(40, 40, 45), pen_w, Qt.SolidLine, Qt.RoundCap))
         start_angle = 225.0
         total_span = 270.0
         p.drawArc(arc_rect, int(-start_angle * 16), int(-total_span * 16))
 
         # 2. Arco activo coloreado
         norm_val = (self._value - self.min_val) / (self.max_val - self.min_val)
+        p.setPen(QPen(self.accent_color, pen_w, Qt.SolidLine, Qt.RoundCap))
         if self.bipolar:
             center_norm = (self.default_val - self.min_val) / (self.max_val - self.min_val)
             span = (norm_val - center_norm) * total_span
             angle_from = start_angle + center_norm * total_span
-            p.setPen(QPen(self.accent_color, 3, Qt.SolidLine, Qt.RoundCap))
             p.drawArc(arc_rect, int(-angle_from * 16), int(-span * 16))
         else:
             span = norm_val * total_span
-            p.setPen(QPen(self.accent_color, 3, Qt.SolidLine, Qt.RoundCap))
             p.drawArc(arc_rect, int(-start_angle * 16), int(-span * 16))
 
         # 3. Cuerpo metálico del potenciómetro
-        body_rad = radius - 5
-        body_grad = QRadialGradient(center_x - 3, center_y - 3, body_rad * 1.2)
+        body_rad = max(4.0, radius * 0.72)
+        body_grad = QRadialGradient(center_x - 2, center_y - 2, body_rad * 1.2)
         body_grad.setColorAt(0.0, QColor(65, 65, 75))
         body_grad.setColorAt(0.6, QColor(35, 35, 40))
         body_grad.setColorAt(1.0, QColor(20, 20, 25))
 
-        p.setPen(QPen(QColor(15, 15, 20), 1.5))
+        p.setPen(QPen(QColor(15, 15, 20), 1.0))
         p.setBrush(QBrush(body_grad))
         p.drawEllipse(QPointF(center_x, center_y), body_rad, body_rad)
 
@@ -143,19 +143,19 @@ class DjRotaryKnob(QWidget):
         nx = math.cos(angle_rad)
         ny = math.sin(angle_rad)
 
-        line_start = QPointF(center_x + nx * (body_rad * 0.4), center_y + ny * (body_rad * 0.4))
+        line_start = QPointF(center_x + nx * (body_rad * 0.35), center_y + ny * (body_rad * 0.35))
         line_end = QPointF(center_x + nx * (body_rad * 0.88), center_y + ny * (body_rad * 0.88))
 
-        p.setPen(QPen(self.accent_color, 2.5, Qt.SolidLine, Qt.RoundCap))
+        p.setPen(QPen(self.accent_color, max(1.5, pen_w * 0.8), Qt.SolidLine, Qt.RoundCap))
         p.drawLine(line_start, line_end)
 
         # 5. Etiqueta inferior
         p.setPen(QColor(170, 170, 180))
         f = p.font()
-        f.setPointSize(8)
+        f.setPointSize(max(6, min(8, int(knob_size * 0.28))))
         f.setBold(True)
         p.setFont(f)
-        text_rect = QRectF(0, knob_size + 4, w, 14)
+        text_rect = QRectF(0, knob_size + 3, w, 12)
         p.drawText(text_rect, Qt.AlignCenter, self.label)
 
 
@@ -171,7 +171,7 @@ class DjJogWheel(QWidget):
         self._timer = QTimer(self)
         self._timer.setInterval(25)  # 40 fps
         self._timer.timeout.connect(self._rotate_step)
-        self.setMinimumSize(140, 140)
+        self.setMinimumSize(60, 60)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
     def setPlaying(self, playing: bool):
@@ -196,7 +196,9 @@ class DjJogWheel(QWidget):
         p.setRenderHint(QPainter.SmoothPixmapTransform)
 
         w, h = self.width(), self.height()
-        dim = min(w, h) - 8
+        dim = min(w, h) - 6
+        if dim <= 10:
+            return
         cx = w / 2.0
         cy = h / 2.0
         radius = dim / 2.0
@@ -206,17 +208,18 @@ class DjJogWheel(QWidget):
         outer_grad.setColorAt(0.92, QColor(30, 30, 35))
         outer_grad.setColorAt(0.96, QColor(70, 70, 80))
         outer_grad.setColorAt(1.0, QColor(15, 15, 20))
-        p.setPen(QPen(QColor(10, 10, 12), 2))
+        p.setPen(QPen(QColor(10, 10, 12), max(1.0, radius * 0.03)))
         p.setBrush(QBrush(outer_grad))
         p.drawEllipse(QPointF(cx, cy), radius, radius)
 
         # 2. Anillo de LED activo
-        p.setPen(QPen(self.accent_color if self._playing else QColor(50, 50, 55), 2.5))
+        ring_gap = max(2.0, radius * 0.05)
+        p.setPen(QPen(self.accent_color if self._playing else QColor(50, 50, 55), max(1.5, radius * 0.035)))
         p.setBrush(Qt.NoBrush)
-        p.drawEllipse(QPointF(cx, cy), radius - 4, radius - 4)
+        p.drawEllipse(QPointF(cx, cy), radius - ring_gap, radius - ring_gap)
 
         # 3. Superficie del vinilo negro con estrías concéntricas
-        vinyl_rad = radius - 8
+        vinyl_rad = max(8.0, radius - max(4.0, radius * 0.11))
         v_grad = QRadialGradient(cx, cy, vinyl_rad)
         v_grad.setColorAt(0.0, QColor(22, 22, 26))
         v_grad.setColorAt(0.85, QColor(12, 12, 15))
@@ -227,7 +230,8 @@ class DjJogWheel(QWidget):
 
         # Dibujar surcos microscópicos
         p.setPen(QPen(QColor(32, 32, 38), 1))
-        for r_step in range(int(vinyl_rad * 0.45), int(vinyl_rad * 0.95), 8):
+        step_sz = max(4, int(vinyl_rad * 0.12))
+        for r_step in range(int(vinyl_rad * 0.45), int(vinyl_rad * 0.95), step_sz):
             p.drawEllipse(QPointF(cx, cy), r_step, r_step)
 
         # Reflejo especular cónico del vinilo
@@ -247,37 +251,38 @@ class DjJogWheel(QWidget):
         p.drawEllipse(QPointF(0, 0), vinyl_rad, vinyl_rad)
 
         # 4. Etiqueta central (Center Label)
-        label_rad = vinyl_rad * 0.40
-        p.setPen(QPen(self.accent_color, 1.5))
+        label_rad = max(4.0, vinyl_rad * 0.38)
+        p.setPen(QPen(self.accent_color, max(1.0, label_rad * 0.08)))
         p.setBrush(QColor(28, 28, 35))
         p.drawEllipse(QPointF(0, 0), label_rad, label_rad)
 
         if self._pixmap and not self._pixmap.isNull():
             path = QPainterPath()
-            path.addEllipse(QPointF(0, 0), label_rad - 2, label_rad - 2)
+            path.addEllipse(QPointF(0, 0), label_rad - 1, label_rad - 1)
             p.save()
             p.setClipPath(path)
-            scaled = self._pixmap.scaled(int((label_rad - 2) * 2), int((label_rad - 2) * 2),
+            scaled = self._pixmap.scaled(int((label_rad - 1) * 2), int((label_rad - 1) * 2),
                                          Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
-            p.drawPixmap(int(-label_rad + 2), int(-label_rad + 2), scaled)
+            p.drawPixmap(int(-label_rad + 1), int(-label_rad + 1), scaled)
             p.restore()
         else:
             p.setPen(QColor(220, 220, 225))
             f = p.font()
-            f.setPointSize(8)
+            f.setPointSize(max(5, min(8, int(label_rad * 0.4))))
             f.setBold(True)
             p.setFont(f)
             p.drawText(QRectF(-label_rad, -label_rad, label_rad * 2, label_rad * 2),
                        Qt.AlignCenter, self.deck_name)
 
         # 5. Marcador de aguja / aguja blanca de rotación
-        p.setPen(QPen(QColor(255, 255, 255, 240), 3, Qt.SolidLine, Qt.RoundCap))
+        p.setPen(QPen(QColor(255, 255, 255, 240), max(1.5, radius * 0.04), Qt.SolidLine, Qt.RoundCap))
         p.drawLine(QPointF(label_rad * 0.9, 0), QPointF(vinyl_rad * 0.96, 0))
 
         # Eje central (Spindle)
+        spindle_rad = max(2.0, min(5.0, label_rad * 0.22))
         p.setPen(QPen(QColor(15, 15, 18), 1))
         p.setBrush(QColor(180, 180, 190))
-        p.drawEllipse(QPointF(0, 0), 6, 6)
+        p.drawEllipse(QPointF(0, 0), spindle_rad, spindle_rad)
 
         p.restore()
 
@@ -293,8 +298,8 @@ class DjVuMeter(QWidget):
         self._decay_timer = QTimer(self)
         self._decay_timer.setInterval(40)
         self._decay_timer.timeout.connect(self._decay)
-        self.setMinimumSize(22, 100)
-        self.setMaximumWidth(32)
+        self.setMinimumSize(12, 45)
+        self.setMaximumWidth(28)
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
 
     def setLevels(self, left: float, right: float):
@@ -322,10 +327,10 @@ class DjVuMeter(QWidget):
         p.setRenderHint(QPainter.Antialiasing)
 
         w, h = self.width(), self.height()
-        bar_w = (w - 7) / 2.0
-        num_leds = 14
-        led_gap = 2.0
-        led_h = (h - 8 - (num_leds - 1) * led_gap) / num_leds
+        bar_w = max(2.0, (w - 5) / 2.0)
+        num_leds = max(8, min(14, int(h / 7)))
+        led_gap = 1.5
+        led_h = max(2.0, (h - 6 - (num_leds - 1) * led_gap) / num_leds)
 
         # Fondo chasis de los LEDs
         p.fillRect(0, 0, w, h, QColor(16, 16, 20))
@@ -344,10 +349,10 @@ class DjVuMeter(QWidget):
             return base
 
         for channel, val in enumerate((self._left, self._right)):
-            bx = 3 + channel * (bar_w + 2)
+            bx = 2 + channel * (bar_w + 1.5)
             active_leds = int(val * num_leds)
             for i in range(num_leds):
-                ly = h - 4 - (i + 1) * led_h - i * led_gap
+                ly = h - 3 - (i + 1) * led_h - i * led_gap
                 color = led_color(i, i < active_leds)
                 p.fillRect(QRectF(bx, ly, bar_w, led_h), color)
 
@@ -360,7 +365,7 @@ class DjCrossfader(QWidget):
         super().__init__(parent)
         self._pos = 0.0  # Centro (0.0), A (-1.0), B (+1.0)
         self._dragging = False
-        self.setMinimumSize(180, 50)
+        self.setMinimumSize(100, 36)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setCursor(Qt.PointingHandCursor)
 
@@ -410,10 +415,11 @@ class DjCrossfader(QWidget):
             event.accept()
 
     def _update_from_mouse(self, x: float):
-        track_w = self.width() - 40
+        margin = max(14, int(self.width() * 0.08))
+        track_w = self.width() - margin * 2
         if track_w <= 0:
             return
-        frac = (x - 20) / track_w
+        frac = (x - margin) / track_w
         self.setPosition((frac * 2.0) - 1.0)
 
     def paintEvent(self, event):
@@ -422,51 +428,50 @@ class DjCrossfader(QWidget):
 
         w, h = self.width(), self.height()
         cy = h / 2.0
+        margin = max(14, int(w * 0.08))
 
         # Carril horizontal metálico
-        track_h = 10
-        track_rect = QRectF(20, cy - track_h / 2.0, w - 40, track_h)
+        track_h = max(6.0, min(10.0, h * 0.22))
+        track_rect = QRectF(margin, cy - track_h / 2.0, w - margin * 2, track_h)
         p.setPen(QPen(QColor(10, 10, 12), 1.5))
         p.setBrush(QColor(18, 18, 22))
-        p.drawRoundedRect(track_rect, 4, 4)
+        p.drawRoundedRect(track_rect, 3, 3)
 
         # Marcas de escala (A, Centro, B)
         p.setPen(QPen(QColor(80, 80, 90), 1))
         # Centro
-        p.drawLine(QPointF(w / 2.0, cy - 14), QPointF(w / 2.0, cy + 14))
-        # Cuartos
-        p.drawLine(QPointF(20 + (w - 40) * 0.25, cy - 8), QPointF(20 + (w - 40) * 0.25, cy + 8))
-        p.drawLine(QPointF(20 + (w - 40) * 0.75, cy - 8), QPointF(20 + (w - 40) * 0.75, cy + 8))
+        p.drawLine(QPointF(w / 2.0, cy - track_h - 2), QPointF(w / 2.0, cy + track_h + 2))
 
-        # Texto de ayuda
-        p.setPen(QColor(130, 130, 145))
-        f = p.font()
-        f.setPointSize(8)
-        f.setBold(True)
-        p.setFont(f)
-        p.drawText(QRectF(10, h - 14, 40, 14), Qt.AlignLeft, "PLATO A")
-        p.drawText(QRectF(w / 2.0 - 20, h - 14, 40, 14), Qt.AlignCenter, "MIX")
-        p.drawText(QRectF(w - 50, h - 14, 40, 14), Qt.AlignRight, "PLATO B")
+        # Texto de ayuda si cabe
+        if h >= 38:
+            p.setPen(QColor(130, 130, 145))
+            f = p.font()
+            f.setPointSize(max(6, min(8, int(h * 0.18))))
+            f.setBold(True)
+            p.setFont(f)
+            p.drawText(QRectF(margin - 4, h - 14, 50, 14), Qt.AlignLeft, "PLATO A")
+            p.drawText(QRectF(w / 2.0 - 20, h - 14, 40, 14), Qt.AlignCenter, "MIX")
+            p.drawText(QRectF(w - margin - 46, h - 14, 50, 14), Qt.AlignRight, "PLATO B")
 
         # Botón / Maneta deslizante (Knob del crossfader)
-        track_w = w - 40
-        hx = 20 + ((self._pos + 1.0) / 2.0) * track_w
-        handle_w = 28
-        handle_h = 32
-        handle_rect = QRectF(hx - handle_w / 2.0, cy - handle_h / 2.0 - 3, handle_w, handle_h)
+        track_w = w - margin * 2
+        hx = margin + ((self._pos + 1.0) / 2.0) * track_w
+        handle_w = max(18.0, min(28.0, w * 0.10))
+        handle_h = max(18.0, min(30.0, h * 0.65))
+        handle_rect = QRectF(hx - handle_w / 2.0, cy - handle_h / 2.0, handle_w, handle_h)
 
         h_grad = QLinearGradient(hx - handle_w / 2.0, 0, hx + handle_w / 2.0, 0)
         h_grad.setColorAt(0.0, QColor(70, 70, 80))
         h_grad.setColorAt(0.5, QColor(40, 40, 48))
         h_grad.setColorAt(1.0, QColor(25, 25, 30))
 
-        p.setPen(QPen(QColor(10, 10, 12), 2))
+        p.setPen(QPen(QColor(10, 10, 12), 1.5))
         p.setBrush(QBrush(h_grad))
-        p.drawRoundedRect(handle_rect, 4, 4)
+        p.drawRoundedRect(handle_rect, 3, 3)
 
         # Línea central blanca en la maneta
         p.setPen(QPen(QColor(255, 255, 255), 2))
-        p.drawLine(QPointF(hx, cy - handle_h / 2.0 + 1), QPointF(hx, cy + handle_h / 2.0 - 7))
+        p.drawLine(QPointF(hx, cy - handle_h / 2.0 + 2), QPointF(hx, cy + handle_h / 2.0 - 2))
 
 
 class DjFader(QWidget):
@@ -479,7 +484,7 @@ class DjFader(QWidget):
         self.accent_color = QColor(accent_color)
         self._value = 1.0
         self._dragging = False
-        self.setMinimumSize(38, 120)
+        self.setMinimumSize(20, 50)
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
         self.setCursor(Qt.PointingHandCursor)
 
@@ -523,10 +528,11 @@ class DjFader(QWidget):
             event.accept()
 
     def _update_from_mouse(self, y: float):
-        h = self.height() - 36
+        margin = max(8, int(self.height() * 0.10))
+        h = self.height() - margin * 2
         if h <= 0:
             return
-        frac = 1.0 - ((y - 18) / h)
+        frac = 1.0 - ((y - margin) / h)
         self.setValue(frac)
 
     def paintEvent(self, event):
@@ -535,27 +541,28 @@ class DjFader(QWidget):
 
         w, h = self.width(), self.height()
         cx = w / 2.0
+        margin = max(8, int(h * 0.10))
 
         # Carril vertical
-        track_w = 6
-        track_h = h - 36
-        track_rect = QRectF(cx - track_w / 2.0, 18, track_w, track_h)
-        p.setPen(QPen(QColor(10, 10, 12), 1.5))
+        track_w = max(4.0, min(6.0, w * 0.20))
+        track_h = h - margin * 2
+        track_rect = QRectF(cx - track_w / 2.0, margin, track_w, track_h)
+        p.setPen(QPen(QColor(10, 10, 12), 1.0))
         p.setBrush(QColor(18, 18, 22))
-        p.drawRoundedRect(track_rect, 3, 3)
+        p.drawRoundedRect(track_rect, 2, 2)
 
         # Marcas de escala
         p.setPen(QPen(QColor(70, 70, 80), 1))
         steps = (0.0, 0.25, 0.5, 0.75, 1.0)
         for s in steps:
-            sy = 18 + (1.0 - s) * track_h
-            p.drawLine(QPointF(cx - 10, sy), QPointF(cx - 5, sy))
-            p.drawLine(QPointF(cx + 5, sy), QPointF(cx + 10, sy))
+            sy = margin + (1.0 - s) * track_h
+            p.drawLine(QPointF(cx - 8, sy), QPointF(cx - 4, sy))
+            p.drawLine(QPointF(cx + 4, sy), QPointF(cx + 8, sy))
 
         # Maneta deslizante
-        hy = 18 + (1.0 - self._value) * track_h
-        handle_w = 26
-        handle_h = 18
+        hy = margin + (1.0 - self._value) * track_h
+        handle_w = max(14.0, min(24.0, w * 0.85))
+        handle_h = max(10.0, min(18.0, h * 0.18))
         handle_rect = QRectF(cx - handle_w / 2.0, hy - handle_h / 2.0, handle_w, handle_h)
 
         h_grad = QLinearGradient(0, hy - handle_h / 2.0, 0, hy + handle_h / 2.0)
@@ -563,10 +570,10 @@ class DjFader(QWidget):
         h_grad.setColorAt(0.5, QColor(42, 42, 50))
         h_grad.setColorAt(1.0, QColor(25, 25, 30))
 
-        p.setPen(QPen(QColor(12, 12, 15), 1.5))
+        p.setPen(QPen(QColor(12, 12, 15), 1.0))
         p.setBrush(QBrush(h_grad))
-        p.drawRoundedRect(handle_rect, 3, 3)
+        p.drawRoundedRect(handle_rect, 2, 2)
 
         # Línea central de la maneta
-        p.setPen(QPen(self.accent_color, 2))
-        p.drawLine(QPointF(cx - handle_w / 2.0 + 3, hy), QPointF(cx + handle_w / 2.0 - 3, hy))
+        p.setPen(QPen(self.accent_color, 1.5))
+        p.drawLine(QPointF(cx - handle_w / 2.0 + 2, hy), QPointF(cx + handle_w / 2.0 - 2, hy))
