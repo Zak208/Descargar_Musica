@@ -314,16 +314,17 @@ def _db(v):
     return 20.0 * math.log10(v) if v else -120.0
 
 
-def _fading_end(data, c):
+def _fading_end(data, c, ref_s=FADE_REF_S):
     """Si A se apaga justo antes de c (sus últimos `TRIM_LEVEL_S` quedan más de `FADE_REL_DB` por debajo de lo que sonaba en
     los segundos de antes), la muestra donde aún sonaba a su nivel (fin del último bloque de 50 ms a menos de `FADE_REL_DB`
     de él); si no, None."""
     lvl = int(TRIM_LEVEL_S * SAMPLE_RATE)
-    ref = _gated_rms(data[max(0, c - int(FADE_REF_S * SAMPLE_RATE)):max(0, c - lvl)])
+    ref_samples = int(ref_s * SAMPLE_RATE)
+    ref = _gated_rms(data[max(0, c - ref_samples):max(0, c - lvl)])
     last = _rms(data[max(0, c - lvl):c])                    # sin puerta: un silencio corto al final también cuenta
     if ref is None or _db(last) >= _db(ref) - FADE_REL_DB:
         return None
-    return _last_sound(data, c, FADE_REF_S, _db(ref) - FADE_REL_DB, TRIM_BLOCK_S)
+    return _last_sound(data, c, ref_s, _db(ref) - FADE_REL_DB, TRIM_BLOCK_S)
 
 
 def _quiet_start(data, s):
@@ -954,13 +955,16 @@ class EngineSession:
 
     @staticmethod
     def _before_silence(a, plan, grid_a):
-        """Si A se queda en silencio digital dentro de la mezcla (muchos mp3 acaban con segundos de silencio y el final del
-        análisis lo incluye), la mezcla se adelanta (compases enteros con rejilla) para que acabe donde A deja de sonar: si no,
-        la mitad de la mezcla sería B entrando sola y floja sobre un silencio (un bajón de volumen)."""
+        """Si A se queda en silencio digital o decae en volumen dentro de la mezcla,
+        la mezcla se adelanta (compases enteros con rejilla) para que acabe donde A aún suena con fuerza: si no,
+        la mitad de la mezcla sería B entrando sola y floja sobre una canción apagada o en silencio (bajón de ritmo)."""
         sr = SAMPLE_RATE
         a_mix, n = round(plan.a_start_s * sr), round(plan.length_s * sr)
         end = min(a_mix + n, a.frames)
-        last = _last_sound(a.data, end, plan.length_s)
+        last_digital = _last_sound(a.data, end, plan.length_s)
+        fading = _fading_end(a.data, end, ref_s=max(FADE_REF_S, plan.length_s))
+        candidates = [p for p in (last_digital, fading) if p is not None]
+        last = min(candidates) if candidates else None
         if last is None or end - last < int(SILENCE_SHIFT_MIN_S * sr):
             return plan
         need = (end - last) / sr
@@ -974,8 +978,9 @@ class EngineSession:
         start = plan.a_start_s - shift
         if start < low:
             return plan
+        reason_desc = "la que suena decae de volumen" if last == fading else "la que suena acaba en silencio"
         return dataclasses.replace(plan, a_start_s=round(start, 3),
-                                   reason=f"{plan.reason}; adelantada {mix_points.fmt_seconds(shift)}: la que suena acaba en silencio")
+                                   reason=f"{plan.reason}; adelantada {mix_points.fmt_seconds(shift)}: {reason_desc}")
 
     @staticmethod
     def _bar_before(a, grid_a, end) -> int:
@@ -1185,7 +1190,7 @@ class EngineSession:
         """Con corte en el compás o eco, el corte (`bass_swap_at`) debe caer donde A aún suena justo antes y B ya suena justo
         después (si no, un silencio: A con su final mudo o B con su principio mudo). Si no es así, se mueve al comienzo de
         compás de A más cercano en que sí (o cada medio segundo sin rejilla). Con los demás tipos, el plan tal cual."""
-        if kind not in (transition_types.TYPE_CUT_BAR, transition_types.TYPE_ECHO_OUT):
+        if kind not in (transition_types.TYPE_CUT_BAR, transition_types.TYPE_ECHO_OUT, transition_types.TYPE_DELAY_DROP, transition_types.TYPE_REVERB_WASH):
             return plan
         sr = SAMPLE_RATE
         n = round(plan.length_s * sr)
@@ -1214,7 +1219,7 @@ class EngineSession:
     @staticmethod
     def _split(kind, plan, n) -> int:
         """Dónde se parte la mezcla (desde ahí domina B): la mitad, o el corte con corte en el compás y eco de salida."""
-        if kind in (transition_types.TYPE_CUT_BAR, transition_types.TYPE_ECHO_OUT):
+        if kind in (transition_types.TYPE_CUT_BAR, transition_types.TYPE_ECHO_OUT, transition_types.TYPE_DELAY_DROP, transition_types.TYPE_REVERB_WASH):
             return transition_types._cut_point(plan, n, SAMPLE_RATE)
         return n // 2
 

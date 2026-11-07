@@ -1047,6 +1047,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             self._safe_set_btn_text(self.current_preview_btn, " Escuchar", "play.svg")
 
         self._remember_current(item_info)
+        self._retrying_preview = False
         self._eq_source_path = None
         self._eq_active_render = None
         self.current_preview_btn = btn
@@ -1488,8 +1489,11 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
 
         self._use_default_audio_device()
 
-        from services.streaming_proxy import StreamingProxy
-        proxied_url = StreamingProxy.get_instance().get_stream_url(stream_url)
+        if "googlevideo.com" in stream_url or "youtube.com" in stream_url:
+            from services.streaming_proxy import StreamingProxy
+            proxied_url = StreamingProxy.get_instance().get_stream_url(stream_url)
+        else:
+            proxied_url = stream_url
 
         self.player.setSource(QUrl(proxied_url))
         self.player.play()
@@ -1504,6 +1508,24 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self.player.stop()
 
     def handle_player_error(self, error, error_string):
+        if (
+            getattr(self, "current_item_info", None)
+            and self.current_item_info.get("preview_url")
+            and not getattr(self, "_retrying_preview", False)
+            and self.current_item_info.get("url")
+        ):
+            self._retrying_preview = True
+            fallback_yt_url = self.current_item_info.get("url")
+            self.current_item_info["preview_url"] = None
+            logging.info(f"Fallback de preview CDN a YouTube para: {fallback_yt_url}")
+            self.player_status.setText("Cargando vista previa...")
+            self.btn_play_pause.setEnabled(False)
+            self.preview_worker = PreviewAudioWorker(fallback_yt_url)
+            self.preview_worker.ready.connect(self._on_preview_ready)
+            self.preview_worker.error.connect(self._on_preview_error)
+            self.preview_worker.start()
+            return
+
         self._safe_set_btn_text(self.current_preview_btn, " Escuchar", "play.svg")
         self.player_status.setText(friendly_error(error_string))
         self.btn_play_pause.set_state(False)

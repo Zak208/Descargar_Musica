@@ -155,5 +155,6 @@ check("DjPage _toggle_freeze activa Freeze", page._fx_state["freeze_active"] is 
 print("\n==========================================")
 print(f"RESUMEN DE PRUEBAS: {passed} PASADAS, {failed} FALLIDAS")
 print("==========================================")
+print("FIN")
 if failed > 0:
     sys.exit(1)

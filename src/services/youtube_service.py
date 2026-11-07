@@ -298,7 +298,7 @@ class PreviewAudioWorker(QThread):
         try:
             # Usar ba/b y cliente android para sortear el error 403 Forbidden de YouTube
             ydl_opts = {
-                'format': 'ba/b',
+                'format': 'ba/b/18/best',
                 'quiet': True,
                 'no_warnings': True,
                 'socket_timeout': 15,

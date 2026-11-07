@@ -357,6 +357,7 @@ if not FAILED_TESTS:
     print("  RESULTADO: 100% DE PRUEBAS SUPERADAS SATISFACTORIAMENTE")
     print("  Cero distorsion, cero clipping, precision de retardo y rendimiento verificados.")
     print("================================================================================")
+    print("FIN")
     sys.exit(0)
 else:
     print(f"  RESULTADO: {len(FAILED_TESTS)} PRUEBA(S) FALLIDAS:")

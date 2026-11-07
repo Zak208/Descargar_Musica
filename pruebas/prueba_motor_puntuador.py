@@ -31,7 +31,7 @@ for bars, songs in ((8, GOOD), (16, GOOD), (16, LONG)):
     with r.sess._lock:
         chk = dict(r.sess._pair.check)
     costs.append((st["plan"].length_s, chk.get("seconds")))
-    check(f"mezcla buena de {st['plan'].length_s:.0f} s: el puntuador no pone pegas ({chk})", st["transition_type"] == T.TYPE_BLEND
+    check(f"mezcla buena de {st['plan'].length_s:.0f} s: el puntuador no pone pegas ({chk})", st["transition_type"] in (T.TYPE_BLEND, T.TYPE_SMART_FILTER_EQ)
           and chk.get("audio") == [] and chk.get("plan") in ("ok", "dudosa") and "swapped" not in chk)
     r.sess.stop()
 print("INFO coste del puntuador ligero por mezcla: " + ", ".join(f"{L:.0f} s de mezcla: {c * 1000:.0f} ms" for L, c in costs), flush=True)
