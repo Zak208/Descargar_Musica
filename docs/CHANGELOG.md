@@ -3,6 +3,29 @@
 Formato: `MAYOR.MENOR.PARCHE`. MAYOR = cambios que rompen datos o uso, MENOR = funciones nuevas, PARCHE = arreglos.
 Cada versión subida a GitHub tiene su etiqueta `vX.Y.Z` (pestaña *Releases/Tags*).
 
+## 1.21.0
+**Mesa de DJ Virtual Interactiva, Doble Plato (Dual Deck) y Corrección de Previsualización**
+- **Solución definitiva al fallo de previsualización en resultados de búsqueda**:
+  - Corrección del fallo por `TypeError: findChildren(tuple)` en `playback_mixin.py` que impedía la ejecución del audio al pulsar el botón de reproducir en las canciones de la búsqueda.
+  - Protección de seguridad en `toggle_preview()` para garantizar que la llamada a `play_preview()` nunca se interrumpa.
+  - Desconexión automática del motor PCM DJ al reproducir streams en línea de previsualización, permitiendo a `QMediaPlayer` reproducir sin cuelgues ni esperas.
+- **Nueva Cabina / Mesa de DJ Virtual Profesional (`DjPage`)**:
+  - **Pantalla dedicada para el DJ**: Acceso directo con un solo clic desde la barra lateral ("Mesa DJ") y desde la barra superior (`btn_dj`), eliminando los menús emergentes confusos de múltiples opciones.
+  - **Doble Plato Simulado (Deck A y Deck B)**:
+    - Pantallas digitales estilo CDJ con título, artista, BPM en tiempo real, tonalidad armónica en notación Camelot (ej. 8A / Am) y tiempo transcurrido/restante.
+    - Jog wheels / vinilos giratorios interactivos y animados a 25 FPS que rotan cuando el plato está en reproducción.
+    - Controles de canal por deck: ecualizador de 3 bandas (HIGH, MID, LOW con bass kill), potenciómetro de filtro resonante (HPF/LPF), fader vertical de volumen de canal y vúmetros estéreo por canal.
+    - Botones de transporte estilo hardware: PLAY/PAUSE, CUE, SYNC y accesos directos a efectos (DELAY, WASH, FREEZE).
+  - **Mezclador Central con Crossfader Interactivo**:
+    - Vúmetro estéreo máster con barras LED calibradas (verde, amarillo y rojo pico).
+    - Crossfader horizontal táctil y suave para mezclar entre Plato A y Plato B.
+    - **Doble modo de operación**:
+      * *Modo IA DJ (Automático)*: La IA de mezcla mueve físicamente en pantalla el crossfader, los filtros y los ecualizadores (con intercambio de graves a compás y tallado vocal) durante las transiciones para que el usuario vea exactamente lo que hace el DJ virtual.
+      * *Modo Manual*: Permite al usuario mover el crossfader, faders y potenciómetros manualmente como en una mesa física.
+    - **Botón destacado «🔥 Mezclar Ahora»**: Permite forzar la transición armónica instantáneamente en el siguiente compás sin esperar al final de la pista.
+  - **Mejora en la anticipación del punto de mezcla**:
+    - Ajuste de sensibilidad acústica (`FADE_REL_DB = 3.5 dB`) para adelantar las mezclas antes de que la canción pierda volumen o caiga en el silencio del fade-out, manteniendo siempre el ritmo y la energía de la sesión.
+
 ## 1.20.1
 **Previsualización en Buscador y Anticipación Rítmica DJ**
 - **Enrutamiento directo CDN (Deezer / iTunes)**: Reproducción nativa instantánea sin pasar por proxy local, evitando errores 403 y bloqueos de red interna.

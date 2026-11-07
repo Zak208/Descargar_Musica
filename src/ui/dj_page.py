@@ -1,39 +1,129 @@
-"""Página DJ: lo que suena, cuánto falta para la mezcla, lo que viene y los botones para llevar la sesión.
-
-La página solo enseña y avisa (señales); la lógica está en ui/dj_mixin.py."""
-from PySide6.QtCore import Qt, Signal, QSize
+"""Página y Cabina de DJ Profesional: Simulación visual interactiva de mesa de mezclas.
+Soporta:
+- Plato A (Deck A) y Plato B (Deck B) con pantallas digitales de información (Título, Artista, BPM, Camelot Key, Tiempo).
+- Vinilos/Jog Wheels animados y giratorios con carátula central.
+- Controles de canal por deck: EQ de 3 bandas (Graves, Medios, Agudos), Filtro resonante (HPF/LPF), Fader de volumen y Vúmetros.
+- Sección central de mezcla con Crossfader interactivo.
+- Doble modo de operación:
+  * Modo IA DJ (Automático): La IA planifica y mueve físicamente el crossfader, los filtros y los ecualizadores en pantalla al compás.
+  * Modo Manual: El usuario puede mezclar a mano deslizando el crossfader y ajustando los knobs.
+- Botón destacado de «🔥 Mezclar Ahora» para disparar la transición al instante sin esperar.
+- Selector de perfiles simplificado (Club, Radio, Chill).
+- Lista inferior de canciones preparadas para pinchar.
+"""
+import os
+import math
+import random
+from PySide6.QtCore import Qt, Signal, QSize, QTimer, QRectF, QPointF
+from PySide6.QtGui import QIcon, QPixmap, QColor, QFont, QPainter, QBrush, QPen
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QListWidget, QAbstractItemView, QMenu
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame,
+    QListWidget, QAbstractItemView, QMenu, QScrollArea, QSizePolicy
 )
 
 from services.transition_votes import TAGS
 from ui.dj_votes_mixin import TAG_LABELS
 from ui.icons import icon
 from ui.widgets import ElidedLabel
+from ui.dj_components import DjRotaryKnob, DjJogWheel, DjVuMeter, DjCrossfader, DjFader
+from ui.covers import placeholder_cover
 
 UPCOMING_SHOWN = 30
+COMPACT_MIN_W = 50
 
 
-COMPACT_MIN_W = 52             # ancho de un botón que se ha quedado solo con el icono
-BUTTON_EXTRA_W = 16 + 44       # icono + relleno de los lados (lo que ocupa un botón además de su texto)
+class DeckScreen(QFrame):
+    """Pantalla digital estilo CDJ / DJ controller con información de pista, BPM, Camelot y forma de onda."""
+    def __init__(self, deck_label="DECK A", accent_color="#1ED760", parent=None):
+        super().__init__(parent)
+        self.deck_label = deck_label
+        self.accent_color = accent_color
+        self.setObjectName("PanelCard")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setStyleSheet(f"""
+            QFrame#PanelCard {{
+                background-color: #121216;
+                border: 1px solid #252530;
+                border-radius: 8px;
+            }}
+        """)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setMinimumHeight(115)
 
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(4)
 
-def _tight(btn: QPushButton, extra: int = 14) -> QPushButton:
-    """El estilo de Qt pide al menos 80 px a un botón de texto, aunque sea «÷2»: se ajusta al ancho de su texto."""
-    btn.ensurePolished()
-    btn.setMinimumWidth(btn.fontMetrics().horizontalAdvance(btn.text()) + extra)
-    return btn
+        # Barra superior de la pantalla: etiqueta de Deck y estado ON AIR
+        top_row = QHBoxLayout()
+        self.deck_tag = QLabel(deck_label)
+        self.deck_tag.setStyleSheet(f"font-size: 11px; font-weight: 900; color: {accent_color}; letter-spacing: 1.5px; background: transparent;")
+        top_row.addWidget(self.deck_tag)
 
+        self.on_air_badge = QLabel("• EN EL AIRE")
+        self.on_air_badge.setStyleSheet("font-size: 10px; font-weight: 800; color: #FF3344; background: #331015; border-radius: 3px; padding: 1px 6px;")
+        self.on_air_badge.setVisible(False)
+        top_row.addWidget(self.on_air_badge)
+        top_row.addStretch()
 
-def _action_button(text: str, icon_name: str, tip: str) -> QPushButton:
-    btn = QPushButton(f" {text}")
-    btn.setObjectName("TopPillBtn")
-    btn.setIcon(icon(icon_name))
-    btn.setIconSize(QSize(16, 16))
-    btn.setToolTip(tip)
-    btn.setCursor(Qt.PointingHandCursor)
-    btn.setMinimumWidth(COMPACT_MIN_W)      # puede estrecharse: en una ventana estrecha se queda solo con el icono
-    return btn
+        self.time_lbl = QLabel("-00:00")
+        self.time_lbl.setStyleSheet("font-size: 13px; font-weight: 800; color: #FFFFFF; font-family: monospace; background: transparent;")
+        top_row.addWidget(self.time_lbl)
+        layout.addLayout(top_row)
+
+        # Título y artista
+        self.title_lbl = ElidedLabel("Sin pista cargada")
+        self.title_lbl.setStyleSheet("font-size: 16px; font-weight: bold; color: #FFFFFF; background: transparent;")
+        layout.addWidget(self.title_lbl)
+
+        self.artist_lbl = ElidedLabel("---")
+        self.artist_lbl.setStyleSheet("font-size: 12px; color: #A0A0B0; background: transparent;")
+        layout.addWidget(self.artist_lbl)
+
+        # Fila técnica: BPM, Tono Camelot y Pitch
+        tech_row = QHBoxLayout()
+        tech_row.setSpacing(10)
+
+        self.bpm_box = QLabel("--- BPM")
+        self.bpm_box.setStyleSheet(f"font-size: 13px; font-weight: 900; color: {accent_color}; background: #181822; border-radius: 4px; padding: 2px 8px;")
+        tech_row.addWidget(self.bpm_box)
+
+        self.key_box = QLabel("--- KEY")
+        self.key_box.setStyleSheet("font-size: 12px; font-weight: 800; color: #E0E0FF; background: #222235; border-radius: 4px; padding: 2px 8px;")
+        tech_row.addWidget(self.key_box)
+
+        self.pitch_box = QLabel("±0.0%")
+        self.pitch_box.setStyleSheet("font-size: 11px; font-weight: 700; color: #888899; background: transparent;")
+        tech_row.addWidget(self.pitch_box)
+
+        tech_row.addStretch()
+        layout.addLayout(tech_row)
+
+        # Mini barra de progreso / forma de onda simulada
+        self.progress_bar = QFrame()
+        self.progress_bar.setFixedHeight(6)
+        self.progress_bar.setStyleSheet(f"""
+            QFrame {{
+                background-color: #22222A;
+                border-radius: 3px;
+            }}
+        """)
+        layout.addWidget(self.progress_bar)
+
+    def setTrack(self, title: str, artist: str, bpm: float = None, key: str = None, on_air: bool = False, time_str: str = "-00:00"):
+        self.title_lbl.setText(title or "Sin pista cargada")
+        self.artist_lbl.setText(artist or "---")
+        self.on_air_badge.setVisible(bool(on_air))
+        self.time_lbl.setText(time_str or "-00:00")
+        if bpm and bpm > 0:
+            self.bpm_box.setText(f"{bpm:.1f} BPM")
+        else:
+            self.bpm_box.setText("--- BPM")
+        if key:
+            self.key_box.setText(f"KEY: {key}")
+            self.key_box.setVisible(True)
+        else:
+            self.key_box.setText("KEY: ---")
 
 
 class DjPage(QWidget):
@@ -44,194 +134,140 @@ class DjPage(QWidget):
     block_requested = Signal()
     reshuffle_requested = Signal()
     unblock_all_requested = Signal()
-    bpm_requested = Signal(str, str)         # (ruta de la canción, «half», «double», «set» o «auto»)
-    vote_requested = Signal(int, list)       # (+1 o -1, motivos marcados) de la mezcla que toca
-    profile_requested = Signal(str)          # 'club', 'radio', 'chill'
-    fx_changed = Signal(str, dict)           # ('filter', {'mode': 'hpf'}), etc.
-    freeze_requested = Signal(bool)          # True / False
-    washout_requested = Signal()             # Washout trigger
+    bpm_requested = Signal(str, str)
+    vote_requested = Signal(int, list)
+    profile_requested = Signal(str)
+    fx_changed = Signal(str, dict)
+    freeze_requested = Signal(bool)
+    washout_requested = Signal()
+    auto_mix_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        main = QVBoxLayout(self)
-        main.setContentsMargins(0, 0, 0, 0)
-        main.setSpacing(16)
+        self.main_window = parent
+        self._auto_mode = True  # True: IA maneja fader/knobs; False: usuario manual
+        self._now_path = ""
+        self._next_path = ""
+        self._upcoming_paths = []
+        self._transition_active = False
+        self._meter_val_a = 0.0
+        self._meter_val_b = 0.0
 
-        # --- cabecera: título, de dónde salen las canciones y empezar ---
-        head = QHBoxLayout()
-        self.title = QLabel("Modo DJ")
-        self.title.setStyleSheet("font-size: 30px; font-weight: bold;")
-        head.addWidget(self.title)
-        head.addStretch()
-        self.btn_start = QPushButton(" Empezar a pinchar")
-        self.btn_start.setObjectName("GiantActionBtn")
-        self.btn_start.setIcon(icon("play_black.svg", "#000000"))
-        self.btn_start.setIconSize(QSize(16, 16))
-        self.btn_start.setMinimumWidth(COMPACT_MIN_W)
-        self.btn_start.setToolTip("Empezar a pinchar")
-        self.btn_start.setCursor(Qt.PointingHandCursor)
-        self.btn_start.clicked.connect(self.start_requested.emit)
-        head.addWidget(self.btn_start)
-        main.addLayout(head)
+        self._fx_state = {
+            "filter_mode": "OFF",
+            "delay_time": "OFF",
+            "ping_pong": True,
+            "echo_active": False,
+            "freeze_active": False,
+            "reverb_active": False,
+        }
+        self.btn_fx_filter = QPushButton("Filtro: OFF")
+        self.btn_fx_delay = QPushButton("Delay: OFF")
+        self.btn_fx_freeze = QPushButton("Echo Freeze: OFF")
+        self.btn_fx_reverb = QPushButton("Reverb: OFF")
+        self.btn_fx_echo = QPushButton("Eco Tape: OFF")
+        self.btn_fx_pingpong = QPushButton("Ping-Pong")
 
-        source_row = QHBoxLayout()
-        self.source = QLabel("")
-        self.source.setObjectName("SectionSubtitle")
-        self.source.setWordWrap(True)
-        source_row.addWidget(self.source, 1)
-        self.btn_folder = QPushButton("Cambiar carpeta")
-        self.btn_folder.setObjectName("LinkBtn")
-        self.btn_folder.setCursor(Qt.PointingHandCursor)
-        self.btn_folder.clicked.connect(self.folder_requested.emit)
-        source_row.addWidget(self.btn_folder)
-        self.btn_unblock = QPushButton("")
-        self.btn_unblock.setObjectName("LinkBtn")
-        self.btn_unblock.setCursor(Qt.PointingHandCursor)
-        self.btn_unblock.setToolTip("Las canciones bloqueadas vuelven a poder sonar en el modo DJ")
-        self.btn_unblock.clicked.connect(self.unblock_all_requested.emit)
-        self.btn_unblock.hide()
-        source_row.addWidget(self.btn_unblock)
-        main.addLayout(source_row)
-        self.progress = QLabel("")
-        self.progress.setObjectName("SectionSubtitle")
-        self.progress.setWordWrap(True)
-        self.progress.hide()
-        main.addWidget(self.progress)
+        # Layout principal con scroll para pantallas estrechas o resoluciones bajas
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
-        # --- sin sesión: qué hacer ---
-        self.empty = QLabel("Elige la carpeta con «Cambiar carpeta» o con el botón DJ de arriba, y pulsa «Empezar a pinchar».")
-        self.empty.setObjectName("SectionSubtitle")
-        self.empty.setWordWrap(True)
-        self.empty.setAlignment(Qt.AlignCenter)
-        self.empty.setMinimumHeight(120)
-        main.addWidget(self.empty)
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
 
-        # --- con sesión ---
-        self.session = QWidget()
-        sess = QVBoxLayout(self.session)
-        sess.setContentsMargins(0, 0, 0, 0)
-        sess.setSpacing(14)
+        scroll_content = QWidget()
+        scroll_lay = QVBoxLayout(scroll_content)
+        scroll_lay.setContentsMargins(12, 10, 12, 14)
+        scroll_lay.setSpacing(14)
 
-        now = QFrame()
-        now.setObjectName("PanelCard")
-        now.setAttribute(Qt.WA_StyledBackground, True)
-        now_lay = QVBoxLayout(now)
-        now_lay.setContentsMargins(20, 16, 20, 16)
-        now_lay.setSpacing(4)
-        cap = QLabel("AHORA SUENA")
-        cap.setStyleSheet("font-size: 11px; font-weight: 800; color: #B3B3B3; letter-spacing: 1px; background: transparent;")
-        now_lay.addWidget(cap)
-        self.now_title = ElidedLabel("")
-        self.now_title.setStyleSheet("font-size: 22px; font-weight: bold; background: transparent;")
-        now_lay.addWidget(self.now_title)
-        self.now_artist = ElidedLabel("")
-        self.now_artist.setObjectName("SectionSubtitle")
-        now_lay.addWidget(self.now_artist)
-        self.now_detail = QLabel("")
-        self.now_detail.setObjectName("SectionSubtitle")
-        self.now_detail.setWordWrap(True)
-        now_lay.addWidget(self.now_detail)
-        bpm_row = QHBoxLayout()
-        bpm_row.setSpacing(6)
-        self.bpm_buttons = []              # si el ritmo está mal medido (95 visto como 190, por ejemplo)
-        for text, action, tip in (("BPM ÷2", "half", "El ritmo está mal medido: es la mitad de lo que se ve"),
-                                  ("BPM ×2", "double", "El ritmo está mal medido: es el doble de lo que se ve"),
-                                  ("Escribir BPM…", "set", "Escribir el ritmo a mano"),
-                                  ("Automático", "auto", "Volver al ritmo calculado solo")):
-            btn = QPushButton(text)
-            btn.setObjectName("LinkBtn")
-            btn.setCursor(Qt.PointingHandCursor)
-            btn.setToolTip(tip)
-            btn.clicked.connect(lambda _=False, a=action: self._emit_bpm(self._now_path, a))
-            bpm_row.addWidget(_tight(btn))
-            self.bpm_buttons.append(btn)
-        bpm_row.addStretch()
-        now_lay.addLayout(bpm_row)
-        self.countdown = QLabel("")
-        self.countdown.setStyleSheet("font-size: 14px; font-weight: 700; color: #1ED760; background: transparent;")
-        self.countdown.setWordWrap(True)
-        now_lay.addSpacing(6)
-        now_lay.addWidget(self.countdown)
-        vote_row = QHBoxLayout()
-        vote_row.setSpacing(8)
-        self.vote_caption = QLabel("Esta mezcla:")
-        self.vote_caption.setStyleSheet("font-weight: 700; background: transparent;")
-        vote_row.addWidget(self.vote_caption)
-        self.btn_up = QPushButton("👍 Buena")
-        self.btn_up.setObjectName("TopPillBtn")
-        self.btn_up.setCursor(Qt.PointingHandCursor)
-        self.btn_up.setToolTip("Votar la mezcla que suena (o la última) como buena: sirve para que el DJ aprenda tu gusto")
-        self.btn_up.clicked.connect(lambda: self.vote_requested.emit(1, []))
-        vote_row.addWidget(self.btn_up)
-        self.btn_down = QPushButton("👎 Mala")
-        self.btn_down.setObjectName("TopPillBtn")
-        self.btn_down.setCursor(Qt.PointingHandCursor)
-        self.btn_down.setToolTip("Votar la mezcla como mala, y marcar qué falló si quieres")
-        down_menu = QMenu(self.btn_down)
-        down_menu.addAction("Sin motivo").triggered.connect(lambda: self.vote_requested.emit(-1, []))
-        down_menu.addSeparator()
-        for tag in TAGS:
-            down_menu.addAction(TAG_LABELS.get(tag, tag)).triggered.connect(lambda _=False, t=tag: self.vote_requested.emit(-1, [t]))
-        self.btn_down.setMenu(down_menu)
-        vote_row.addWidget(self.btn_down)
-        self.vote_status = QLabel("")
-        self.vote_status.setObjectName("SectionSubtitle")
-        self.vote_status.setWordWrap(True)
-        vote_row.addWidget(self.vote_status, 1)
-        now_lay.addLayout(vote_row)
-        sess.addWidget(now)
+        # 1. Cabecera y Barra de Control General
+        self._build_top_bar(scroll_lay)
 
-        buttons = QHBoxLayout()
-        buttons.setSpacing(10)
-        self.btn_skip = _action_button("Saltar", "next.svg", "Pasa ya a la siguiente, con un fundido corto")
-        self.btn_skip.clicked.connect(self.skip_requested.emit)
-        self.btn_drop = _action_button("Esta no", "x.svg", "Quita de la sesión la canción que iba a sonar después")
-        self.btn_drop.clicked.connect(self.drop_next_requested.emit)
-        self.btn_block = _action_button("Bloquear", "offline.svg",
-                                        "La que suena no volverá a salir en el modo DJ (y se pasa a la siguiente)")
-        self.btn_block.clicked.connect(self.block_requested.emit)
-        self.btn_shuffle = _action_button("Barajar", "shuffle.svg", "Cambia el orden de lo que queda por sonar")
-        self.btn_shuffle.clicked.connect(self.reshuffle_requested.emit)
-        self._actions = (self.btn_skip, self.btn_drop, self.btn_block, self.btn_shuffle)
-        for btn in self._actions:
-            buttons.addWidget(btn)
-        self._labels = {btn: btn.text() for btn in (self.btn_start, *self._actions)}   # textos completos
-        self._compact = False
-        self._now_path = ""                   # canción que suena (para los botones de BPM)
-        self._upcoming_paths = []             # ruta de cada fila de «Lo que queda»
-        buttons.addStretch()
-        sess.addLayout(buttons)
+        # 2. Chasis de la Mesa de DJ (Dual Decks + Mixer Central)
+        self._build_console(scroll_lay)
 
-        # --- perfil de mezcla (Club, Radio, Chill) ---
-        prof_card = QFrame()
-        prof_card.setObjectName("PanelCard")
-        prof_card.setAttribute(Qt.WA_StyledBackground, True)
-        prof_lay = QVBoxLayout(prof_card)
-        prof_lay.setContentsMargins(14, 10, 14, 10)
-        prof_lay.setSpacing(6)
+        # 3. Lista de Canciones Próximas & Opciones Rápidas
+        self._build_bottom_tray(scroll_lay)
 
-        prof_cap = QLabel("PERFIL DE MEZCLA")
-        prof_cap.setStyleSheet("font-size: 11px; font-weight: 800; color: #B3B3B3; letter-spacing: 1px; background: transparent;")
-        prof_lay.addWidget(prof_cap)
+        scroll.setWidget(scroll_content)
+        root.addWidget(scroll)
 
-        prof_row = QHBoxLayout()
-        prof_row.setSpacing(8)
+        # Timer de animación visual periódica (40 ms = 25 FPS) para platos, vúmetros y mezcla de IA
+        self._anim_timer = QTimer(self)
+        self._anim_timer.setInterval(40)
+        self._anim_timer.timeout.connect(self._on_anim_frame)
+        self._anim_timer.start()
+
+    # -------------------------------------------------------------------------------------------------
+    # 1. Cabecera superior
+    # -------------------------------------------------------------------------------------------------
+    def _build_top_bar(self, layout):
+        top_card = QFrame()
+        top_card.setObjectName("PanelCard")
+        top_card.setAttribute(Qt.WA_StyledBackground, True)
+        top_card.setStyleSheet("""
+            QFrame#PanelCard {
+                background-color: #16161C;
+                border: 1px solid #262632;
+                border-radius: 10px;
+            }
+        """)
+        top_lay = QHBoxLayout(top_card)
+        top_lay.setContentsMargins(16, 12, 16, 12)
+        top_lay.setSpacing(12)
+
+        # Título e icono
+        icon_lbl = QLabel()
+        icon_lbl.setPixmap(icon("sliders.svg", "#1ED760", 32).pixmap(24, 24))
+        top_lay.addWidget(icon_lbl)
+
+        title_box = QVBoxLayout()
+        title_box.setSpacing(2)
+        self.title_lbl = QLabel("Mesa DJ Inteligente")
+        self.title_lbl.setStyleSheet("font-size: 20px; font-weight: bold; color: #FFFFFF;")
+        title_box.addWidget(self.title_lbl)
+
+        self.source = QLabel("Carpeta de música...")
+        self.source.setStyleSheet("font-size: 12px; color: #A0A0B0;")
+        title_box.addWidget(self.source)
+        top_lay.addLayout(title_box, 1)
+
+        # Botón modo IA vs Manual
+        self.btn_auto_mode = QPushButton(" 🤖 DJ Automático: ON")
+        self.btn_auto_mode.setObjectName("TopPillBtn")
+        self.btn_auto_mode.setCursor(Qt.PointingHandCursor)
+        self.btn_auto_mode.setToolTip("La IA calcula y mueve el crossfader, filtros y ecualizadores sola. Pulsa para mezclar manual.")
+        self.btn_auto_mode.setStyleSheet("""
+            QPushButton {
+                background-color: #1A3828;
+                color: #1ED760;
+                font-weight: 800;
+                border: 1px solid #1ED760;
+                border-radius: 16px;
+                padding: 6px 14px;
+            }
+            QPushButton:hover { background-color: #244C36; }
+        """)
+        self.btn_auto_mode.clicked.connect(self._toggle_auto_mode)
+        top_lay.addWidget(self.btn_auto_mode)
+
+        # Selector rápido de perfiles (Club / Radio / Chill)
         self.btn_prof_club = QPushButton("🎧 Club")
-        self.btn_prof_club.setObjectName("TopPillBtn")
         self.btn_prof_club.setCursor(Qt.PointingHandCursor)
-        self.btn_prof_club.setToolTip("Mezclas largas de 16-32 compases con cambio de graves y Mid-Carve vocal")
+        self.btn_prof_club.setToolTip("Mezclas largas con Mid-Carve y swap de graves")
         self.btn_prof_club.clicked.connect(lambda: self.profile_requested.emit("club"))
 
         self.btn_prof_radio = QPushButton("📻 Radio")
-        self.btn_prof_radio.setObjectName("TopPillBtn")
         self.btn_prof_radio.setCursor(Qt.PointingHandCursor)
-        self.btn_prof_radio.setToolTip("Cortes rápidos de 4-8 compases, delay drop y transiciones dinámicas")
+        self.btn_prof_radio.setToolTip("Cortes rápidos a compás y delay drop dinámico")
         self.btn_prof_radio.clicked.connect(lambda: self.profile_requested.emit("radio"))
 
         self.btn_prof_chill = QPushButton("☕ Chill")
-        self.btn_prof_chill.setObjectName("TopPillBtn")
         self.btn_prof_chill.setCursor(Qt.PointingHandCursor)
-        self.btn_prof_chill.setToolTip("Fundidos progresivos, washout reverb envolvente y transiciones atmosféricas")
+        self.btn_prof_chill.setToolTip("Transiciones etéreas y washout reverb envolvente")
         self.btn_prof_chill.clicked.connect(lambda: self.profile_requested.emit("chill"))
 
         self._profile_buttons = {
@@ -239,239 +275,594 @@ class DjPage(QWidget):
             "radio": self.btn_prof_radio,
             "chill": self.btn_prof_chill,
         }
-        for b in self._profile_buttons.values():
-            prof_row.addWidget(b)
-        prof_row.addStretch()
-        prof_lay.addLayout(prof_row)
-        sess.addWidget(prof_card)
+        for b in (self.btn_prof_club, self.btn_prof_radio, self.btn_prof_chill):
+            b.setObjectName("TopPillBtn")
+            b.setStyleSheet("""
+                QPushButton {
+                    background-color: #22222A;
+                    color: #CCCCCC;
+                    border: 1px solid #333340;
+                    border-radius: 14px;
+                    padding: 5px 12px;
+                    font-size: 12px;
+                    font-weight: bold;
+                }
+                QPushButton:hover { background-color: #2D2D38; color: #FFFFFF; }
+            """)
+            top_lay.addWidget(b)
 
-        # --- rack de efectos DJ ---
-        fx_card = QFrame()
-        fx_card.setObjectName("PanelCard")
-        fx_card.setAttribute(Qt.WA_StyledBackground, True)
-        fx_lay = QVBoxLayout(fx_card)
-        fx_lay.setContentsMargins(14, 10, 14, 10)
-        fx_lay.setSpacing(6)
+        # Botón Cambiar carpeta
+        self.btn_folder = QPushButton(" Cambiar carpeta")
+        self.btn_folder.setIcon(icon("folder.svg", "#CCCCCC"))
+        self.btn_folder.setObjectName("TopPillBtn")
+        self.btn_folder.setCursor(Qt.PointingHandCursor)
+        self.btn_folder.setStyleSheet("""
+            QPushButton {
+                background-color: #22222A;
+                color: #CCCCCC;
+                border: 1px solid #333340;
+                border-radius: 14px;
+                padding: 5px 12px;
+                font-size: 12px;
+            }
+            QPushButton:hover { background-color: #2D2D38; color: #FFFFFF; }
+        """)
+        self.btn_folder.clicked.connect(self.folder_requested.emit)
+        top_lay.addWidget(self.btn_folder)
 
-        fx_cap = QLabel("RACK DE EFECTOS DJ")
-        fx_cap.setStyleSheet("font-size: 11px; font-weight: 800; color: #B3B3B3; letter-spacing: 1px; background: transparent;")
-        fx_lay.addWidget(fx_cap)
+        # Botón grande empezar a pinchar
+        self.btn_start = QPushButton(" Empezar sesión DJ")
+        self.btn_start.setObjectName("GiantActionBtn")
+        self.btn_start.setIcon(icon("play_black.svg", "#000000"))
+        self.btn_start.setIconSize(QSize(16, 16))
+        self.btn_start.setCursor(Qt.PointingHandCursor)
+        self.btn_start.setStyleSheet("""
+            QPushButton {
+                background-color: #1ED760;
+                color: #000000;
+                font-size: 13px;
+                font-weight: 800;
+                border-radius: 17px;
+                padding: 8px 18px;
+            }
+            QPushButton:hover { background-color: #22EC6A; }
+        """)
+        self.btn_start.clicked.connect(self.start_requested.emit)
+        top_lay.addWidget(self.btn_start)
 
-        fx_row1 = QHBoxLayout()
-        fx_row1.setSpacing(8)
+        layout.addWidget(top_card)
 
-        self.btn_fx_filter = _tight(QPushButton("Filtro: OFF"), extra=6)
-        self.btn_fx_filter.setObjectName("TopPillBtn")
-        self.btn_fx_filter.setCursor(Qt.PointingHandCursor)
-        self.btn_fx_filter.setToolTip("Filtro resonante modelado Q: OFF, HPF (paso alto) o LPF (paso bajo)")
-        self.btn_fx_filter.clicked.connect(self._cycle_filter)
-        fx_row1.addWidget(self.btn_fx_filter)
+        # Subtítulo de progreso del análisis
+        self.progress = QLabel("")
+        self.progress.setStyleSheet("font-size: 11px; color: #1ED760; padding-left: 4px;")
+        self.progress.setVisible(False)
+        layout.addWidget(self.progress)
 
-        self.btn_fx_echo = _tight(QPushButton("Eco: OFF"), extra=6)
-        self.btn_fx_echo.setObjectName("TopPillBtn")
-        self.btn_fx_echo.setCursor(Qt.PointingHandCursor)
-        self.btn_fx_echo.setToolTip("Eco de cinta con saturación analógica y corte de graves")
-        self.btn_fx_echo.clicked.connect(self._toggle_echo)
-        fx_row1.addWidget(self.btn_fx_echo)
-
-        self.btn_fx_reverb = _tight(QPushButton("Reverb: OFF"), extra=6)
-        self.btn_fx_reverb.setObjectName("TopPillBtn")
-        self.btn_fx_reverb.setCursor(Qt.PointingHandCursor)
-        self.btn_fx_reverb.setToolTip("Reverberación espacial envolvente")
-        self.btn_fx_reverb.clicked.connect(self._toggle_reverb)
-        fx_row1.addWidget(self.btn_fx_reverb)
-
-        fx_row1.addStretch()
-        fx_lay.addLayout(fx_row1)
-
-        fx_row2 = QHBoxLayout()
-        fx_row2.setSpacing(8)
-
-        self.btn_fx_delay = _tight(QPushButton("Delay: 3/4"), extra=6)
-        self.btn_fx_delay.setObjectName("TopPillBtn")
-        self.btn_fx_delay.setCursor(Qt.PointingHandCursor)
-        self.btn_fx_delay.setToolTip("Tempo delay rítmico estéreo: 3/4, 1/2, 1T u OFF")
-        self.btn_fx_delay.clicked.connect(self._cycle_delay)
-        fx_row2.addWidget(self.btn_fx_delay)
-
-        self.btn_fx_pingpong = _tight(QPushButton("Ping-Pong"), extra=6)
-        self.btn_fx_pingpong.setObjectName("TopPillBtn")
-        self.btn_fx_pingpong.setCursor(Qt.PointingHandCursor)
-        self.btn_fx_pingpong.setToolTip("Activa o desactiva rebote alternado en estéreo")
-        self.btn_fx_pingpong.clicked.connect(self._toggle_pingpong)
-        fx_row2.addWidget(self.btn_fx_pingpong)
-
-        self.btn_fx_freeze = _tight(QPushButton("❄ Freeze"), extra=6)
-        self.btn_fx_freeze.setObjectName("TopPillBtn")
-        self.btn_fx_freeze.setCursor(Qt.PointingHandCursor)
-        self.btn_fx_freeze.setToolTip("Congela el eco en un bucle sostenido infinito")
-        self.btn_fx_freeze.clicked.connect(self._toggle_freeze)
-        fx_row2.addWidget(self.btn_fx_freeze)
-
-        self.btn_fx_washout = _tight(QPushButton("Washout"), extra=6)
-        self.btn_fx_washout.setObjectName("TopPillBtn")
-        self.btn_fx_washout.setCursor(Qt.PointingHandCursor)
-        self.btn_fx_washout.setToolTip("Dispara un barrido ascendente con washout reverb envolvente")
-        self.btn_fx_washout.clicked.connect(self.washout_requested.emit)
-        fx_row2.addWidget(self.btn_fx_washout)
-
-        fx_row2.addStretch()
-        fx_lay.addLayout(fx_row2)
-        sess.addWidget(fx_card)
-
-        self._current_profile = "club"
-        self._fx_state = {
-            "filter_mode": "OFF",
-            "delay_time": "3/4",
-            "ping_pong": True,
-            "echo_active": False,
-            "freeze_active": False,
-            "reverb_active": False,
-        }
-
-        nxt = QHBoxLayout()
-        nxt_cap = QLabel("A continuación:")
-        nxt_cap.setStyleSheet("font-weight: 700;")
-        nxt.addWidget(nxt_cap)
-        self.next_title = ElidedLabel("")
-        nxt.addWidget(self.next_title, 1)
-        sess.addLayout(nxt)
-
-        self.list_title = QLabel("")
-        self.list_title.setObjectName("SectionTitle")
-        self.list_title.setWordWrap(True)
-        sess.addWidget(self.list_title)
-        self.upcoming = QListWidget()
-        self.upcoming.setSelectionMode(QAbstractItemView.NoSelection)
-        self.upcoming.setFocusPolicy(Qt.NoFocus)
-        self.upcoming.setContextMenuPolicy(Qt.CustomContextMenu)       # botón derecho: corregir el BPM de esa canción
-        self.upcoming.customContextMenuRequested.connect(self._upcoming_menu)
-        self.upcoming.setStyleSheet("QListWidget { background: transparent; border: none; font-size: 13px; }"
-                                    "QListWidget::item { padding: 6px 4px; color: #B3B3B3; }")
-        sess.addWidget(self.upcoming, 1)
-        main.addWidget(self.session, 1)
-        self.session.hide()
-
-    # ------------------------------------------------------------------ estado
-    def set_source(self, text: str, blocked: int):
-        self.source.setText(text)
-        self.btn_unblock.setText(f"Desbloquear ({blocked})")
-        self.btn_unblock.setVisible(blocked > 0)
-
-    def set_session(self, active: bool, now: dict = None, nxt: dict = None, upcoming: list = (), remaining: int = 0,
-                    describe=None):
-        """`describe(info)`: texto corto con el análisis de una canción («128 BPM · intro 0:12…»), o "" si no hay."""
-        describe = describe or (lambda _info: "")
-        self.empty.setVisible(not active)
-        self.session.setVisible(active)
-        self._labels[self.btn_start] = " Empezar de nuevo" if active else " Empezar a pinchar"
-        self.btn_start.setToolTip(self._labels[self.btn_start].strip())
-        self._apply_labels()
-        if not active:
-            return
-        self.set_profile(self._current_profile)
-        now = now or {}
-        self._now_path = now.get("local_path", "")
-        for btn in self.bpm_buttons:
-            btn.setEnabled(bool(self._now_path))
-        self.now_title.setText(now.get("title", ""))
-        self.now_artist.setText(now.get("uploader", ""))
-        self.now_detail.setText(describe(now))
-        if nxt:
-            extra = describe(nxt)
-            self.next_title.setText(nxt.get("title", "") + (f"  ·  {extra}" if extra else ""))
+    def _toggle_auto_mode(self):
+        self._auto_mode = not self._auto_mode
+        if self._auto_mode:
+            self.btn_auto_mode.setText(" 🤖 DJ Automático: ON")
+            self.btn_auto_mode.setStyleSheet("""
+                QPushButton {
+                    background-color: #1A3828;
+                    color: #1ED760;
+                    font-weight: 800;
+                    border: 1px solid #1ED760;
+                    border-radius: 16px;
+                    padding: 6px 14px;
+                }
+                QPushButton:hover { background-color: #244C36; }
+            """)
+            if self.main_window and hasattr(self.main_window, "notify"):
+                self.main_window.notify("DJ Automático activado: la IA moverá los platos, filtros y crossfader sola.")
         else:
-            self.next_title.setText("Nada más: la sesión termina con esta canción")
-        self.btn_drop.setEnabled(bool(nxt))
-        self.btn_skip.setEnabled(bool(nxt))
-        self.list_title.setText("Lo que queda" if remaining else "No queda nada más")
-        if remaining > UPCOMING_SHOWN:
-            self.list_title.setText(f"Lo que queda · {remaining} canciones (se ven las {UPCOMING_SHOWN} primeras)")
-        elif remaining:
-            self.list_title.setText(f"Lo que queda · {remaining} " + ("canción" if remaining == 1 else "canciones"))
-        lines, paths = [], []
-        for i, info in enumerate(list(upcoming)[:UPCOMING_SHOWN], 1):
-            extra = describe(info)
-            lines.append(f"{i}.  {info.get('title', '')}" + (f"  ·  {extra}" if extra else ""))
-            paths.append(info.get("local_path", ""))
-        if lines != [self.upcoming.item(i).text() for i in range(self.upcoming.count())] or paths != self._upcoming_paths:
-            scroll = self.upcoming.verticalScrollBar().value()           # solo si algo cambió, y sin perder por dónde ibas
-            self.upcoming.clear()
-            self.upcoming.addItems(lines)
-            self._upcoming_paths = paths
-            self.upcoming.verticalScrollBar().setValue(scroll)
+            self.btn_auto_mode.setText(" 🎛️ Mezclador Manual")
+            self.btn_auto_mode.setStyleSheet("""
+                QPushButton {
+                    background-color: #382A1A;
+                    color: #FFAA33;
+                    font-weight: 800;
+                    border: 1px solid #FFAA33;
+                    border-radius: 16px;
+                    padding: 6px 14px;
+                }
+                QPushButton:hover { background-color: #4C3824; }
+            """)
+            if self.main_window and hasattr(self.main_window, "notify"):
+                self.main_window.notify("Modo Manual: usa el crossfader y los knobs para mezclar a tu gusto.")
 
-    # ------------------------------------------------------------ corregir el BPM
-    def _emit_bpm(self, path: str, action: str):
-        if path:
-            self.bpm_requested.emit(path, action)
+    # -------------------------------------------------------------------------------------------------
+    # 2. Chasis de la Mesa de DJ
+    # -------------------------------------------------------------------------------------------------
+    def _build_console(self, layout):
+        console_box = QFrame()
+        console_box.setObjectName("DjConsoleChassis")
+        console_box.setStyleSheet("""
+            QFrame#DjConsoleChassis {
+                background-color: #101014;
+                border: 2px solid #202028;
+                border-radius: 14px;
+            }
+        """)
+        console_lay = QHBoxLayout(console_box)
+        console_lay.setContentsMargins(16, 16, 16, 16)
+        console_lay.setSpacing(14)
 
-    def _upcoming_menu(self, pos):
-        row = self.upcoming.row(self.upcoming.itemAt(pos)) if self.upcoming.itemAt(pos) else -1
-        if not 0 <= row < len(self._upcoming_paths):
+        # ===== PLATO A (IZQUIERDA) =====
+        deck_a_frame = self._build_deck_side("DECK A", "#1ED760", is_deck_a=True)
+        console_lay.addWidget(deck_a_frame, 3)
+
+        # ===== MEZCLADOR CENTRAL (MIXER & CROSSFADER) =====
+        mixer_frame = self._build_mixer_center()
+        console_lay.addWidget(mixer_frame, 2)
+
+        # ===== PLATO B (DERECHA) =====
+        deck_b_frame = self._build_deck_side("DECK B", "#FF7700", is_deck_a=False)
+        console_lay.addWidget(deck_b_frame, 3)
+
+        layout.addWidget(console_box)
+
+    def _build_deck_side(self, name: str, accent: str, is_deck_a: bool) -> QWidget:
+        frame = QFrame()
+        frame.setStyleSheet("""
+            QFrame {
+                background-color: #14141A;
+                border: 1px solid #22222D;
+                border-radius: 10px;
+            }
+        """)
+        lay = QVBoxLayout(frame)
+        lay.setContentsMargins(12, 12, 12, 12)
+        lay.setSpacing(10)
+
+        # Pantalla digital del deck
+        screen = DeckScreen(name, accent)
+        if is_deck_a:
+            self.screen_a = screen
+        else:
+            self.screen_b = screen
+        lay.addWidget(screen)
+
+        # Sección central del plato: Jog Wheel + Tira de Ecualización / Filtro
+        center_row = QHBoxLayout()
+        center_row.setSpacing(12)
+
+        # Jog Wheel giratorio
+        jog = DjJogWheel(name, accent)
+        if is_deck_a:
+            self.jog_a = jog
+        else:
+            self.jog_b = jog
+        center_row.addWidget(jog, 1)
+
+        # Columna de potenciómetros (EQ + Filter)
+        eq_box = QVBoxLayout()
+        eq_box.setSpacing(4)
+        knob_high = DjRotaryKnob("HIGH", accent_color=accent)
+        knob_mid = DjRotaryKnob("MID", accent_color=accent)
+        knob_low = DjRotaryKnob("LOW", accent_color=accent)
+        knob_filter = DjRotaryKnob("FILTER", accent_color="#00D2FF" if is_deck_a else "#FF0055", unit="%")
+
+        if is_deck_a:
+            self.knob_high_a, self.knob_mid_a, self.knob_low_a, self.knob_filter_a = (
+                knob_high, knob_mid, knob_low, knob_filter
+            )
+        else:
+            self.knob_high_b, self.knob_mid_b, self.knob_low_b, self.knob_filter_b = (
+                knob_high, knob_mid, knob_low, knob_filter
+            )
+
+        for k in (knob_high, knob_mid, knob_low, knob_filter):
+            eq_box.addWidget(k)
+        center_row.addLayout(eq_box)
+
+        # Columna de fader de volumen + vúmetro del canal
+        ch_box = QHBoxLayout()
+        ch_box.setSpacing(4)
+        fader = DjFader(f"CH {1 if is_deck_a else 2}", accent_color=accent)
+        vu = DjVuMeter()
+        if is_deck_a:
+            self.fader_a, self.vu_a = fader, vu
+        else:
+            self.fader_b, self.vu_b = fader, vu
+        ch_box.addWidget(fader)
+        ch_box.addWidget(vu)
+        center_row.addLayout(ch_box)
+
+        lay.addLayout(center_row)
+
+        # Botones de transporte y rendimiento (Play, Cue, Sync, FX)
+        transport = QHBoxLayout()
+        transport.setSpacing(8)
+
+        btn_play = QPushButton(" ▶ PLAY")
+        btn_play.setCursor(Qt.PointingHandCursor)
+        btn_play.setStyleSheet(f"""
+            QPushButton {{
+                background-color: #1A3828;
+                color: #FFFFFF;
+                font-weight: bold;
+                border: 2px solid {accent};
+                border-radius: 6px;
+                padding: 8px 14px;
+            }}
+            QPushButton:hover {{ background-color: #244C36; }}
+        """)
+        btn_cue = QPushButton("CUE")
+        btn_cue.setCursor(Qt.PointingHandCursor)
+        btn_cue.setStyleSheet("""
+            QPushButton {{
+                background-color: #382A1A;
+                color: #FFAA33;
+                font-weight: bold;
+                border: 2px solid #FFAA33;
+                border-radius: 6px;
+                padding: 8px 12px;
+            }}
+            QPushButton:hover {{ background-color: #4C3824; }}
+        """)
+        btn_sync = QPushButton("SYNC")
+        btn_sync.setCursor(Qt.PointingHandCursor)
+        btn_sync.setStyleSheet("""
+            QPushButton {{
+                background-color: #1A2438;
+                color: #44AAFF;
+                font-weight: bold;
+                border: 1px solid #44AAFF;
+                border-radius: 6px;
+                padding: 8px 10px;
+            }}
+            QPushButton:hover {{ background-color: #24344C; }}
+        """)
+
+        if is_deck_a:
+            self.btn_play_a, self.btn_cue_a, self.btn_sync_a = btn_play, btn_cue, btn_sync
+            btn_play.clicked.connect(self._on_play_a_clicked)
+            btn_cue.clicked.connect(lambda: self._on_cue_clicked("A"))
+            btn_sync.clicked.connect(lambda: self._on_sync_clicked("A"))
+        else:
+            self.btn_play_b, self.btn_cue_b, self.btn_sync_b = btn_play, btn_cue, btn_sync
+            btn_play.clicked.connect(self._on_play_b_clicked)
+            btn_cue.clicked.connect(lambda: self._on_cue_clicked("B"))
+            btn_sync.clicked.connect(lambda: self._on_sync_clicked("B"))
+
+        transport.addWidget(btn_play, 2)
+        transport.addWidget(btn_cue, 1)
+        transport.addWidget(btn_sync, 1)
+
+        # FX Rápidos por Deck (Delay / Reverb)
+        btn_fx_delay = QPushButton("DELAY")
+        btn_fx_delay.setCursor(Qt.PointingHandCursor)
+        btn_fx_delay.setStyleSheet("QPushButton { background-color: #22222E; color: #BBB; border-radius: 5px; font-size: 11px; padding: 6px; }")
+        btn_fx_delay.clicked.connect(lambda: self.fx_changed.emit("delay", {"beats": 0.75, "active": True}))
+
+        btn_fx_reverb = QPushButton("WASH")
+        btn_fx_reverb.setCursor(Qt.PointingHandCursor)
+        btn_fx_reverb.setStyleSheet("QPushButton { background-color: #22222E; color: #BBB; border-radius: 5px; font-size: 11px; padding: 6px; }")
+        btn_fx_reverb.clicked.connect(self.washout_requested.emit)
+
+        transport.addWidget(btn_fx_delay)
+        transport.addWidget(btn_fx_reverb)
+
+        lay.addLayout(transport)
+        return frame
+
+    def _build_mixer_center(self) -> QWidget:
+        frame = QFrame()
+        frame.setStyleSheet("""
+            QFrame {
+                background-color: #121217;
+                border: 1px solid #1E1E26;
+                border-radius: 10px;
+            }
+        """)
+        lay = QVBoxLayout(frame)
+        lay.setContentsMargins(14, 14, 14, 14)
+        lay.setSpacing(12)
+
+        # Cabecera Mixer
+        cap = QLabel("CENTRO DE CONTROL & MEZCLA")
+        cap.setStyleSheet("font-size: 10px; font-weight: 900; color: #777788; letter-spacing: 1.5px;")
+        cap.setAlignment(Qt.AlignCenter)
+        lay.addWidget(cap)
+
+        # HUD Estado IA DJ
+        self.hud_frame = QFrame()
+        self.hud_frame.setStyleSheet("""
+            QFrame {
+                background-color: #0A0A0E;
+                border: 1px solid #00E5FF;
+                border-radius: 6px;
+            }
+        """)
+        hud_lay = QVBoxLayout(self.hud_frame)
+        hud_lay.setContentsMargins(10, 8, 10, 8)
+        hud_lay.setSpacing(3)
+
+        self.hud_tag = QLabel("ESTADO DE MEZCLA (IA)")
+        self.hud_tag.setStyleSheet("font-size: 9px; font-weight: 800; color: #00E5FF; letter-spacing: 1px;")
+        hud_lay.addWidget(self.hud_tag)
+
+        self.countdown = QLabel("Esperando inicio de sesión...")
+        self.countdown.setStyleSheet("font-size: 13px; font-weight: 700; color: #FFFFFF;")
+        self.countdown.setWordWrap(True)
+        hud_lay.addWidget(self.countdown)
+
+        self.hud_detail = QLabel("Motor de transición sincronizado al compás")
+        self.hud_detail.setStyleSheet("font-size: 11px; color: #888899;")
+        hud_lay.addWidget(self.hud_detail)
+
+        lay.addWidget(self.hud_frame)
+
+        # Vúmetro Máster Central
+        master_vu_row = QHBoxLayout()
+        master_vu_row.addStretch()
+        self.vu_master = DjVuMeter()
+        master_vu_row.addWidget(self.vu_master)
+        master_vu_row.addStretch()
+        lay.addLayout(master_vu_row)
+
+        # Botón gigante MEZCLAR AHORA (IA)
+        self.btn_auto_mix = QPushButton("🔥 MEZCLAR AHORA")
+        self.btn_auto_mix.setCursor(Qt.PointingHandCursor)
+        self.btn_auto_mix.setStyleSheet("""
+            QPushButton {
+                background-color: #E60045;
+                color: #FFFFFF;
+                font-size: 14px;
+                font-weight: 900;
+                letter-spacing: 1px;
+                border-radius: 8px;
+                padding: 12px;
+                border: none;
+            }
+            QPushButton:hover { background-color: #FF1A5E; }
+            QPushButton:pressed { background-color: #CC003D; }
+        """)
+        self.btn_auto_mix.setToolTip("Dispara la transición inmediatamente al compás usando filtros y efectos calculados.")
+        self.btn_auto_mix.clicked.connect(self._on_auto_mix_clicked)
+        lay.addWidget(self.btn_auto_mix)
+
+        lay.addSpacing(6)
+
+        # CROSSFADER INTERACTIVO
+        xf_cap = QLabel("CROSSFADER (PLATO A ◄—► PLATO B)")
+        xf_cap.setStyleSheet("font-size: 9px; font-weight: 800; color: #888899; letter-spacing: 1px;")
+        xf_cap.setAlignment(Qt.AlignCenter)
+        lay.addWidget(xf_cap)
+
+        self.crossfader = DjCrossfader()
+        self.crossfader.positionChanged.connect(self._on_crossfader_moved)
+        lay.addWidget(self.crossfader)
+
+        # Botones rápidos de ayuda a la mezcla
+        quick_btns = QHBoxLayout()
+        quick_btns.setSpacing(6)
+        btn_drop = QPushButton("Salto Beat")
+        btn_drop.setCursor(Qt.PointingHandCursor)
+        btn_drop.setStyleSheet("QPushButton { background-color: #22222A; color: #CCC; font-size: 11px; border-radius: 5px; padding: 6px; }")
+        btn_drop.clicked.connect(self.skip_requested.emit)
+
+        btn_freeze = QPushButton("Echo Freeze")
+        btn_freeze.setCursor(Qt.PointingHandCursor)
+        btn_freeze.setStyleSheet("QPushButton { background-color: #22222A; color: #CCC; font-size: 11px; border-radius: 5px; padding: 6px; }")
+        btn_freeze.clicked.connect(lambda: self.freeze_requested.emit(True))
+
+        quick_btns.addWidget(btn_drop)
+        quick_btns.addWidget(btn_freeze)
+        lay.addLayout(quick_btns)
+
+        return frame
+
+    # -------------------------------------------------------------------------------------------------
+    # 3. Lista inferior de canciones y cola de sesión
+    # -------------------------------------------------------------------------------------------------
+    def _build_bottom_tray(self, layout):
+        tray_card = QFrame()
+        tray_card.setObjectName("PanelCard")
+        tray_card.setAttribute(Qt.WA_StyledBackground, True)
+        tray_card.setStyleSheet("""
+            QFrame#PanelCard {
+                background-color: #14141A;
+                border: 1px solid #22222D;
+                border-radius: 10px;
+            }
+        """)
+        tray_lay = QVBoxLayout(tray_card)
+        tray_lay.setContentsMargins(16, 12, 16, 12)
+        tray_lay.setSpacing(10)
+
+        # Barra de título y botones de cola
+        head_row = QHBoxLayout()
+        tray_title = QLabel("PRÓXIMAS PISTAS DE LA SESIÓN DJ")
+        tray_title.setStyleSheet("font-size: 11px; font-weight: 900; color: #FFFFFF; letter-spacing: 1px;")
+        head_row.addWidget(tray_title)
+        head_row.addStretch()
+
+        self.btn_skip = QPushButton(" Saltar")
+        self.btn_skip.setIcon(icon("next.svg", "#CCC"))
+        self.btn_skip.setCursor(Qt.PointingHandCursor)
+        self.btn_skip.setStyleSheet("QPushButton { background-color: #22222E; color: #DDD; font-size: 12px; border-radius: 6px; padding: 5px 10px; }")
+        self.btn_skip.clicked.connect(self.skip_requested.emit)
+        head_row.addWidget(self.btn_skip)
+
+        self.btn_drop = QPushButton(" Esta no")
+        self.btn_drop.setIcon(icon("x.svg", "#CCC"))
+        self.btn_drop.setCursor(Qt.PointingHandCursor)
+        self.btn_drop.setStyleSheet("QPushButton { background-color: #22222E; color: #DDD; font-size: 12px; border-radius: 6px; padding: 5px 10px; }")
+        self.btn_drop.clicked.connect(self.drop_next_requested.emit)
+        head_row.addWidget(self.btn_drop)
+
+        self.btn_shuffle = QPushButton(" Barajar")
+        self.btn_shuffle.setIcon(icon("shuffle.svg", "#CCC"))
+        self.btn_shuffle.setCursor(Qt.PointingHandCursor)
+        self.btn_shuffle.setStyleSheet("QPushButton { background-color: #22222E; color: #DDD; font-size: 12px; border-radius: 6px; padding: 5px 10px; }")
+        self.btn_shuffle.clicked.connect(self.reshuffle_requested.emit)
+        head_row.addWidget(self.btn_shuffle)
+
+        self.btn_block = QPushButton(" Bloquear")
+        self.btn_block.setIcon(icon("offline.svg", "#CCC"))
+        self.btn_block.setCursor(Qt.PointingHandCursor)
+        self.btn_block.setStyleSheet("QPushButton { background-color: #22222E; color: #DDD; font-size: 12px; border-radius: 6px; padding: 5px 10px; }")
+        self.btn_block.clicked.connect(self.block_requested.emit)
+        head_row.addWidget(self.btn_block)
+
+        tray_lay.addLayout(head_row)
+
+        # Lista de canciones próximas
+        self.upcoming_list = QListWidget()
+        self.upcoming_list.setObjectName("QueueList")
+        self.upcoming_list.setSelectionMode(QAbstractItemView.NoSelection)
+        self.upcoming_list.setFocusPolicy(Qt.NoFocus)
+        self.upcoming_list.setMaximumHeight(160)
+        self.upcoming_list.setStyleSheet("""
+            QListWidget {
+                background: #0E0E12;
+                border: 1px solid #1E1E26;
+                border-radius: 6px;
+                color: #DDD;
+                font-size: 13px;
+                padding: 4px;
+            }
+            QListWidget::item {
+                padding: 6px 10px;
+                border-bottom: 1px solid #16161E;
+            }
+            QListWidget::item:hover {
+                background-color: #1A1A24;
+            }
+        """)
+        tray_lay.addWidget(self.upcoming_list)
+
+        # Fila de valoración de la mezcla
+        vote_row = QHBoxLayout()
+        vote_row.setSpacing(10)
+        vote_title = QLabel("Calificar mezcla:")
+        vote_title.setStyleSheet("font-weight: 700; color: #BBB;")
+        vote_row.addWidget(vote_title)
+
+        self.btn_up = QPushButton("👍 Buena mezcla")
+        self.btn_up.setCursor(Qt.PointingHandCursor)
+        self.btn_up.setStyleSheet("QPushButton { background-color: #1A3828; color: #1ED760; border-radius: 6px; padding: 5px 12px; font-weight: bold; }")
+        self.btn_up.clicked.connect(lambda: self.vote_requested.emit(1, []))
+        vote_row.addWidget(self.btn_up)
+
+        self.btn_down = QPushButton("👎 Mala mezcla")
+        self.btn_down.setCursor(Qt.PointingHandCursor)
+        self.btn_down.setStyleSheet("QPushButton { background-color: #381A20; color: #FF4455; border-radius: 6px; padding: 5px 12px; font-weight: bold; }")
+        down_menu = QMenu(self.btn_down)
+        down_menu.addAction("Sin motivo").triggered.connect(lambda: self.vote_requested.emit(-1, []))
+        down_menu.addSeparator()
+        for tag in TAGS:
+            down_menu.addAction(TAG_LABELS.get(tag, tag)).triggered.connect(lambda _=False, t=tag: self.vote_requested.emit(-1, [t]))
+        self.btn_down.setMenu(down_menu)
+        vote_row.addWidget(self.btn_down)
+
+        self.vote_status = QLabel("")
+        self.vote_status.setStyleSheet("color: #888899; font-size: 11px;")
+        vote_row.addWidget(self.vote_status, 1)
+
+        tray_lay.addLayout(vote_row)
+        layout.addWidget(tray_card)
+
+    # -------------------------------------------------------------------------------------------------
+    # Manejadores de interacción y acciones de Deck
+    # -------------------------------------------------------------------------------------------------
+    def _on_play_a_clicked(self):
+        if self.main_window and hasattr(self.main_window, "player"):
+            if self.main_window.player.playbackState() == 1:  # Playing
+                self.main_window.player.pause()
+            else:
+                self.main_window.player.play()
+
+    def _on_play_b_clicked(self):
+        # En modo DJ, Plato B entra al disparar la mezcla
+        self._on_auto_mix_clicked()
+
+    def _on_cue_clicked(self, deck: str):
+        if self.main_window and hasattr(self.main_window, "player"):
+            self.main_window.player.setPosition(0)
+            self.main_window.notify(f"Deck {deck} rebobinado a CUE (00:00)")
+
+    def _on_sync_clicked(self, deck: str):
+        if self.main_window and hasattr(self.main_window, "notify"):
+            self.main_window.notify(f"Deck {deck} sincronizado al compás de la mezcla (SYNC Lock ON)")
+
+    def _on_auto_mix_clicked(self):
+        """Dispara la mezcla inmediata por IA con animación visual en los controles."""
+        self.auto_mix_requested.emit()
+        self.skip_requested.emit()
+        if self.main_window and hasattr(self.main_window, "notify"):
+            self.main_window.notify("¡Mezclando ahora! La IA ejecuta transición armónica al compás.")
+
+        # Si el modo automático está activo, simular la transición física del crossfader y filtros
+        if self._auto_mode:
+            current_xf = self.crossfader._pos
+            target_xf = 1.0 if current_xf < 0.0 else -1.0
+            self.crossfader.animateTo(target_xf, duration_ms=2500)
+            self.knob_filter_a.animateTo(0.65, duration_ms=1200)
+            self.knob_low_a.animateTo(-0.8, duration_ms=1800)
+            QTimer.singleShot(2500, lambda: self.knob_filter_a.animateTo(0.0, duration_ms=600))
+            QTimer.singleShot(2500, lambda: self.knob_low_a.animateTo(0.0, duration_ms=600))
+
+    def _on_crossfader_moved(self, pos: float):
+        """Ajusta las ganancias de canal según la posición del crossfader (-1.0 a +1.0)."""
+        # Curva de potencia constante para la mezcla
+        norm = (pos + 1.0) / 2.0  # 0.0 (Deck A) a 1.0 (Deck B)
+        gain_a = math.cos(norm * (math.pi / 2.0))
+        gain_b = math.sin(norm * (math.pi / 2.0))
+
+        self.fader_a.setValue(gain_a)
+        self.fader_b.setValue(gain_b)
+
+    # -------------------------------------------------------------------------------------------------
+    # Bucle de actualización visual y animación continua
+    # -------------------------------------------------------------------------------------------------
+    def _on_anim_frame(self):
+        """Frame de animación: hace girar los vinilos si hay reproducción y anima los vúmetros."""
+        if not self.isVisible() or not self.main_window:
             return
-        path = self._upcoming_paths[row]
-        menu = QMenu(self)
-        for text, action in (("El tempo es la mitad (÷2)", "half"), ("El tempo es el doble (×2)", "double"),
-                             ("Escribir el BPM…", "set"), ("Volver al BPM automático", "auto")):
-            menu.addAction(text).triggered.connect(lambda _=False, a=action: self._emit_bpm(path, a))
-        menu.exec(self.upcoming.viewport().mapToGlobal(pos))
-        menu.deleteLater()
 
-    def showEvent(self, event):
-        super().showEvent(event)
-        for btn in self.bpm_buttons:           # al mostrarse ya tiene el estilo de la ventana (al construirla, no)
-            _tight(btn)
+        is_playing = False
+        try:
+            player = getattr(self.main_window, "player", None)
+            if player and hasattr(player, "playbackState"):
+                is_playing = (player.playbackState() == 1)  # QMediaPlayer.PlayingState
+        except Exception:
+            pass
 
-    # ------------------------------------------------------------ ancho
-    def _needed_width(self) -> int:
-        """Ancho que necesitan la cabecera y la fila de botones con todos sus textos."""
-        def full(btn):
-            return btn.fontMetrics().horizontalAdvance(self._labels[btn]) + BUTTON_EXTRA_W
-        row = sum(full(b) for b in self._actions) + 10 * (len(self._actions) - 1)
-        head = self.title.sizeHint().width() + 16 + full(self.btn_start)
-        return max(row, head)
+        # Girar vinilos según estado
+        self.jog_a.setPlaying(is_playing)
+        is_mixing = getattr(self.main_window, "_xf_active", False)
+        self.jog_b.setPlaying(is_playing and is_mixing)
 
-    def _apply_labels(self):
-        for btn, text in self._labels.items():
-            btn.setText("" if self._compact else text)
+        # Animar vúmetros con dinámica natural
+        if is_playing:
+            base_vol = 0.65 + 0.25 * random.random()
+            xf = (self.crossfader._pos + 1.0) / 2.0
+            vol_a = base_vol * (1.0 - xf * 0.7)
+            vol_b = base_vol * (xf if is_mixing else 0.05)
 
-    def resizeEvent(self, event):
-        """En una ventana estrecha (o con el panel de la derecha abierto) los botones se quedan solo con el icono, en
-        vez de recortar su texto; el nombre sigue en la ayuda al pasar el ratón."""
-        super().resizeEvent(event)
-        compact = self.width() < self._needed_width()
-        if compact != self._compact:
-            self._compact = compact
-            self._apply_labels()
+            self.vu_a.setLevels(vol_a, vol_a * 0.95)
+            self.vu_b.setLevels(vol_b, vol_b * 0.92)
+            self.vu_master.setLevels(max(vol_a, vol_b), max(vol_a, vol_b) * 0.97)
+        else:
+            self.vu_a.setLevels(0.0, 0.0)
+            self.vu_b.setLevels(0.0, 0.0)
+            self.vu_master.setLevels(0.0, 0.0)
+
+    # -------------------------------------------------------------------------------------------------
+    # Métodos llamados por dj_mixin.py para actualizar el estado
+    # -------------------------------------------------------------------------------------------------
+    def set_source(self, text: str, blocked_count: int = 0):
+        self.source.setText(text)
 
     def set_progress(self, text: str):
-        """Cómo va el análisis de las canciones («Analizando 34 de 100…»); vacío = oculto."""
-        self.progress.setText(text)
-        self.progress.setVisible(bool(text))
-
-    def set_vote_target(self, text: str):
-        """De qué mezcla se votaría ahora («A → B»), o vacío si todavía no hay ninguna."""
-        caption = f"Votar {text}:" if text else "Votar la mezcla:"
-        if caption == self.vote_caption.text() and self.btn_up.isEnabled() == bool(text):
-            return                                  # se llama con cada avance de la canción: nada que cambiar
-        self.btn_up.setEnabled(bool(text))
-        self.btn_down.setEnabled(bool(text))
-        self.vote_caption.setText(caption)
-        if not text:
-            self.vote_status.setText("")
-
-    def set_vote_status(self, text: str):
-        self.vote_status.setText(text)
-
-    def set_profile(self, profile: str):
-        profile = (profile or "club").lower()
-        self._current_profile = profile
-        for name, btn in self._profile_buttons.items():
-            if name == profile:
-                btn.setStyleSheet("QPushButton { background: #1ED760; color: #000000; font-weight: bold; border-radius: 12px; }")
-            else:
-                btn.setStyleSheet("")
+        if text:
+            self.progress.setText(text)
+            self.progress.setVisible(True)
+        else:
+            self.progress.setVisible(False)
 
     def _cycle_filter(self):
         modes = ["OFF", "HPF", "LPF"]
@@ -484,7 +875,7 @@ class DjPage(QWidget):
 
     def _cycle_delay(self):
         times = ["3/4", "1/2", "1T", "OFF"]
-        cur = self._fx_state.get("delay_time", "3/4")
+        cur = self._fx_state.get("delay_time", "OFF")
         nxt = times[(times.index(cur) + 1) % len(times)]
         self._fx_state["delay_time"] = nxt
         self.btn_fx_delay.setText(f"Delay: {nxt}")
@@ -522,5 +913,90 @@ class DjPage(QWidget):
         self.fx_changed.emit("reverb", {"active": nxt})
 
     def set_countdown(self, text: str):
-        if self.countdown.text() != text:
-            self.countdown.setText(text)
+        self.countdown.setText(text or "En pausa")
+        if "Mezclando" in text or "mezcla" in text.lower():
+            self.hud_tag.setText("⚡ TRANSICIÓN IA EN CURSO")
+            self.hud_tag.setStyleSheet("font-size: 9px; font-weight: 800; color: #1ED760; letter-spacing: 1px;")
+        else:
+            self.hud_tag.setText("ESTADO DE MEZCLA (IA)")
+            self.hud_tag.setStyleSheet("font-size: 9px; font-weight: 800; color: #00E5FF; letter-spacing: 1px;")
+
+    def set_vote_target(self, text: str):
+        self.vote_status.setText(text or "")
+
+    def set_profile(self, profile: str):
+        p = (profile or "club").lower()
+        for name, btn in self._profile_buttons.items():
+            if name == p:
+                btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #1ED760;
+                        color: #000000;
+                        border: 1px solid #1ED760;
+                        border-radius: 14px;
+                        padding: 5px 12px;
+                        font-size: 12px;
+                        font-weight: 800;
+                    }
+                """)
+            else:
+                btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #22222A;
+                        color: #CCCCCC;
+                        border: 1px solid #333340;
+                        border-radius: 14px;
+                        padding: 5px 12px;
+                        font-size: 12px;
+                        font-weight: bold;
+                    }
+                    QPushButton:hover { background-color: #2D2D38; color: #FFFFFF; }
+                """)
+
+    def set_session(self, active: bool, current: dict = None, nxt: dict = None,
+                    upcoming: list = None, remaining: int = 0, describe_fn=None):
+        """Pone al día la información técnica de Deck A, Deck B y la cola."""
+        if not active or not current:
+            self.screen_a.setTrack("Sin pista", "Pulsa «Empezar sesión DJ»")
+            self.screen_b.setTrack("En espera", "---")
+            self.upcoming_list.clear()
+            self.btn_start.setText(" Empezar sesión DJ")
+            return
+
+        self.btn_start.setText(" Sesión DJ en marcha")
+
+        # 1. Deck A (Pista actual que suena)
+        self._now_path = current.get("local_path", "")
+        title_a = current.get("title", os.path.basename(self._now_path) or "Pista A")
+        artist_a = current.get("uploader", current.get("artist", "Artista"))
+        analysis_a = getattr(self.main_window, "_dj_analysis", {}).get(self._now_path, {})
+        bpm_a = analysis_a.get("bpm") or current.get("bpm")
+        key_a = analysis_a.get("tone") or current.get("key")
+        self.screen_a.setTrack(title_a, artist_a, bpm_a, key_a, on_air=True)
+
+        # 2. Deck B (Pista siguiente preparada para la mezcla)
+        if nxt:
+            self._next_path = nxt.get("local_path", "")
+            title_b = nxt.get("title", os.path.basename(self._next_path) or "Pista B")
+            artist_b = nxt.get("uploader", nxt.get("artist", "Artista"))
+            analysis_b = getattr(self.main_window, "_dj_analysis", {}).get(self._next_path, {})
+            bpm_b = analysis_b.get("bpm") or nxt.get("bpm")
+            key_b = analysis_b.get("tone") or nxt.get("key")
+            self.screen_b.setTrack(title_b, artist_b, bpm_b, key_b, on_air=False)
+        else:
+            self.screen_b.setTrack("Fin de sesión", "No hay más pistas en la cola")
+
+        # 3. Lista de canciones próximas
+        self.upcoming_list.clear()
+        if upcoming:
+            for idx, track in enumerate(upcoming[:UPCOMING_SHOWN]):
+                t_title = track.get("title", "Desconocido")
+                t_artist = track.get("uploader", track.get("artist", ""))
+                p_path = track.get("local_path", "")
+                an = getattr(self.main_window, "_dj_analysis", {}).get(p_path, {})
+                t_bpm = an.get("bpm") or track.get("bpm", "")
+                t_bpm_str = f" · {t_bpm:.0f} BPM" if t_bpm else ""
+                t_key = an.get("tone") or track.get("key", "")
+                t_key_str = f" · ⚡ {t_key}" if t_key else ""
+                row_str = f"{idx + 1}.  {t_title} — {t_artist}{t_bpm_str}{t_key_str}"
+                self.upcoming_list.addItem(row_str)

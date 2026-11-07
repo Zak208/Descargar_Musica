@@ -318,7 +318,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         self.topbar.home_clicked.connect(lambda: self.switch_to_page(Page.HOME))
         self.topbar.downloads_clicked.connect(self.show_downloads_panel)
         self.topbar.update_clicked.connect(self._on_update_clicked)
-        self.topbar.dj_clicked.connect(self.open_dj_menu)
+        self.topbar.dj_clicked.connect(self.open_dj_page)
         self.main_vbox.insertWidget(0, self.topbar)   # ocupa todo el ancho, por encima de los paneles
         # El buscador es único; estos nombres antiguos apuntan a él
         self.downloads_panel = DownloadsPanel(self.downloads, self, self.topbar.btn_downloads)
@@ -1031,6 +1031,9 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         if self.is_offline():
             self.notify("Sin conexión: esta canción no está descargada.")
             return
+
+        if hasattr(self, 'dj_engine_on') and self.dj_engine_on():
+            self.dj_engine_leave()
 
         url = item_info['url']
         title = item_info.get('title', 'Desconocido')

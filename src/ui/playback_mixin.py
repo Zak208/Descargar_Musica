@@ -45,7 +45,9 @@ class PlaybackMixin:
         if parent is None:
             self._context = [card.item_info]
             return
-        siblings = [c for c in parent.findChildren((SongResultCard, TrackRow)) if c.parentWidget() is parent]
+        cards = parent.findChildren(SongResultCard) if hasattr(parent, "findChildren") else []
+        rows = parent.findChildren(TrackRow) if hasattr(parent, "findChildren") else []
+        siblings = [c for c in (cards + rows) if c.parentWidget() is parent]
         siblings.sort(key=lambda c: c.y())
         self._context = [c.item_info for c in siblings] or [card.item_info]
 

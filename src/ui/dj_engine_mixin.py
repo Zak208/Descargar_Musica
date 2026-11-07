@@ -123,6 +123,7 @@ class DjEngineMixin:
         """Algo que no es una canción local (vista previa en línea): lo toca el reproductor de siempre."""
         self.dj_engine_leave()
         self.player.setSource(url)
+        self.player.play()
 
     def _dj_engine_lost(self, reason: str):
         """El dispositivo de salida se perdió (auriculares desconectados...): se vuelve al reproductor de siempre."""

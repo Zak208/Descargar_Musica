@@ -372,8 +372,11 @@ class SongResultCard(QFrame, HoverFader):
 
     def toggle_preview(self):
         pixmap = self.thumb_label.pixmap()
-        if hasattr(self.parent_window, "set_context_from_card"):
-            self.parent_window.set_context_from_card(self)
+        try:
+            if hasattr(self.parent_window, "set_context_from_card"):
+                self.parent_window.set_context_from_card(self)
+        except Exception:
+            pass
         self.parent_window.play_preview(self.item_info, self.preview_btn, pixmap)
 
     def start_download(self):

@@ -74,6 +74,7 @@ class DjMixin:
         self.page_dj.fx_changed.connect(self.set_dj_fx)
         self.page_dj.freeze_requested.connect(self.dj_freeze_echo)
         self.page_dj.washout_requested.connect(self.dj_washout)
+        self.page_dj.auto_mix_requested.connect(self.dj_skip)
         self.stacked_widget.addWidget(self.page_dj)
         assert self.stacked_widget.indexOf(self.page_dj) == Page.DJ
 
@@ -656,6 +657,8 @@ class DjMixin:
             text = ""
         elif (mix := self._dj_current_mix()) is not None:      # punto de mezcla según el análisis (el mismo del fundido)
             plan = mix[1]
+            if hasattr(page, "hud_detail") and plan.reason:
+                page.hud_detail.setText(plan.reason)
             if plan.kind == KIND_CUT:
                 text = (plan.reason[:1].upper() + plan.reason[1:]) if self.dj_engine_on() and plan.reason else \
                     "Canción corta: la siguiente entra al terminar, sin mezcla"

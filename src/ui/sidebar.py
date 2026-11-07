@@ -145,10 +145,11 @@ def build_sidebar(self):
     self._sidebar_toggle_row = toggle_row
     nav_lay.addLayout(toggle_row)
     self.btn_nav_home = nav_button("Inicio", "home.svg", lambda: self.switch_to_page(Page.HOME))
+    self.btn_nav_dj = nav_button("Mesa DJ", "sliders.svg", self.open_dj_page)
     self.btn_nav_downloads = nav_button("Abrir carpeta de música", "folder.svg", self.open_music_folder)
     self.btn_nav_settings = nav_button("Ajustes", "settings.svg", self.open_settings)
     self.btn_nav_help = nav_button("Ayuda", "info.svg", self.open_help)
-    for b in (self.btn_nav_home, self.btn_nav_downloads, self.btn_nav_settings, self.btn_nav_help):
+    for b in (self.btn_nav_home, self.btn_nav_dj, self.btn_nav_downloads, self.btn_nav_settings, self.btn_nav_help):
         nav_lay.addWidget(b)
     outer.addWidget(nav_panel)
 
@@ -263,7 +264,7 @@ class SidebarMixin:
 
     def _apply_sidebar_widgets(self, compact: bool):
         """Textos de los botones, filtros y filas: completos o solo iconos (con el nombre en la burbuja de ayuda)."""
-        for b in (self.btn_nav_home, self.btn_nav_downloads, self.btn_nav_settings, self.btn_nav_help, self.btn_nav_library):
+        for b in (self.btn_nav_home, self.btn_nav_dj, self.btn_nav_downloads, self.btn_nav_settings, self.btn_nav_help, self.btn_nav_library):
             b.setText("" if compact else b.property("fullText"))
             b.setToolTip(b.property("shortName") if compact else "")
             b.setProperty("compact", compact)
