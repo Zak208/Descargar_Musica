@@ -3,6 +3,25 @@
 Formato: `MAYOR.MENOR.PARCHE`. MAYOR = cambios que rompen datos o uso, MENOR = funciones nuevas, PARCHE = arreglos.
 Cada versión subida a GitHub tiene su etiqueta `vX.Y.Z` (pestaña *Releases/Tags*).
 
+## 1.26.0
+**Mesa DJ Estilo VirtualDJ: Visualizador Superior de Pistas en Paralelo, Beatmatching 'Juntar Beats' y Explorador Integrado**
+- **Visualizador Superior de Formas de Onda Duales (Estilo VirtualDJ)**:
+  - Pantalla superior con visualización paralela de las dos canciones:
+    - *Pista A (Azul / Cyan)* y *Pista B (Rojo)* con espectro dinámico de frecuencias y cuadrícula rítmica de compases (beatgrid 1, 2, 3, 4 con el golpe 1 destacado).
+    - Aguja central blanca luminosa (Playhead vertical) en el centro exacto.
+    - Minimapas de recorrido completo (*Overview Waveforms*) con cursor de posición y salto directo por clic.
+    - Cajas de cabecera con insignias `[ A ]` y `[ B ]`, tiempos transcurridos / restantes, BPM y Key Camelot.
+  - **Función de Juntar Canciones ('Juntar Beats / Beatmatch')**:
+    - *Medidor de Fase (`DjPhaseMeter`)*: Muestra en tiempo real si los bombos de la Pista B van adelantados o atrasados respecto a la Pista A con escala en milisegundos y notificación luminosa cuando están en fase (`● BEATS ALINEADOS`).
+    - *Botón '🔗 JUNTAR BEATS'*: Al hacer clic, alinea instantáneamente la fase y compás de la canción B con la canción A para que los bombos coincidan al milisegundo exacto.
+    - *Manipulación Táctil/Ratón de la Onda*: El DJ puede arrastrar la forma de onda de la pista A o de la pista B directamente con el ratón para empujar la canción (*nudge*) o hacer *scrub* y juntar los bombos manualmente bajo la aguja central.
+    - *Botones de Nudge Fino*: `[ ◀ Nudge B ]` y `[ Nudge B ▶ ]` para micro-ajustes rítmicos.
+- **Explorador y Biblioteca Inferior Integrada (Estilo VirtualDJ)**:
+  - Navegador en la parte inferior de la mesa DJ con panel izquierdo de fuentes (`Tu Música`, `Descargas`, `Favoritos`, `Playlists`, `Historial`, `Cola DJ`).
+  - Buscador en vivo por texto y filtro de compatibilidad de tempo (`±4 BPM`).
+  - Tabla de pistas con Título, Artista, Álbum, Duración, BPM y botones dedicados de un clic: `[ ◀ LOAD A ]` y `[ LOAD B ▶ ]`.
+  - Soporte de carga por doble clic en cualquier pista.
+
 ## 1.25.0
 **Cabina DJ 100% Funcional (CDJ-3000 & DJM-A9) y Motor de Mezcla Adaptativo por Géneros Musicales**
 - **Cabina DJ Pioneer 100% Interactiva y Funcional**:

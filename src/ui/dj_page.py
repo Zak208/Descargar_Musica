@@ -41,7 +41,8 @@ from ui.dj_components import (
     DjRotaryKnob, DjJogWheel, DjVuMeter, DjCrossfader, DjFader,
     DjPitchFader, DjHotCuePads, DjLoopControls, DjBeatFxRack,
     DjMasterMonitorSection, DjRearPanelDialog, DjEnvironmentBar,
-    DjQuickReferenceGuide, DjColorFxSelector, DjTrackBrowserDialog
+    DjQuickReferenceGuide, DjColorFxSelector, DjTrackBrowserDialog,
+    DjMasterWaveformDisplay, DjVirtualBrowser
 )
 
 UPCOMING_SHOWN = 30
@@ -370,6 +371,13 @@ class DjPage(QWidget):
         self.env_bar = DjEnvironmentBar(self)
         self.env_bar.itemTriggered.connect(self._on_env_bar_item_triggered)
         scroll_lay.addWidget(self.env_bar)
+
+        # 2b. VISUALIZADOR SUPERIOR DE FORMAS DE ONDA DUALES Y BEAT MATCHING (ESTILO VIRTUALDJ)
+        self.waveform_display = DjMasterWaveformDisplay(self)
+        self.waveform_display.juntarBeatsRequested.connect(self._on_juntar_beats)
+        self.waveform_display.nudgeRequested.connect(self._on_waveform_nudge)
+        self.waveform_display.seekRequested.connect(self._on_waveform_seek)
+        scroll_lay.addWidget(self.waveform_display)
 
         # 3. Chasis de la Mesa de DJ (Dual Decks + Mixer Central Pioneer DJM-A9)
         self._build_console(scroll_lay)
@@ -1306,9 +1314,14 @@ class DjPage(QWidget):
             QListWidget::item { padding: 4px; border-radius: 4px; }
             QListWidget::item:hover { background-color: #1A1A26; color: #FFFFFF; }
         """)
-        self.upcoming_list.setFixedHeight(110)
+        self.upcoming_list.setFixedHeight(75)
         self.upcoming = self.upcoming_list
         tray_lay.addWidget(self.upcoming_list)
+
+        # EXPLORADOR / BIBLIOTECA INTEGRADA (ESTILO VIRTUALDJ)
+        self.virtual_browser = DjVirtualBrowser(parent_window=self.main_window, parent=self)
+        self.virtual_browser.loadDeckRequested.connect(self._on_browser_load_deck)
+        tray_lay.addWidget(self.virtual_browser)
 
         vote_row = QHBoxLayout()
         vote_row.setSpacing(8)
@@ -2264,7 +2277,7 @@ class DjPage(QWidget):
         trim_a = 1.0 + (self.knob_trim_a._value if hasattr(self, "knob_trim_a") else 0.0)
         trim_b = 1.0 + (self.knob_trim_b._value if hasattr(self, "knob_trim_b") else 0.0)
 
-        master_vol = getattr(self, "_master_volume_val", 0.8) * getattr(self.main_window, "_volume_master", 1.0)
+        master_vol = getattr(self, "_master_volume_val", 1.0) * getattr(self.main_window, "_volume_master", 1.0)
         if getattr(self, "_talkover_active", False):
             master_vol *= 0.35  # Ducking de -12 dB
         if getattr(self, "_pa_muted", False):
@@ -2370,6 +2383,28 @@ class DjPage(QWidget):
                 dur_ms = player.duration()
         except Exception:
             pass
+
+        # Actualizar visualizador superior de formas de onda duales (VirtualDJ Style)
+        if hasattr(self, "waveform_display"):
+            t_a = getattr(self, "_now_title_str", "") or (self.screen_a.title_lbl.text() if hasattr(self, "screen_a") else "Deck A")
+            t_b = getattr(self, "_next_title_str", "") or (self.screen_b.title_lbl.text() if hasattr(self, "screen_b") else "Deck B")
+            bpm_a = getattr(self, "_deck_a_bpm", 128.0)
+            bpm_b = getattr(self, "_deck_b_bpm", 128.0)
+            s_pos = 0
+            s_dur = dur_ms
+            spare = getattr(self.main_window, "_spare_deck", None)
+            if spare and len(spare) > 0 and spare[0]:
+                try:
+                    s_pos = spare[0].position()
+                    s_dur = spare[0].duration() or dur_ms
+                except Exception:
+                    pass
+            elif hasattr(self, "_deck_b_sim_pos"):
+                s_pos = self._deck_b_sim_pos
+            self.waveform_display.updateDecks(
+                title_a=t_a, bpm_a=bpm_a, pos_a=pos_ms, dur_a=dur_ms, playing_a=is_playing,
+                title_b=t_b, bpm_b=bpm_b, pos_b=s_pos, dur_b=s_dur, playing_b=is_playing and getattr(self.main_window, "_xf_active", False)
+            )
 
         # Actualizar display digital CDJ de Deck A
         if hasattr(self, "screen_a") and dur_ms > 0:
@@ -2501,6 +2536,7 @@ class DjPage(QWidget):
         # 1. Deck A (Pista actual que suena)
         self._now_path = current.get("local_path", "")
         title_a = current.get("title", os.path.basename(self._now_path) or "Pista A")
+        self._now_title_str = title_a
         artist_a = current.get("uploader", current.get("artist", "Artista"))
         analysis_a = getattr(self.main_window, "_dj_analysis", {}).get(self._now_path, {})
         bpm_a = analysis_a.get("bpm") or current.get("bpm")
@@ -2515,6 +2551,7 @@ class DjPage(QWidget):
         if nxt:
             self._next_path = nxt.get("local_path", "")
             title_b = nxt.get("title", os.path.basename(self._next_path) or "Pista B")
+            self._next_title_str = title_b
             artist_b = nxt.get("uploader", nxt.get("artist", "Artista"))
             analysis_b = getattr(self.main_window, "_dj_analysis", {}).get(self._next_path, {})
             bpm_b = analysis_b.get("bpm") or nxt.get("bpm")
@@ -2530,6 +2567,8 @@ class DjPage(QWidget):
         self.upcoming_list.clear()
         self._upcoming_paths = [t.get("local_path", "") for t in (upcoming or [])]
         self._upcoming_tracks_cache = list(upcoming or [])
+        if hasattr(self, "virtual_browser") and upcoming:
+            self.virtual_browser.setTracks(list(upcoming))
         if upcoming:
             for idx, track in enumerate(upcoming[:UPCOMING_SHOWN]):
                 t_title = track.get("title", "Desconocido")
@@ -2544,3 +2583,109 @@ class DjPage(QWidget):
                 desc_str = f" — {desc}" if desc else ""
                 row_str = f"{idx + 1}.  {t_title} — {t_artist}{t_bpm_str}{t_key_str}{desc_str}"
                 self.upcoming_list.addItem(row_str)
+
+    # -------------------------------------------------------------------------------------------------
+    # Métodos del Visualizador Superior de Formas de Onda y Beat Matching (VirtualDJ Style)
+    # -------------------------------------------------------------------------------------------------
+    def _on_juntar_beats(self):
+        """Sincroniza y junta al compás exacto ambas canciones (Beatmatching y alineación de fase instantánea)."""
+        bpm_a = max(30.0, getattr(self, "_deck_a_bpm", 128.0))
+        bpm_b = max(30.0, getattr(self, "_deck_b_bpm", 128.0))
+
+        # 1. Emparejar BPM con Pitch Fader de Deck B
+        ratio = bpm_a / bpm_b
+        target_pitch = (ratio - 1.0) * 100.0
+        if hasattr(self, "pitch_b"):
+            self.pitch_b.setPitch(target_pitch)
+        self._deck_b_bpm = bpm_a
+
+        # 2. Alinear la fase rítmica (desplazar pos_b para que su golpe caiga exactamente con el golpe de A)
+        beat_ms = 60000.0 / bpm_a
+        pos_a = self._get_deck_a_pos()
+        pos_b = self._get_deck_b_pos()
+
+        phase_a = pos_a % beat_ms
+        current_beat_b = pos_b // beat_ms
+        aligned_pos_b = int(current_beat_b * beat_ms + phase_a)
+        if aligned_pos_b < 0:
+            aligned_pos_b = int(phase_a)
+
+        self._set_deck_b_pos(aligned_pos_b)
+
+        if self.main_window and hasattr(self.main_window, "notify"):
+            self.main_window.notify(f"🔗 Beats sincronizados: Deck B emparejado al golpe exacto a {bpm_a:.1f} BPM.")
+
+    def _on_waveform_nudge(self, deck: str, delta_ms: int):
+        if deck == "A":
+            pos = self._get_deck_a_pos()
+            self._set_deck_a_pos(max(0, pos + delta_ms))
+        else:
+            pos = self._get_deck_b_pos()
+            self._set_deck_b_pos(max(0, pos + delta_ms))
+
+    def _on_waveform_seek(self, deck: str, target_ms: int):
+        if deck == "A":
+            self._set_deck_a_pos(max(0, target_ms))
+        else:
+            self._set_deck_b_pos(max(0, target_ms))
+
+    def _get_deck_a_pos(self) -> int:
+        try:
+            if self.main_window and hasattr(self.main_window, "player"):
+                return self.main_window.player.position()
+        except Exception:
+            pass
+        return getattr(self, "_deck_a_sim_pos", 0)
+
+    def _set_deck_a_pos(self, pos_ms: int):
+        try:
+            if self.main_window and hasattr(self.main_window, "player"):
+                self.main_window.player.setPosition(pos_ms)
+                return
+        except Exception:
+            pass
+        self._deck_a_sim_pos = pos_ms
+
+    def _get_deck_b_pos(self) -> int:
+        try:
+            spare = getattr(self.main_window, "_spare_deck", None)
+            if spare and len(spare) > 0 and spare[0]:
+                return spare[0].position()
+        except Exception:
+            pass
+        return getattr(self, "_deck_b_sim_pos", 0)
+
+    def _set_deck_b_pos(self, pos_ms: int):
+        try:
+            spare = getattr(self.main_window, "_spare_deck", None)
+            if spare and len(spare) > 0 and spare[0]:
+                spare[0].setPosition(pos_ms)
+                return
+        except Exception:
+            pass
+        self._deck_b_sim_pos = pos_ms
+
+    def _on_browser_load_deck(self, deck: str, item_dict: dict):
+        if not item_dict:
+            return
+        title = item_dict.get("title", "Desconocido")
+        artist = item_dict.get("uploader", item_dict.get("artist", ""))
+        bpm = item_dict.get("bpm") or 128.0
+        path = item_dict.get("local_path", "")
+
+        if deck == "A":
+            self._now_path = path
+            self._now_title_str = title
+            self._deck_a_bpm = float(bpm)
+            if hasattr(self, "screen_a"):
+                self.screen_a.setTrack(title, artist, bpm, None, on_air=True)
+            if self.main_window and hasattr(self.main_window, "play_preview"):
+                self.main_window.play_preview(item_dict)
+        else:
+            self._next_path = path
+            self._next_title_str = title
+            self._deck_b_bpm = float(bpm)
+            if hasattr(self, "screen_b"):
+                self.screen_b.setTrack(title, artist, bpm, None, on_air=False)
+            if self.main_window and hasattr(self.main_window, "notify"):
+                self.main_window.notify(f"Deck B: Cargada «{title}» ({bpm:.1f} BPM)")

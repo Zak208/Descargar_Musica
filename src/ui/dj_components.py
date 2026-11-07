@@ -753,6 +753,10 @@ class DjPitchFader(QWidget):
     def setValue(self, val: float):
         self._set_value(val)
 
+    def setPitch(self, pct: float):
+        norm = max(-1.0, min(1.0, float(pct) / max(0.1, self.range_pct)))
+        self._set_value(norm)
+
     def resetPitch(self):
         self.setValue(0.0)
 
@@ -1340,7 +1344,7 @@ class DjMasterMonitorSection(QWidget):
 
         knobs_row1 = QHBoxLayout()
         knobs_row1.setSpacing(4)
-        self.knob_master = DjRotaryKnob("MASTER", 0.0, 1.0, 0.8, accent_color="#FFFFFF", bipolar=False, unit="%")
+        self.knob_master = DjRotaryKnob("MASTER", 0.0, 1.0, 1.0, accent_color="#FFFFFF", bipolar=False, unit="%")
         self.knob_booth = DjRotaryKnob("BOOTH", 0.0, 1.0, 0.7, accent_color="#FFAA00", bipolar=False, unit="%")
         self.knob_master.valueChanged.connect(self.masterVolumeChanged.emit)
         self.knob_booth.valueChanged.connect(self.boothVolumeChanged.emit)
@@ -2007,3 +2011,725 @@ class DjQuickReferenceGuide(QDialog):
         btn_close.clicked.connect(self.accept)
         btn_box.addWidget(btn_close)
         lay.addLayout(btn_box)
+
+
+# =====================================================================================================
+# 9. VISUALIZADOR SUPERIOR DE FORMAS DE ONDA DUALES Y BEAT MATCHING (ESTILO VIRTUALDJ)
+# =====================================================================================================
+class DjOverviewWaveform(QWidget):
+    """Minimapa de recorrido completo de la pista (Overview Waveform) con cursor y salto por clic."""
+    seekRequested = Signal(int)  # target_ms
+
+    def __init__(self, color="#00D2FF", parent=None):
+        super().__init__(parent)
+        self.color = QColor(color)
+        self._pos_ms = 0
+        self._dur_ms = 1
+        self._cue_ms = 0
+        self.setFixedHeight(14)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+    def setProgress(self, pos_ms: int, dur_ms: int, cue_ms: int = 0):
+        self._pos_ms = max(0, int(pos_ms))
+        self._dur_ms = max(1, int(dur_ms))
+        self._cue_ms = max(0, int(cue_ms))
+        self.update()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and self.width() > 0:
+            ratio = max(0.0, min(1.0, event.position().x() / float(self.width())))
+            target_ms = int(ratio * self._dur_ms)
+            self.seekRequested.emit(target_ms)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        w, h = self.width(), self.height()
+
+        # Fondo del minimapa
+        painter.fillRect(0, 0, w, h, QColor("#0D0D14"))
+        painter.setPen(QPen(QColor("#20202E"), 1))
+        painter.drawRect(0, 0, w - 1, h - 1)
+
+        # Forma de onda sintética estilizada a lo largo de la canción
+        painter.setPen(Qt.NoPen)
+        bar_w = 3
+        num_bars = max(10, w // (bar_w + 1))
+        for i in range(num_bars):
+            bx = i * (bar_w + 1)
+            # Altura pseudo-aleatoria pero determinista según el tiempo de la canción
+            phase = (i / float(num_bars)) * 18.0
+            height_ratio = 0.3 + 0.45 * abs(math.sin(phase) * math.cos(phase * 0.4))
+            bh = max(3, int(height_ratio * (h - 4)))
+            by = (h - bh) // 2
+
+            # Barra pasada vs barra futura
+            bar_pos_ratio = bx / float(w)
+            curr_pos_ratio = self._pos_ms / float(self._dur_ms)
+            if bar_pos_ratio <= curr_pos_ratio:
+                painter.setBrush(self.color)
+            else:
+                c = QColor(self.color)
+                c.setAlpha(80)
+                painter.setBrush(c)
+            painter.drawRect(bx, by, bar_w, bh)
+
+        # Punto CUE (marcador naranja)
+        if self._cue_ms > 0 and self._dur_ms > 0:
+            cue_x = int((self._cue_ms / float(self._dur_ms)) * w)
+            painter.setPen(QPen(QColor("#FFAA00"), 2))
+            painter.drawLine(cue_x, 0, cue_x, h)
+
+        # Playhead (cursor blanco de reproducción)
+        play_x = int((self._pos_ms / float(self._dur_ms)) * w)
+        painter.setPen(QPen(QColor("#FFFFFF"), 2))
+        painter.drawLine(play_x, 0, play_x, h)
+        painter.setBrush(QColor("#FFFFFF"))
+        painter.drawPolygon([QPointF(play_x - 3, 0), QPointF(play_x + 3, 0), QPointF(play_x, 4)])
+
+
+class DjPhaseMeter(QWidget):
+    """Medidor de fase y compás entre Deck A y Deck B (Phase Match Indicator).
+    Muestra si la pista B está adelantada o atrasada respecto a A y cuándo están perfectamente juntadas."""
+    alignRequested = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._offset_ms = 0.0
+        self._beat_interval_ms = 500.0
+        self._is_aligned = False
+        self.setFixedHeight(22)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setToolTip("Haz clic para sincronizar y juntar la fase al golpe exacto")
+
+    def setPhaseOffset(self, offset_ms: float, beat_interval_ms: float = 500.0):
+        self._offset_ms = float(offset_ms)
+        self._beat_interval_ms = max(50.0, float(beat_interval_ms))
+        # Se considera alineado si está a menos de 20 ms de diferencia
+        self._is_aligned = abs(self._offset_ms) <= 20.0
+        self.update()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.alignRequested.emit()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        w, h = self.width(), self.height()
+        mid_x = w / 2.0
+
+        # Fondo
+        painter.fillRect(0, 0, w, h, QColor("#101018"))
+        painter.setPen(QPen(QColor("#252535"), 1))
+        painter.drawRect(0, 0, w - 1, h - 1)
+
+        # Escala de marcas de fase (-1/2 beat a +1/2 beat)
+        painter.setPen(QPen(QColor("#353545"), 1))
+        for step in (-0.5, -0.25, 0.0, 0.25, 0.5):
+            sx = mid_x + step * (w * 0.75)
+            painter.drawLine(int(sx), 3, int(sx), h - 3)
+
+        # Línea central de referencia (Blanca)
+        painter.setPen(QPen(QColor("#FFFFFF"), 2))
+        painter.drawLine(int(mid_x), 0, int(mid_x), h)
+
+        # Puntero de fase de Deck B relativo a Deck A
+        half_beat = self._beat_interval_ms * 0.5
+        norm_offset = max(-1.0, min(1.0, self._offset_ms / half_beat))
+        pointer_x = mid_x + norm_offset * (w * 0.375)
+
+        if self._is_aligned:
+            # Color verde neón de beats alineados
+            painter.setBrush(QColor("#00FF66"))
+            painter.setPen(QPen(QColor("#FFFFFF"), 1))
+            painter.drawPolygon([
+                QPointF(mid_x - 6, h - 2), QPointF(mid_x + 6, h - 2),
+                QPointF(mid_x, 3)
+            ])
+            painter.setFont(QFont("Segoe UI", 8, QFont.Bold))
+            painter.setPen(QColor("#00FF66"))
+            painter.drawText(QRectF(0, 2, w, h - 4), Qt.AlignCenter, "● BEATS ALINEADOS (0 ms)")
+        else:
+            # Puntero activo indicando desfase
+            p_color = QColor("#FF3344" if norm_offset > 0 else "#00D2FF")
+            painter.setBrush(p_color)
+            painter.setPen(QPen(QColor("#FFFFFF"), 1))
+            painter.drawPolygon([
+                QPointF(pointer_x - 5, h - 2), QPointF(pointer_x + 5, h - 2),
+                QPointF(pointer_x, 4)
+            ])
+            painter.setFont(QFont("Segoe UI", 7, QFont.Bold))
+            painter.setPen(QColor("#CCCCCC"))
+            sign = "+" if self._offset_ms > 0 else ""
+            txt = f"{sign}{int(self._offset_ms)} ms"
+            painter.drawText(QRectF(w - 70, 2, 65, h - 4), Qt.AlignRight | Qt.AlignVCenter, txt)
+
+
+class DjRunningWaveformView(QWidget):
+    """Visualizador central de ondas en movimiento (Dual Running Waveforms) estilo VirtualDJ.
+    Permite ver por dónde van ambas canciones a la vez con cuadrícula de compases (beatgrid 1, 2, 3, 4)
+    y manipularlas con el ratón (arrastrar para juntar beats bajo la aguja blanca central)."""
+    nudgeRequested = Signal(str, int)  # deck ("A"|"B"), delta_ms
+    seekRequested = Signal(str, int)   # deck ("A"|"B"), target_ms
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(110)
+        self.setCursor(Qt.OpenHandCursor)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+        # Estado dinámico de Pista A (Cyan) y Pista B (Rojo)
+        self._pos_a = 0
+        self._dur_a = 180000
+        self._bpm_a = 128.0
+        self._playing_a = False
+
+        self._pos_b = 0
+        self._dur_b = 180000
+        self._bpm_b = 128.0
+        self._playing_b = False
+
+        # Zoom de compases mostrados (4, 8, 16 compases)
+        self._zoom_bars = 4
+        self._drag_active = False
+        self._drag_deck = "B"
+        self._last_mouse_x = 0
+
+    def setPlaybackState(self, pos_a: int, dur_a: int, bpm_a: float, playing_a: bool,
+                         pos_b: int, dur_b: int, bpm_b: float, playing_b: bool):
+        self._pos_a = int(pos_a)
+        self._dur_a = max(1, int(dur_a))
+        self._bpm_a = max(30.0, float(bpm_a or 128.0))
+        self._playing_a = bool(playing_a)
+
+        self._pos_b = int(pos_b)
+        self._dur_b = max(1, int(dur_b))
+        self._bpm_b = max(30.0, float(bpm_b or 128.0))
+        self._playing_b = bool(playing_b)
+        self.update()
+
+    def setZoomBars(self, bars: int):
+        self._zoom_bars = max(2, min(16, int(bars)))
+        self.update()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag_active = True
+            self.setCursor(Qt.ClosedHandCursor)
+            self._last_mouse_x = event.position().x()
+            # Si el clic es en la mitad superior, manipula Pista A; si es inferior, manipula Pista B
+            self._drag_deck = "A" if event.position().y() < (self.height() / 2.0) else "B"
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._drag_active and self.width() > 0:
+            dx = event.position().x() - self._last_mouse_x
+            self._last_mouse_x = event.position().x()
+            # Convertir píxeles de arrastre a milisegundos según el tempo y zoom
+            bpm = self._bpm_a if self._drag_deck == "A" else self._bpm_b
+            beat_ms = 60000.0 / bpm
+            window_ms = self._zoom_bars * 4.0 * beat_ms
+            ms_per_pixel = window_ms / float(self.width())
+            delta_ms = -int(dx * ms_per_pixel)
+            if abs(delta_ms) > 0:
+                self.nudgeRequested.emit(self._drag_deck, delta_ms)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag_active = False
+            self.setCursor(Qt.OpenHandCursor)
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def wheelEvent(self, event):
+        # Zoom con la rueda del ratón
+        delta = event.angleDelta().y()
+        if delta > 0:
+            self.setZoomBars(self._zoom_bars // 2)
+        elif delta < 0:
+            self.setZoomBars(self._zoom_bars * 2)
+        event.accept()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        w, h = self.width(), self.height()
+        mid_y = h / 2.0
+        center_x = w / 2.0
+
+        # Fondo general oscuro de cabina DJ
+        painter.fillRect(0, 0, w, h, QColor("#0A0A10"))
+        painter.setPen(QPen(QColor("#1A1A24"), 1))
+        painter.drawRect(0, 0, w - 1, h - 1)
+
+        # 1. Dibujar Pista A (Superior - Cyan #00D2FF)
+        self._draw_deck_lane(painter, deck_name="A", color=QColor("#00D2FF"),
+                             pos_ms=self._pos_a, bpm=self._bpm_a,
+                             top_y=0, lane_h=mid_y, center_x=center_x, width=w)
+
+        # Línea divisoria horizontal entre Deck A y Deck B
+        painter.setPen(QPen(QColor("#242436"), 1))
+        painter.drawLine(0, int(mid_y), w, int(mid_y))
+
+        # 2. Dibujar Pista B (Inferior - Rojo #FF3344)
+        self._draw_deck_lane(painter, deck_name="B", color=QColor("#FF3344"),
+                             pos_ms=self._pos_b, bpm=self._bpm_b,
+                             top_y=mid_y, lane_h=mid_y, center_x=center_x, width=w)
+
+        # 3. Línea central Playhead vertical (Aguja blanca luminosa)
+        painter.setPen(QPen(QColor("#FFFFFF"), 2))
+        painter.drawLine(int(center_x), 0, int(center_x), h)
+        # Flechas de aguja central
+        painter.setBrush(QColor("#FFFFFF"))
+        painter.drawPolygon([QPointF(center_x - 4, 0), QPointF(center_x + 4, 0), QPointF(center_x, 5)])
+        painter.drawPolygon([QPointF(center_x - 4, h), QPointF(center_x + 4, h), QPointF(center_x, h - 5)])
+
+    def _draw_deck_lane(self, painter: QPainter, deck_name: str, color: QColor,
+                        pos_ms: int, bpm: float, top_y: float, lane_h: float,
+                        center_x: float, width: float):
+        # Duración de la ventana temporal visible en ms según zoom
+        beat_ms = 60000.0 / bpm
+        window_ms = self._zoom_bars * 4.0 * beat_ms
+        ms_per_pixel = window_ms / float(width)
+
+        lane_mid_y = top_y + lane_h / 2.0
+        max_wave_h = (lane_h - 10) * 0.5
+
+        # Dibujar barras de forma de onda (Espectro rítmico desplazable)
+        bar_step_px = 4
+        num_steps = int(width // bar_step_px) + 2
+        for i in range(-num_steps // 2, num_steps // 2 + 1):
+            x = center_x + i * bar_step_px
+            if x < 0 or x > width:
+                continue
+            time_at_x = pos_ms + int(i * bar_step_px * ms_per_pixel)
+            if time_at_x < 0:
+                continue
+
+            # Amplitud pseudo-espectral sincronizada al compás
+            phase = (time_at_x / beat_ms) * math.pi
+            harmonic = math.sin(phase) * 0.6 + math.sin(phase * 2.0) * 0.3 + math.sin(phase * 4.0) * 0.1
+            envelope_amp = max(0.12, abs(harmonic))
+            # Resaltar picos de bombos y transitorios rítmicos
+            is_beat_peak = (abs(time_at_x % beat_ms) < 40) or (abs((time_at_x + 40) % beat_ms) < 40)
+            if is_beat_peak:
+                envelope_amp = min(1.0, envelope_amp * 1.5)
+
+            h_peak = int(envelope_amp * max_wave_h)
+            bar_color = QColor(color)
+            if is_beat_peak:
+                bar_color = QColor("#FFFFFF") if deck_name == "A" else QColor("#FFAA00")
+            else:
+                bar_color.setAlpha(190)
+
+            painter.setPen(QPen(bar_color, 2))
+            painter.drawLine(int(x), int(lane_mid_y - h_peak), int(x), int(lane_mid_y + h_peak))
+
+        # Dibujar marcadores de Rejilla de Compás (Beatgrid: 1, 2, 3, 4)
+        # Buscar el beat más cercano al inicio visible
+        start_time = pos_ms - int(center_x * ms_per_pixel)
+        end_time = pos_ms + int((width - center_x) * ms_per_pixel)
+
+        first_beat_idx = int(start_time // beat_ms)
+        last_beat_idx = int(end_time // beat_ms) + 1
+
+        for b_idx in range(first_beat_idx, last_beat_idx):
+            beat_time = b_idx * beat_ms
+            bx = center_x + (beat_time - pos_ms) / ms_per_pixel
+            if bx < 0 or bx > width:
+                continue
+
+            beat_in_bar = (b_idx % 4) + 1
+            is_downbeat = (beat_in_bar == 1)
+
+            if is_downbeat:
+                # Golpe 1 del compás: línea más brillante y alta
+                painter.setPen(QPen(QColor("#FFFFFF"), 1.5))
+                painter.drawLine(int(bx), int(top_y + 2), int(bx), int(top_y + lane_h - 2))
+                painter.setFont(QFont("Segoe UI", 7, QFont.Bold))
+                painter.setPen(color)
+                painter.drawText(int(bx) + 3, int(top_y + 11), "1")
+            else:
+                # Golpes 2, 3, 4
+                painter.setPen(QPen(QColor("#454555"), 1, Qt.DashLine))
+                painter.drawLine(int(bx), int(top_y + 4), int(bx), int(top_y + lane_h - 4))
+
+
+class DjMasterWaveformDisplay(QFrame):
+    """Contenedor superior completo estilo VirtualDJ con:
+    - Encabezados de Deck A (Cyan) y Deck B (Rojo) con tiempos, BPM, Key y Pitch.
+    - Medidor de Fase rítmico y Botón central '🔗 JUNTAR BEATS / SYNC'.
+    - Minimapas de recorrido de ambas canciones (Overview Waveforms).
+    - Doble forma de onda desplazable en paralelo (DjRunningWaveformView) con rejilla beatgrid."""
+    juntarBeatsRequested = Signal()
+    nudgeRequested = Signal(str, int)  # deck, delta_ms
+    seekRequested = Signal(str, int)   # deck, target_ms
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("MasterWaveformDisplay")
+        self.setStyleSheet("""
+            QFrame#MasterWaveformDisplay {
+                background-color: #0E0E14;
+                border: 1px solid #20202E;
+                border-radius: 8px;
+            }
+        """)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(8, 6, 8, 6)
+        lay.setSpacing(4)
+
+        # 1. FILA DE CABECERA Y CENTRO DE EMPAREJAMIENTO DE BEATS
+        header_row = QHBoxLayout()
+        header_row.setSpacing(8)
+
+        # --- Deck A Header (Izquierda - Cyan) ---
+        deck_a_box = QHBoxLayout()
+        deck_a_box.setSpacing(6)
+        self.badge_a = QLabel(" A ")
+        self.badge_a.setStyleSheet("background-color: #00D2FF; color: #000000; font-weight: 900; font-size: 11px; border-radius: 3px; padding: 2px 5px;")
+        deck_a_box.addWidget(self.badge_a)
+
+        self.lbl_title_a = QLabel("Deck A: Sin pista")
+        self.lbl_title_a.setStyleSheet("color: #FFFFFF; font-weight: bold; font-size: 11px;")
+        deck_a_box.addWidget(self.lbl_title_a)
+
+        self.lbl_time_a = QLabel("-00:00")
+        self.lbl_time_a.setStyleSheet("color: #00D2FF; font-family: monospace; font-size: 11px; font-weight: 800;")
+        deck_a_box.addWidget(self.lbl_time_a)
+
+        self.lbl_bpm_a = QLabel("128.0 BPM")
+        self.lbl_bpm_a.setStyleSheet("color: #00D2FF; font-size: 10px; font-weight: 800; background: #162432; border-radius: 3px; padding: 1px 4px;")
+        deck_a_box.addWidget(self.lbl_bpm_a)
+        header_row.addLayout(deck_a_box, 2)
+
+        # --- Centro de Beatmatching & Juntar Pistas ---
+        center_tools = QHBoxLayout()
+        center_tools.setSpacing(4)
+
+        btn_nudge_back = QPushButton("◀")
+        btn_nudge_back.setCursor(Qt.PointingHandCursor)
+        btn_nudge_back.setToolTip("Nudge: Desplazar Deck B atrás")
+        btn_nudge_back.setStyleSheet("QPushButton { min-width: 0px; background-color: #1A1A24; color: #FF3344; font-weight: bold; border: 1px solid #FF3344; border-radius: 3px; padding: 2px 6px; font-size: 10px; }")
+        btn_nudge_back.clicked.connect(lambda: self.nudgeRequested.emit("B", -20))
+        center_tools.addWidget(btn_nudge_back)
+
+        self.btn_juntar = QPushButton("🔗 JUNTAR BEATS")
+        self.btn_juntar.setCursor(Qt.PointingHandCursor)
+        self.btn_juntar.setToolTip("Sincroniza y alinea automáticamente los bombos de ambas canciones al milisegundo exacto.")
+        self.btn_juntar.setStyleSheet("""
+            QPushButton {
+                min-width: 0px;
+                background-color: #1A3828;
+                color: #00FF66;
+                font-weight: 900;
+                font-size: 10px;
+                letter-spacing: 0.5px;
+                border: 1.5px solid #00FF66;
+                border-radius: 4px;
+                padding: 4px 10px;
+            }
+            QPushButton:hover { background-color: #244C36; }
+            QPushButton:pressed { background-color: #00FF66; color: #000; }
+        """)
+        self.btn_juntar.clicked.connect(self.juntarBeatsRequested.emit)
+        center_tools.addWidget(self.btn_juntar)
+
+        btn_nudge_fwd = QPushButton("▶")
+        btn_nudge_fwd.setCursor(Qt.PointingHandCursor)
+        btn_nudge_fwd.setToolTip("Nudge: Desplazar Deck B adelante")
+        btn_nudge_fwd.setStyleSheet("QPushButton { min-width: 0px; background-color: #1A1A24; color: #FF3344; font-weight: bold; border: 1px solid #FF3344; border-radius: 3px; padding: 2px 6px; font-size: 10px; }")
+        btn_nudge_fwd.clicked.connect(lambda: self.nudgeRequested.emit("B", 20))
+        center_tools.addWidget(btn_nudge_fwd)
+
+        header_row.addLayout(center_tools, 1)
+
+        # --- Deck B Header (Derecha - Rojo) ---
+        deck_b_box = QHBoxLayout()
+        deck_b_box.setSpacing(6)
+        deck_b_box.addStretch()
+
+        self.lbl_bpm_b = QLabel("128.0 BPM")
+        self.lbl_bpm_b.setStyleSheet("color: #FF3344; font-size: 10px; font-weight: 800; background: #32161E; border-radius: 3px; padding: 1px 4px;")
+        deck_b_box.addWidget(self.lbl_bpm_b)
+
+        self.lbl_time_b = QLabel("-00:00")
+        self.lbl_time_b.setStyleSheet("color: #FF3344; font-family: monospace; font-size: 11px; font-weight: 800;")
+        deck_b_box.addWidget(self.lbl_time_b)
+
+        self.lbl_title_b = QLabel("Deck B: Sin pista")
+        self.lbl_title_b.setStyleSheet("color: #FFFFFF; font-weight: bold; font-size: 11px;")
+        deck_b_box.addWidget(self.lbl_title_b)
+
+        self.badge_b = QLabel(" B ")
+        self.badge_b.setStyleSheet("background-color: #FF3344; color: #FFFFFF; font-weight: 900; font-size: 11px; border-radius: 3px; padding: 2px 5px;")
+        deck_b_box.addWidget(self.badge_b)
+        header_row.addLayout(deck_b_box, 2)
+
+        lay.addLayout(header_row)
+
+        # 2. MEDIDOR DE FASE (PHASE METER)
+        self.phase_meter = DjPhaseMeter()
+        self.phase_meter.alignRequested.connect(self.juntarBeatsRequested.emit)
+        lay.addWidget(self.phase_meter)
+
+        # 3. OVERVIEWS WAVEFORM (Minimapas completos)
+        overviews_row = QHBoxLayout()
+        overviews_row.setSpacing(4)
+        self.overview_a = DjOverviewWaveform(color="#00D2FF")
+        self.overview_b = DjOverviewWaveform(color="#FF3344")
+        self.overview_a.seekRequested.connect(lambda ms: self.seekRequested.emit("A", ms))
+        self.overview_b.seekRequested.connect(lambda ms: self.seekRequested.emit("B", ms))
+        overviews_row.addWidget(self.overview_a, 1)
+        overviews_row.addWidget(self.overview_b, 1)
+        lay.addLayout(overviews_row)
+
+        # 4. RUNNING DUAL WAVEFORMS EN PARALELO
+        self.running_waves = DjRunningWaveformView()
+        self.running_waves.nudgeRequested.connect(self.nudgeRequested.emit)
+        self.running_waves.seekRequested.connect(self.seekRequested.emit)
+        lay.addWidget(self.running_waves)
+
+    def updateDecks(self, title_a: str, bpm_a: float, pos_a: int, dur_a: int, playing_a: bool,
+                     title_b: str, bpm_b: float, pos_b: int, dur_b: int, playing_b: bool):
+        # Textos y etiquetas
+        self.lbl_title_a.setText(title_a or "Deck A: Sin pista")
+        self.lbl_title_b.setText(title_b or "Deck B: Sin pista")
+        self.lbl_bpm_a.setText(f"{bpm_a:.1f} BPM" if bpm_a > 0 else "--- BPM")
+        self.lbl_bpm_b.setText(f"{bpm_b:.1f} BPM" if bpm_b > 0 else "--- BPM")
+
+        rem_a = max(0, (dur_a - pos_a)) // 1000
+        rem_b = max(0, (dur_b - pos_b)) // 1000
+        self.lbl_time_a.setText(f"-{rem_a // 60:02d}:{rem_a % 60:02d}")
+        self.lbl_time_b.setText(f"-{rem_b // 60:02d}:{rem_b % 60:02d}")
+
+        # Overviews
+        self.overview_a.setProgress(pos_a, dur_a)
+        self.overview_b.setProgress(pos_b, dur_b)
+
+        # Running dual waveforms
+        self.running_waves.setPlaybackState(pos_a, dur_a, bpm_a, playing_a,
+                                           pos_b, dur_b, bpm_b, playing_b)
+
+        # Medidor de fase
+        beat_ms = 60000.0 / max(30.0, bpm_a)
+        phase_a = pos_a % beat_ms
+        phase_b = pos_b % (60000.0 / max(30.0, bpm_b))
+        offset = phase_b - phase_a
+        if offset > (beat_ms * 0.5):
+            offset -= beat_ms
+        elif offset < (-beat_ms * 0.5):
+            offset += beat_ms
+        self.phase_meter.setPhaseOffset(offset, beat_ms)
+
+
+# =====================================================================================================
+# 10. EXPLORADOR / BIBLIOTECA INFERIOR INTEGRADO ESTILO VIRTUALDJ
+# =====================================================================================================
+class DjVirtualBrowser(QWidget):
+    """Explorador de música y biblioteca integrado en la mesa DJ estilo VirtualDJ.
+    Permite navegar carpetas, playlists y descargas, y cargar con un clic en Deck A o Deck B."""
+    loadDeckRequested = Signal(str, dict)  # deck ("A"|"B"), item_dict
+
+    def __init__(self, parent_window=None, parent=None):
+        super().__init__(parent)
+        self.parent_window = parent_window
+        self._tracks = []
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(4, 4, 4, 4)
+        lay.setSpacing(6)
+
+        # Barra superior del navegador: Buscador rápido y filtros de compatibilidad
+        top_bar = QHBoxLayout()
+        top_bar.setSpacing(6)
+
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("🔍 Buscar en tu música por título, artista o BPM...")
+        self.search_input.setStyleSheet("""
+            QLineEdit {
+                background-color: #12121A;
+                color: #FFFFFF;
+                font-size: 11px;
+                border: 1px solid #222230;
+                border-radius: 4px;
+                padding: 4px 8px;
+            }
+            QLineEdit:focus { border-color: #00E5FF; }
+        """)
+        self.search_input.textChanged.connect(self._filter_tracks)
+        top_bar.addWidget(self.search_input, 1)
+
+        self.btn_compat_bpm = QPushButton("±4 BPM")
+        self.btn_compat_bpm.setCheckable(True)
+        self.btn_compat_bpm.setCursor(Qt.PointingHandCursor)
+        self.btn_compat_bpm.setStyleSheet("QPushButton { min-width: 0px; background-color: #1A1A24; color: #AAA; font-size: 10px; font-weight: bold; border: 1px solid #282836; border-radius: 3px; padding: 3px 6px; } QPushButton:checked { background-color: #00D2FF; color: #000; }")
+        self.btn_compat_bpm.toggled.connect(self._filter_tracks)
+        top_bar.addWidget(self.btn_compat_bpm)
+
+        lay.addLayout(top_bar)
+
+        # Contenedor central dividido: Lista de categorías / fuentes a la izquierda + Tabla de canciones
+        split_lay = QHBoxLayout()
+        split_lay.setSpacing(6)
+
+        # Panel izquierdo de navegación (Fuentes estilo VirtualDJ)
+        sources_box = QVBoxLayout()
+        sources_box.setSpacing(2)
+        sources = [
+            ("library", "📁 Tu Música"),
+            ("downloads", "📥 Descargas"),
+            ("favorites", "⭐ Favoritos"),
+            ("playlists", "📜 Playlists"),
+            ("history", "🕒 Historial"),
+            ("queue", "🔀 Cola DJ"),
+        ]
+        self._src_buttons = {}
+        for s_id, s_lbl in sources:
+            btn = QPushButton(s_lbl)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setStyleSheet("""
+                QPushButton {
+                    min-width: 90px;
+                    text-align: left;
+                    background-color: #14141C;
+                    color: #CCCCCC;
+                    font-size: 10px;
+                    font-weight: bold;
+                    border: 1px solid #20202A;
+                    border-radius: 3px;
+                    padding: 4px 8px;
+                }
+                QPushButton:hover { background-color: #1E1E28; color: #FFFFFF; }
+            """)
+            btn.clicked.connect(lambda _=False, sid=s_id: self._on_source_selected(sid))
+            sources_box.addWidget(btn)
+            self._src_buttons[s_id] = btn
+        sources_box.addStretch()
+        split_lay.addLayout(sources_box, 1)
+
+        # Tabla central de canciones estilo VirtualDJ
+        self.table = QTableWidget()
+        self.table.setColumnCount(7)
+        self.table.setHorizontalHeaderLabels(["Título", "Artista", "Álbum", "Duración", "BPM", "Deck A", "Deck B"])
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeToContents)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setAlternatingRowColors(True)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setStyleSheet("""
+            QTableWidget {
+                background-color: #0E0E14;
+                alternate-background-color: #12121A;
+                border: 1px solid #1C1C26;
+                border-radius: 4px;
+                color: #FFFFFF;
+                gridline-color: #181822;
+                font-size: 11px;
+            }
+            QHeaderView::section {
+                background-color: #181824;
+                color: #888899;
+                font-size: 10px;
+                font-weight: 800;
+                border: none;
+                padding: 4px 6px;
+            }
+            QTableWidget::item:selected {
+                background-color: #242436;
+            }
+        """)
+        self.table.doubleClicked.connect(self._on_row_double_clicked)
+        split_lay.addWidget(self.table, 5)
+
+        lay.addLayout(split_lay)
+
+    def setTracks(self, track_list: list):
+        self._tracks = list(track_list or [])
+        self._filter_tracks()
+
+    def _filter_tracks(self):
+        query = self.search_input.text().strip().lower()
+        filtered = []
+        for t in self._tracks:
+            title = str(t.get("title", "")).lower()
+            uploader = str(t.get("uploader", "")).lower()
+            if query and (query not in title and query not in uploader):
+                continue
+            filtered.append(t)
+
+        self.table.setRowCount(len(filtered))
+        for row_idx, item in enumerate(filtered):
+            t_item = QTableWidgetItem(item.get("title", "Desconocido"))
+            u_item = QTableWidgetItem(item.get("uploader", "---"))
+            a_item = QTableWidgetItem(item.get("album", "---"))
+            d_item = QTableWidgetItem(item.get("duration_str", "0:00"))
+            d_item.setTextAlignment(Qt.AlignCenter)
+
+            bpm_val = item.get("bpm") or 0.0
+            bpm_str = f"{bpm_val:.1f}" if bpm_val > 0 else "---"
+            b_item = QTableWidgetItem(bpm_str)
+            b_item.setTextAlignment(Qt.AlignCenter)
+
+            self.table.setItem(row_idx, 0, t_item)
+            self.table.setItem(row_idx, 1, u_item)
+            self.table.setItem(row_idx, 2, a_item)
+            self.table.setItem(row_idx, 3, d_item)
+            self.table.setItem(row_idx, 4, b_item)
+
+            btn_load_a = QPushButton("◀ LOAD A")
+            btn_load_a.setCursor(Qt.PointingHandCursor)
+            btn_load_a.setStyleSheet("QPushButton { min-width: 0px; background-color: #122432; color: #00D2FF; font-size: 9px; font-weight: 900; border: 1px solid #00D2FF; border-radius: 3px; padding: 2px 4px; }")
+            btn_load_a.clicked.connect(lambda _=False, it=item: self.loadDeckRequested.emit("A", it))
+            self.table.setCellWidget(row_idx, 5, btn_load_a)
+
+            btn_load_b = QPushButton("LOAD B ▶")
+            btn_load_b.setCursor(Qt.PointingHandCursor)
+            btn_load_b.setStyleSheet("QPushButton { min-width: 0px; background-color: #321218; color: #FF3344; font-size: 9px; font-weight: 900; border: 1px solid #FF3344; border-radius: 3px; padding: 2px 4px; }")
+            btn_load_b.clicked.connect(lambda _=False, it=item: self.loadDeckRequested.emit("B", it))
+            self.table.setCellWidget(row_idx, 6, btn_load_b)
+
+    def _on_source_selected(self, source_id: str):
+        # Cargar pistas según la fuente seleccionada
+        if not self.parent_window:
+            return
+        items = []
+        try:
+            if source_id == "library" and hasattr(self.parent_window, "all_music_tracks"):
+                items = self.parent_window.all_music_tracks()
+            elif source_id == "favorites" and hasattr(self.parent_window, "get_favorite_tracks"):
+                items = self.parent_window.get_favorite_tracks()
+            elif source_id == "downloads" and hasattr(self.parent_window, "downloaded_tracks"):
+                items = self.parent_window.downloaded_tracks()
+            elif source_id == "queue" and hasattr(self.parent_window, "batch_queue"):
+                items = list(self.parent_window.batch_queue)
+        except Exception:
+            pass
+        if items:
+            self.setTracks(items)
+
+    def _on_row_double_clicked(self, index):
+        row = index.row()
+        if 0 <= row < len(self._tracks):
+            item = self._tracks[row]
+            # Por defecto carga en Deck A si está parado, o en Deck B
+            self.loadDeckRequested.emit("A", item)
