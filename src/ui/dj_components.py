@@ -391,6 +391,7 @@ class DjCrossfader(QWidget):
         anim.setStartValue(self._pos)
         anim.setEndValue(float(target_pos))
         anim.setEasingCurve(QEasingCurve.InOutCubic)
+        self._anim = anim
         anim.start(QPropertyAnimation.DeleteWhenStopped)
 
     def mousePressEvent(self, event):

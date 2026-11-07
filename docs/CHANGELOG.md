@@ -3,6 +3,27 @@
 Formato: `MAYOR.MENOR.PARCHE`. MAYOR = cambios que rompen datos o uso, MENOR = funciones nuevas, PARCHE = arreglos.
 Cada versión subida a GitHub tiene su etiqueta `vX.Y.Z` (pestaña *Releases/Tags*).
 
+## 1.22.0
+**Transiciones Profesionales al Compás, Puntos Cue Inteligentes y Previsualización Robusta Universal**
+- **Transición Inmediata «🔥 Mezclar Ahora» Sin Cortes y con Animación de Mesa**:
+  - Eliminación de la emisión duplicada de señales en `_on_auto_mix_clicked()` que disparaba dos saltos consecutivos en carrera y cortaba abruptamente las pistas.
+  - Implementación de `dj_trigger_now_mix()` en `dj_mixin.py`:
+    - Dispara transiciones armónicas inmediatas al compás (4 a 8 compases) aplicando los algoritmos DSP `smart_filter_eq` (Mid-Carve vocal + HPF sweep + Bass Swap), `delay_drop` (ping-pong tempo-delay sincronizado) o `reverb_wash` (cola etérea) según el perfil musical.
+    - Anima físicamente los controles de la mesa DJ en pantalla en tiempo real: el crossfader se desliza suavemente entre platos, el ecualizador corta los graves en el compás del cambio y los potenciómetros de filtro barren frecuencias simulando los movimientos de un DJ profesional.
+- **Puntos Cue Inteligentes (Entrada Musical sin Empezar en Segundo 0.0)**:
+  - Nuevo módulo `cue_detector.py` para la detección precisa del punto de entrada óptimo (`get_track_cue_point`):
+    - Identifica el primer drop de graves de la estructura (`events`), el fin de la intro por energía de envolvente (`intro_ms`), o el primer compás rítmico (`beat_first_s`).
+    - Al mezclar una pista entrante, nunca arranca desde `0.0s` (silencio inicial, ruidos o intro lenta vacía): la música arranca directamente en el compás donde el ritmo y el bajo tienen potencia.
+    - Sincronización en `EnginePlayer` y en el reproductor de doble pletina (`_start_incoming_at`) para aplicar el punto de Cue exacto en la entrada de la mezcla.
+- **Previsualización Universal en Streaming Proxy**:
+  - Enrutamiento universal de todas las pistas remotas de vista previa (Deezer CDN, iTunes y YouTube) a través del `StreamingProxy` local (`127.0.0.1`).
+  - Solución definitiva al fallo de reproducción en Windows donde Windows Media Foundation (WMF) fallaba o se colgaba al recibir URLs HTTPS de CDN con tokens complejos o restricciones TLS.
+  - Mejora en `PreviewAudioWorker` con extracción recursiva de streams de audio directos y formatos de contingencia.
+  - Prevención de reinicios en bucle si el usuario pulsa el botón de escuchar mientras una pista se encuentra cargando.
+- **Rescate y Carga Robusta de Álbumes (`AlbumDetailsWorker`)**:
+  - Soporte de consulta combinada por ID e información completa de metadatos (nombre de álbum y artista).
+  - Si una consulta por ID de red resulta vacía o no encontrada, el sistema activa automáticamente una búsqueda de contingencia por nombre y artista, garantizando que al pulsar cualquier carátula de álbum se carguen sus canciones sin mensajes de error.
+
 ## 1.21.1
 **Diseño Responsivo y Adaptativo de la Mesa de DJ (Cero Desbordamiento en Todas las Resoluciones)**
 - **Reflow Adaptativo Inteligente de la Mesa DJ (`DjPage`)**:

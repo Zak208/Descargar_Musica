@@ -440,12 +440,20 @@ class AlbumDetailsWorker(QThread):
 
     def run(self):
         try:
-            raw_id = str(self.album_id or "").strip()
+            album_name_hint = ""
+            album_artist_hint = ""
+            if isinstance(self.album_id, dict):
+                raw_id = str(self.album_id.get("id") or "").strip()
+                album_name_hint = self.album_id.get("name") or self.album_id.get("title") or ""
+                album_artist_hint = self.album_id.get("artist") or self.album_id.get("uploader") or ""
+            else:
+                raw_id = str(self.album_id or "").strip()
+
             is_deezer = raw_id.startswith("dz_")
             clean_id = raw_id.replace("dz_", "").strip()
 
             # 1. Si es ID de Deezer (o explícito con prefijo dz_)
-            if is_deezer:
+            if is_deezer and clean_id.isdigit():
                 try:
                     r_dz = http.get(f"https://api.deezer.com/album/{clean_id}", timeout=6)
                     if r_dz.status_code == 200:
@@ -473,15 +481,34 @@ class AlbumDetailsWorker(QThread):
                     logger.debug(f"Error consultando iTunes album {clean_id}: {e}")
 
             # 3. Fallback a Deezer si iTunes no devolvió resultados o si clean_id era de Deezer
-            try:
-                r_dz = http.get(f"https://api.deezer.com/album/{clean_id}", timeout=6)
-                if r_dz.status_code == 200:
-                    data = r_dz.json()
-                    if not data.get("error") and "tracks" in data:
-                        self._parse_deezer(data)
-                        return
-            except Exception as e:
-                logger.debug(f"Error en fallback Deezer album {clean_id}: {e}")
+            if clean_id.isdigit():
+                try:
+                    r_dz = http.get(f"https://api.deezer.com/album/{clean_id}", timeout=6)
+                    if r_dz.status_code == 200:
+                        data = r_dz.json()
+                        if not data.get("error") and "tracks" in data:
+                            self._parse_deezer(data)
+                            return
+                except Exception as e:
+                    logger.debug(f"Error en fallback Deezer album {clean_id}: {e}")
+
+            # 4. Fallback de rescate por búsqueda de texto (nombre + artista) si el ID falló
+            fallback_q = f"{album_artist_hint} {album_name_hint}".strip() or album_name_hint.strip()
+            if fallback_q:
+                try:
+                    r_search = http.get("https://api.deezer.com/search/album", params={"q": fallback_q, "limit": 3}, timeout=6)
+                    if r_search.status_code == 200:
+                        search_data = r_search.json().get("data", [])
+                        if search_data:
+                            found_id = search_data[0].get("id")
+                            r_dz = http.get(f"https://api.deezer.com/album/{found_id}", timeout=6)
+                            if r_dz.status_code == 200:
+                                data = r_dz.json()
+                                if not data.get("error") and "tracks" in data:
+                                    self._parse_deezer(data)
+                                    return
+                except Exception as e:
+                    logger.debug(f"Error en búsqueda fallback de álbum: {e}")
 
             if not self.is_cancelled:
                 self.error_occurred.emit("Álbum no encontrado.")

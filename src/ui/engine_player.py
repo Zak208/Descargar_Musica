@@ -114,7 +114,13 @@ class EnginePlayer(QObject):
             return
         self._position_ms = 0
         self._last_emitted_pos = -10_000
-        self.session.play(path, 0.0, autoplay=False)
+        start_s = 0.0
+        if hasattr(self.window_ref, "_xf_plan") and self.window_ref._xf_plan:
+            planned = self.window_ref._xf_plan
+            if planned and planned[0] == path and getattr(planned[1], "b_start_s", 0) > 0:
+                start_s = float(planned[1].b_start_s)
+                self._position_ms = int(start_s * 1000)
+        self.session.play(path, start_s, autoplay=False)
         self._timer.start()
 
     def play(self):

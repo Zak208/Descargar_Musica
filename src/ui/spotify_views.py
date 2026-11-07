@@ -117,5 +117,5 @@ class AlbumCard(QFrame):
             win = self.window()
             if hasattr(win, "remember_cover_source"):
                 win.remember_cover_source(self.cover_label)       # la portada «viaja» a la página del álbum
-            self.clicked.emit(self.album_info.get("id", 0))
+            self.clicked.emit(self.album_info if isinstance(self.album_info, dict) else self.album_info.get("id", 0))
         super().mousePressEvent(ev)

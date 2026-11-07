@@ -74,7 +74,7 @@ class DjMixin:
         self.page_dj.fx_changed.connect(self.set_dj_fx)
         self.page_dj.freeze_requested.connect(self.dj_freeze_echo)
         self.page_dj.washout_requested.connect(self.dj_washout)
-        self.page_dj.auto_mix_requested.connect(self.dj_skip)
+        self.page_dj.auto_mix_requested.connect(self.dj_trigger_now_mix)
         self.stacked_widget.addWidget(self.page_dj)
         assert self.stacked_widget.indexOf(self.page_dj) == Page.DJ
 
@@ -435,6 +435,69 @@ class DjMixin:
         if self.dj_session_active():
             self._dj_prune_next()
             self.play_next()
+
+    def dj_trigger_now_mix(self):
+        """Dispara una transición DJ inmediata hacia la siguiente canción (con punto de cue, ecualización, filtros y efectos)."""
+        if not self.current_item_info:
+            return
+        if not self.dj_session_active():
+            self.play_next()
+            return
+        self._dj_prune_next()
+        nxt = self.peek_next()
+        if not nxt:
+            self.notify("No hay siguiente canción para mezclar en la sesión.")
+            return
+
+        nxt_path = nxt.get("local_path")
+        if not nxt_path or not os.path.isfile(nxt_path):
+            self.play_next()
+            return
+
+        cur_path = self.current_item_info.get("local_path")
+        analysis_a = self._dj_analysis.get(cur_path, {}) if cur_path else {}
+        analysis_b = self._dj_analysis.get(nxt_path, {}) if nxt_path else {}
+
+        # 1. Determinar el mejor punto de entrada (Cue Point) de la pista B
+        # Nunca empieza en 0.0s si hay intro, drop o compás donde el ritmo tenga fuerza
+        from services.cue_detector import get_track_cue_point
+        b_dur_s = float(analysis_b.get("duration_s") or (analysis_b.get("duration_ms", 0) / 1000.0) or 0.0)
+        b_cue_s = get_track_cue_point(analysis_b, nxt_path, duration_s=b_dur_s)
+
+        # 2. Duración de la transición profesional (entre 4.0s y 7.0s según compás)
+        bpm_a = analysis_a.get("bpm") or 120.0
+        bar_s = (60.0 / bpm_a) * 4.0
+        mix_duration_s = max(4.0, min(8.0, bar_s * 2.0))
+        mix_duration_ms = int(mix_duration_s * 1000)
+
+        # 3. Transición armónica inteligente
+        from services.mix_types import KIND_BLEND, TransitionPlan
+        from services.transition_types import choose_type
+        pos_s = self.player.position() / 1000.0 if hasattr(self.player, "position") else 0.0
+        plan_instant = TransitionPlan(
+            a_start_s=round(pos_s, 3),
+            b_start_s=round(b_cue_s, 3),
+            length_s=round(mix_duration_s, 3),
+            kind=KIND_BLEND,
+            reason="Mezcla manual por IA con punto Cue"
+        )
+        t_type, reason = choose_type(analysis_a, analysis_b, plan_instant, bpm_a=bpm_a, profile=self._dj_profile)
+        cue_msg = f" desde {int(b_cue_s)}s" if b_cue_s > 0 else ""
+        self.notify(f"Mezcla DJ: {t_type.upper()}{cue_msg} ({reason})")
+
+        # 4. Animar físicamente la mesa DJ en pantalla
+        if hasattr(self, "page_dj") and self.page_dj:
+            self.page_dj.animate_transition(mix_duration_ms, t_type)
+
+        # 5. Configurar el plan para que el reproductor ejecute el fundido cruzado armónico
+        # y coloque la pista B directamente en su punto de CUE (b_start_s)
+        self._xf_plan = (nxt_path, plan_instant)
+        self._xf_request = mix_duration_ms
+        try:
+            self.play_next(natural=True)
+        finally:
+            self._xf_plan = None
+            self._xf_request = 0
 
     def _dj_remove(self, info: dict):
         """Quita una canción de todo lo que puede volver a sonar (cola, historial, sesión)."""

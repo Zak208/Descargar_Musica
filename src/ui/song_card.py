@@ -377,6 +377,7 @@ class SongResultCard(QFrame, HoverFader):
                 self.parent_window.set_context_from_card(self)
         except Exception:
             pass
+        self.preview_btn.setToolTip("Cargando vista previa...")
         self.parent_window.play_preview(self.item_info, self.preview_btn, pixmap)
 
     def start_download(self):

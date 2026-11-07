@@ -307,10 +307,24 @@ class PreviewAudioWorker(QThread):
             }
             with _yt().YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(self.url, download=False)
+                entry = None
                 if info and 'entries' in info and info['entries']:
-                    stream_url = info['entries'][0].get('url')
-                else:
-                    stream_url = info.get('url') if info else None
+                    entry = info['entries'][0]
+                elif info:
+                    entry = info
+
+                stream_url = entry.get('url') if entry else None
+                if not stream_url and entry and entry.get('formats'):
+                    for f in reversed(entry['formats']):
+                        if f.get('url') and (f.get('acodec') != 'none' or f.get('vcodec') == 'none'):
+                            stream_url = f.get('url')
+                            break
+                if not stream_url and entry and entry.get('webpage_url'):
+                    try:
+                        sub_info = ydl.extract_info(entry['webpage_url'], download=False)
+                        stream_url = sub_info.get('url') if sub_info else None
+                    except Exception:
+                        pass
 
                 if self.is_cancelled:
                     return

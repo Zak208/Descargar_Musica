@@ -1045,6 +1045,9 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
         elif btn and self.current_preview_btn == btn and self.player.playbackState() == QMediaPlayer.PausedState:
             self.player.play()
             return
+        elif btn and self.current_preview_btn == btn and hasattr(self, 'preview_worker') and self.preview_worker and self.preview_worker.isRunning():
+            self.notify("Cargando vista previa...")
+            return
 
         if self.current_preview_btn:
             self._safe_set_btn_text(self.current_preview_btn, " Escuchar", "play.svg")
@@ -1492,13 +1495,13 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
 
         self._use_default_audio_device()
 
-        if "googlevideo.com" in stream_url or "youtube.com" in stream_url:
+        if stream_url.startswith("http://") or stream_url.startswith("https://"):
             from services.streaming_proxy import StreamingProxy
             proxied_url = StreamingProxy.get_instance().get_stream_url(stream_url)
         else:
             proxied_url = stream_url
 
-        self.player.setSource(QUrl(proxied_url))
+        self.player.setSource(QUrl.fromUserInput(proxied_url))
         self.player.play()
         self.player_status.setText("Reproduciendo")
         self.btn_play_pause.set_state(True)

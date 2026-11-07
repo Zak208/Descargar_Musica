@@ -919,19 +919,45 @@ class DjPage(QWidget):
     def _on_auto_mix_clicked(self):
         """Dispara la mezcla inmediata por IA con animación visual en los controles."""
         self.auto_mix_requested.emit()
-        self.skip_requested.emit()
         if self.main_window and hasattr(self.main_window, "notify"):
             self.main_window.notify("¡Mezclando ahora! La IA ejecuta transición armónica al compás.")
 
-        # Si el modo automático está activo, simular la transición física del crossfader y filtros
-        if self._auto_mode:
-            current_xf = self.crossfader._pos
-            target_xf = 1.0 if current_xf < 0.0 else -1.0
-            self.crossfader.animateTo(target_xf, duration_ms=2500)
-            self.knob_filter_a.animateTo(0.65, duration_ms=1200)
-            self.knob_low_a.animateTo(-0.8, duration_ms=1800)
-            QTimer.singleShot(2500, lambda: self.knob_filter_a.animateTo(0.0, duration_ms=600))
-            QTimer.singleShot(2500, lambda: self.knob_low_a.animateTo(0.0, duration_ms=600))
+    def animate_transition(self, duration_ms: int = 5000, t_type: str = "smart_filter_eq"):
+        """Anima físicamente el crossfader, ecualizadores y filtros de la mesa DJ durante la transición."""
+        current_xf = self.crossfader._pos
+        target_xf = 1.0 if current_xf < 0.0 else -1.0
+        from_deck_a = current_xf <= 0.0
+
+        # Animar el crossfader a través de toda la duración de la mezcla
+        self.crossfader.animateTo(target_xf, duration_ms=duration_ms)
+
+        out_filter = self.knob_filter_a if from_deck_a else self.knob_filter_b
+        out_low = self.knob_low_a if from_deck_a else self.knob_low_b
+        out_mid = self.knob_mid_a if from_deck_a else self.knob_mid_b
+
+        in_filter = self.knob_filter_b if from_deck_a else self.knob_filter_a
+        in_low = self.knob_low_b if from_deck_a else self.knob_low_a
+
+        half_dur = max(400, duration_ms // 2)
+
+        # 1. Deck saliente: Mid-Carve (baja medios para dar sitio a la voz) y corte de graves (Bass Swap)
+        out_low.animateTo(-0.9, duration_ms=int(duration_ms * 0.45))
+        out_mid.animateTo(-0.4, duration_ms=int(duration_ms * 0.40))
+        out_filter.animateTo(0.70, duration_ms=int(duration_ms * 0.60))  # Paso alto (HPF)
+
+        # 2. Deck entrante: entra con filtro que abre progresivamente y graves completos
+        in_filter.animateTo(0.0, duration_ms=int(duration_ms * 0.70))
+        in_low.animateTo(0.0, duration_ms=half_dur)
+
+        # 3. Al terminar la mezcla: devolver los controles del nuevo plato a neutral (0.0)
+        def _reset_controls():
+            out_filter.animateTo(0.0, duration_ms=400)
+            out_low.animateTo(0.0, duration_ms=400)
+            out_mid.animateTo(0.0, duration_ms=400)
+            in_filter.animateTo(0.0, duration_ms=400)
+            in_low.animateTo(0.0, duration_ms=400)
+
+        QTimer.singleShot(duration_ms + 100, _reset_controls)
 
     def _on_crossfader_moved(self, pos: float):
         """Ajusta las ganancias de canal según la posición del crossfader (-1.0 a +1.0)."""
