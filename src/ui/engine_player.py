@@ -52,6 +52,7 @@ class EnginePlayer(QObject):
     def __init__(self, session, parent=None, resolve=None):
         super().__init__(parent)
         self.session = session
+        self.window_ref = parent
         self._resolve = resolve                 # ruta de Qt -> la misma canción escrita como la guarda la ventana (con ella se busca su análisis)
         self.audio_output = EngineOutput(session, self)
         self._state = QMediaPlayer.StoppedState
@@ -115,12 +116,13 @@ class EnginePlayer(QObject):
         self._position_ms = 0
         self._last_emitted_pos = -10_000
         start_s = 0.0
-        if hasattr(self.window_ref, "_xf_plan") and self.window_ref._xf_plan:
-            planned = self.window_ref._xf_plan
+        w_ref = getattr(self, "window_ref", None) or self.parent()
+        if w_ref and hasattr(w_ref, "_xf_plan") and w_ref._xf_plan:
+            planned = w_ref._xf_plan
             if planned and planned[0] == path and getattr(planned[1], "b_start_s", 0) > 0:
                 start_s = float(planned[1].b_start_s)
                 self._position_ms = int(start_s * 1000)
-        self.session.play(path, start_s, autoplay=False)
+        self.session.play(path, start_s, autoplay=True)
         self._timer.start()
 
     def play(self):

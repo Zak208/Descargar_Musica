@@ -1210,7 +1210,7 @@ class MainWindow(QMainWindow, PlaybackMixin, ListsMixin, HomeMixin, SearchMixin,
             return
 
         self._remember_current({'local_path': path})
-        xf_ms = self._xf_request if (autoplay and self.player.playbackState() == QMediaPlayer.PlayingState) else 0
+        xf_ms = self._xf_request if (autoplay and (self.player.playbackState() == QMediaPlayer.PlayingState or self._xf_request > 0)) else 0
         self._xf_request = 0
         if xf_ms > 0:
             self._begin_crossfade(xf_ms, path)       # lo que suena sigue sonando en otro reproductor y baja; este recibe la nueva

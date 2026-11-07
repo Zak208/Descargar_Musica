@@ -3,6 +3,39 @@
 Formato: `MAYOR.MENOR.PARCHE`. MAYOR = cambios que rompen datos o uso, MENOR = funciones nuevas, PARCHE = arreglos.
 Cada versión subida a GitHub tiene su etiqueta `vX.Y.Z` (pestaña *Releases/Tags*).
 
+## 1.23.0
+**Consola Virtual Completa Pioneer CDJ & DJM-A9, Control Hardware Integral y Avance Garantizado 'Mezclar Ahora'**
+- **Consola Virtual Completa Pioneer CDJ & DJM-A9**:
+  - Emulación hardware integral con las 5 secciones profesionales solicitadas:
+    1. **Reproductores CDJ (Izquierdo y Derecho)**:
+       - Pantalla digital CDJ (`DeckScreen`) con canción, artista, BPM, tono Camelot, pitch %, tiempo transcurrido/restante y forma de onda simulada.
+       - Barra superior de navegación: Puerto USB ("USB 1" / "USB 2") con indicador LED activo, botón Eject seguro, botón Load, botón Browse, botón Menu y botón Back.
+       - Jog Wheel giratorio realista con textura de vinilo y carátula central con soporte de modo Vinyl.
+       - Fader vertical de Tempo / Pitch (+/- 10%) con LED indicador de centro 0.0%, doble clic para reseteo y ajuste rítmico continuo.
+       - Controles rítmicos y de transporte: Master Tempo (Key Lock), Sync automático de compás, Quantize (LED rojo), Slip (LED naranja) y Reverse (REV).
+       - Sección de bucles Beat Loop: In / 4 Beat, Out, Reloop / Exit y divisores de compás 1/2X y 2X.
+       - Botones de salto rítmico Beat Jump (<< 1 compás y 1 compás >>).
+       - Hot Cue Pads con 4 pads de rendimiento retroiluminados RGB y selector de modos (Hot Cue, Loop y Jump).
+       - Botones de transporte principales circulares estilo Pioneer: Play/Pause iluminado en verde y Cue iluminado en ámbar.
+    2. **Mesa de Mezclas Pioneer DJM-A9**:
+       - Tiras de canal 1 y 2: Selector de entrada (USB A/B, LINE, PHONO), Trim/Gain con escala en dB, ecualizador de 3 bandas (HI, MID, LOW con corte kill), Sound Color FX + Filter resonante, botón iluminado Cue / PFL, fader de volumen y vúmetro LED estéreo de canal.
+       - Conmutador de asignación de crossfader (A / THRU / B).
+       - Rack de Beat FX central: Pantalla OLED, selector de efectos (Echo, Reverb, Delay, Flanger, Roll, Phaser, Filter FX), asignación de canal (Ch 1, Ch 2, Master), botones de división rítmica (< y >), potenciómetro giratorio Level/Depth y botón pulsante iluminado BEAT FX ON/OFF.
+       - Sección de Monitorización Master y Cabina: Master Level, vúmetro dual máster estéreo, Booth Monitor, Headphones Level & Mix (balance CUE/MASTER), Master Cue y selector Headphones A/B.
+       - Crossfader horizontal interactivo con curvas de potencia constante y botón destacado MEZCLAR AHORA.
+    3. **Conexiones y Entradas I/O (Panel Posterior)**:
+       - Ventana interactiva de panel trasero (`DjRearPanelDialog`): Master XLR balanceado, Master RCA, Booth Out TRS, puertos USB host/link, LAN Pro DJ Link, entradas de micrófono MIC con ganancia, AUX estéreo, LINE, tocadiscos PHONO (con preamplificador RIAA), conector de corriente IEC con interruptor e indicador LED, y borne de toma de tierra GND.
+    4. **Equipamiento Adicional de Cabina (`DjEnvironmentBar`)**:
+       - Barra de ecosistema de cabina interactiva que monitoriza Auriculares DJ, Monitores de Estudio de cabina, Altavoces PA de público, Subwoofer con detección de pegada grave, Micrófono con Talkover, Memorias USB, Ordenador Laptop, Tarjeta de Sonido 24-bit 96kHz y Soporte de DJ.
+    5. **Tabla de Referencia Rápida interactiva (`DjQuickReferenceGuide`)**:
+       - Guía de aprendizaje con los 12 controles clave en orden de prioridad: 1. Play/Pause, 2. Cue, 3. Jog Wheel, 4. Pitch Fader, 5. Sync, 6. Gain/Trim, 7. HI/MID/LOW, 8. Channel Fader, 9. Crossfader, 10. Headphones Cue, 11. Filter, 12. Beat FX.
+- **Corrección Definitiva del Avance de Canción en 'Mezclar Ahora'**:
+  - Solución al problema donde al pulsar "Mezclar Ahora" la mezcla no avanzaba a la siguiente pista:
+    - Se asegura que el parámetro `force_crossfade_ms` no sea anulado por `crossfade_ms()` cuando el fundido general de los Ajustes esté desactivado (`_fade_ms <= 0`).
+    - En `EnginePlayer`, se corrigió la referencia `window_ref` y se fijó `autoplay=True` en `setSource`, asegurando que la canción B comience a reproducirse inmediatamente en su punto de Cue en lugar de quedarse pausada.
+    - Función de contingencia inteligente `_dj_find_fallback_next()` para que siempre exista una canción preparada en Deck B (desde la cola, lista o descargas), impidiendo que la mezcla se detenga con "fin de lista".
+    - La cabina DJ siempre muestra la pista actual en Deck A y la siguiente en Deck B cuando hay música reproduciéndose en el programa, permitiendo mezclar en cualquier momento.
+
 ## 1.22.0
 **Transiciones Profesionales al Compás, Puntos Cue Inteligentes y Previsualización Robusta Universal**
 - **Transición Inmediata «🔥 Mezclar Ahora» Sin Cortes y con Animación de Mesa**:

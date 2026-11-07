@@ -436,17 +436,40 @@ class DjMixin:
             self._dj_prune_next()
             self.play_next()
 
+    def _dj_find_fallback_next(self, cur: dict) -> dict:
+        """Encuentra una pista siguiente válida para Deck B desde el contexto, la carpeta DJ o descargas."""
+        cur_path = (cur or {}).get("local_path")
+        if getattr(self, "_context", None):
+            for item in self._context:
+                p = item.get("local_path")
+                if p and p != cur_path and os.path.isfile(p):
+                    return dict(item)
+        if getattr(self, "_dj_summary", None):
+            paths = dj_service.without_blocked(dj_service.tracks_for(self._dj_summary, self._dj_source()))
+            for p in paths:
+                if p != cur_path and os.path.isfile(p):
+                    return self._local_track_info(p, {})
+        if hasattr(self, "download_service"):
+            for d in getattr(self.download_service, "get_all_downloads", lambda: [])():
+                p = d.get("local_path")
+                if p and p != cur_path and os.path.isfile(p):
+                    return dict(d)
+        return None
+
     def dj_trigger_now_mix(self):
         """Dispara una transición DJ inmediata hacia la siguiente canción (con punto de cue, ecualización, filtros y efectos)."""
         if not self.current_item_info:
+            self.notify("No hay ninguna pista en reproducción.")
             return
-        if not self.dj_session_active():
-            self.play_next()
-            return
-        self._dj_prune_next()
+
         nxt = self.peek_next()
         if not nxt:
-            self.notify("No hay siguiente canción para mezclar en la sesión.")
+            nxt = self._dj_find_fallback_next(self.current_item_info)
+            if nxt:
+                self.playback_queue.insert(0, nxt)
+
+        if not nxt:
+            self.notify("No hay siguiente canción para mezclar.")
             return
 
         nxt_path = nxt.get("local_path")
@@ -459,12 +482,11 @@ class DjMixin:
         analysis_b = self._dj_analysis.get(nxt_path, {}) if nxt_path else {}
 
         # 1. Determinar el mejor punto de entrada (Cue Point) de la pista B
-        # Nunca empieza en 0.0s si hay intro, drop o compás donde el ritmo tenga fuerza
         from services.cue_detector import get_track_cue_point
         b_dur_s = float(analysis_b.get("duration_s") or (analysis_b.get("duration_ms", 0) / 1000.0) or 0.0)
         b_cue_s = get_track_cue_point(analysis_b, nxt_path, duration_s=b_dur_s)
 
-        # 2. Duración de la transición profesional (entre 4.0s y 7.0s según compás)
+        # 2. Duración de la transición profesional
         bpm_a = analysis_a.get("bpm") or 120.0
         bar_s = (60.0 / bpm_a) * 4.0
         mix_duration_s = max(4.0, min(8.0, bar_s * 2.0))
@@ -489,15 +511,19 @@ class DjMixin:
         if hasattr(self, "page_dj") and self.page_dj:
             self.page_dj.animate_transition(mix_duration_ms, t_type)
 
-        # 5. Configurar el plan para que el reproductor ejecute el fundido cruzado armónico
-        # y coloque la pista B directamente en su punto de CUE (b_start_s)
-        self._xf_plan = (nxt_path, plan_instant)
-        self._xf_request = mix_duration_ms
-        try:
-            self.play_next(natural=True)
-        finally:
-            self._xf_plan = None
-            self._xf_request = 0
+        # 5. Ejecutar la transición garantizada
+        if self.dj_engine_on() and self._dj_engine_session is not None:
+            self._remember_current({'local_path': nxt_path})
+            from services.metadata_service import MetadataService
+            meta = MetadataService.read_metadata(nxt_path)
+            self.current_item_info = self._local_track_info(nxt_path, meta)
+            self._dj_engine_session.play(nxt_path, start_s=b_cue_s, autoplay=True)
+            self._on_track_changed()
+            self.refresh_dj_page()
+        else:
+            self._xf_plan = (nxt_path, plan_instant)
+            self._xf_request = mix_duration_ms
+            self.play_next(natural=True, force_crossfade_ms=mix_duration_ms)
 
     def _dj_remove(self, info: dict):
         """Quita una canción de todo lo que puede volver a sonar (cola, historial, sesión)."""
@@ -652,11 +678,14 @@ class DjMixin:
             where += f" · {total} " + ("canción" if total == 1 else "canciones")
         page.set_source(where, len(dj_service.get_blocked()))
         page.set_progress(self._dj_progress_text())
-        if not self.dj_session_active():
+        cur = self.current_item_info
+        if not cur:
             page.set_session(False)
             return
+        nxt = self.peek_next() or self._dj_find_fallback_next(cur)
         upcoming = self.upcoming_tracks(UPCOMING_SHOWN)
-        page.set_session(True, self.current_item_info, self.peek_next(), upcoming, self._dj_remaining(), self.dj_describe)
+        remaining = self._dj_remaining() if self.dj_session_active() else 0
+        page.set_session(True, cur, nxt, upcoming, remaining, self.dj_describe)
         page.set_vote_target(self.dj_vote_text())
         self.dj_tick()
 

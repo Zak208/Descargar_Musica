@@ -160,7 +160,7 @@ class PlaybackMixin:
             except Exception:
                 pass
         if info.get('local_path'):
-            self._xf_request = int(crossfade_ms)
+            self._xf_request = int(crossfade_ms) if crossfade_ms > 0 else getattr(self, "_xf_request", 0)
             try:
                 self.play_local_file(info['local_path'])
             finally:
@@ -280,12 +280,13 @@ class PlaybackMixin:
         self._play_entry(nxt, crossfade_ms=xf)
         return True
 
-    def play_next(self, natural: bool = False):
+    def play_next(self, natural: bool = False, force_crossfade_ms: int = 0):
         """Siguiente: primero la cola manual, luego lo que se dejó atrás con 'anterior', luego la lista.
-        `natural`: lo pide el fundido cruzado al acercarse el final de la canción."""
+        `natural`: lo pide el fundido cruzado al acercarse el final de la canción.
+        `force_crossfade_ms`: si es > 0, fuerza la duración de mezcla (DJ 'Mezclar Ahora')."""
         if not self.current_item_info:
             return
-        xf = self.crossfade_ms(natural)
+        xf = int(force_crossfade_ms) if force_crossfade_ms > 0 else self.crossfade_ms(natural)
         while self.playback_queue:
             nxt = self.playback_queue.pop(0)
             if self.playable(nxt):
