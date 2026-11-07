@@ -34,6 +34,8 @@ por toda la biblioteca. Sin Qt ni numpy: son listas de datos."""
 import bisect
 import math
 import random
+import re
+import unicodedata
 from collections import namedtuple
 
 from services import camelot, mix_planner
@@ -169,6 +171,40 @@ def key_fit(a: Track, b: Track) -> float:
     return NEUTRAL + (camelot.score(a.tone, b.tone) - NEUTRAL) * trust
 
 
+# Familias de género canónicas para el modo DJ profesional
+GENRE_HOUSE = "house"
+GENRE_REGGAETON = "reggaeton"
+GENRE_HIPHOP = "hiphop"
+GENRE_EDM = "edm"
+GENRE_POP = "pop"
+
+_GENRE_PATTERNS = (
+    (re.compile(r"\b(?:house|techno|tech\s*house|deep\s*house|minimal|afro\s*house|acid|melodic\s*techno)\b", re.I), GENRE_HOUSE),
+    (re.compile(r"\b(?:reggaet[oó]n|dembow|perreo|urbano|latin\s*urban|moombahton)\b", re.I), GENRE_REGGAETON),
+    (re.compile(r"\b(?:hip[-\s]?hop|rap|trap|boom\s*bap|drill|r&b|lo-?fi\s*hip\s*hop)\b", re.I), GENRE_HIPHOP),
+    (re.compile(r"\b(?:edm|electro|big\s*room|festival|future\s*bass|dubstep|hardstyle|trance|dnb|drum\s*and\s*bass)\b", re.I), GENRE_EDM),
+    (re.compile(r"\b(?:pop|latin\s*pop|dance\s*pop|synthpop|indie\s*pop|comercial)\b", re.I), GENRE_POP),
+)
+
+
+def classify_genre(text, bpm=None) -> str:
+    """Clasifica el género (y opcionalmente tempo) en una familia canónica de DJ profesional."""
+    if not text or not str(text).strip():
+        return ""
+    name = unicodedata.normalize("NFKD", str(text)).encode("ascii", "ignore").decode().lower()
+    for pattern, family in _GENRE_PATTERNS:
+        if pattern.search(name):
+            return family
+    if bpm and isinstance(bpm, (int, float)) and bpm > 0:
+        if 120 <= bpm <= 132:
+            return GENRE_HOUSE
+        elif 85 <= bpm <= 102:
+            return GENRE_REGGAETON
+        elif 70 <= bpm <= 84 or 138 <= bpm <= 165:
+            return GENRE_HIPHOP
+    return ""
+
+
 def _genre(text) -> str:
     return str(text or "").lower().replace("/", ";").replace(",", ";").split(";")[0].strip()
 
@@ -177,7 +213,12 @@ def genre_fit(a, b) -> float:
     ga, gb = _genre(a), _genre(b)
     if not ga or not gb:
         return NEUTRAL
-    return 1.0 if ga == gb else OTHER_GENRE
+    if ga == gb:
+        return 1.0
+    fam_a, fam_b = classify_genre(ga), classify_genre(gb)
+    if fam_a and fam_b and fam_a == fam_b:
+        return 0.85
+    return OTHER_GENRE
 
 
 def _artist(text) -> str:

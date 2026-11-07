@@ -653,5 +653,54 @@ def washout_reverb(audio, decay_s: float = 3.5, mix_start: float = 0.0, mix_end:
 def space_reverb(audio, decay_s: float = 2.5, mix: float = 0.4, tail_s: float = None,
                  sample_rate: int = SAMPLE_RATE, seed: int = 42):
     """Reverberación espacial de sala amplia para uso interactivo en el rack de efectos."""
-    return reverb_tail(audio, decay_s=decay_s, mix=mix, tail_s=tail_s,
-                       sample_rate=sample_rate, seed=seed)
+    return reverb_tail(audio, decay_s=decay_s, mix=mix, tail_s=tail_s, sample_rate=sample_rate, seed=seed)
+
+
+
+def vinyl_brake(audio, duration_s: float = 1.0, curve: float = 2.0, sample_rate: int = SAMPLE_RATE):
+    """Efecto de parada de motor de vinilo (turntable vinyl brake).
+
+    Desacelera la reproducción desde velocidad 1.0 a 0.0 a lo largo de duration_s,
+    con caída de pitch y tiempo realista, simulando la inercia del plato giratorio al apagarse.
+    Técnica clásica de DJ para transiciones en Hip-Hop, Trap y Boom Bap.
+
+    audio: entrada (n, 2) o compatible.
+    duration_s: duración del frenado en segundos (0.2 a 4.0 s).
+    curve: exponente de la curva de frenado (2.0 = inercia cuadrática analógica clásica).
+    sample_rate: frecuencia de muestreo.
+    Devuelve (n, 2) float32 estéreo con el frenado en el tramo final o en todo el audio.
+    """
+    np = _np()
+    x = _stereo(audio)
+    n = len(x)
+    if n == 0:
+        return np.zeros((0, 2), dtype=np.float32)
+
+    dur = max(0.1, float(duration_s))
+    brake_len = min(n, max(1, int(round(dur * sample_rate))))
+    pre_len = n - brake_len
+
+    out = np.zeros((n, 2), dtype=np.float32)
+    if pre_len > 0:
+        out[:pre_len] = x[:pre_len]
+
+    u = np.arange(brake_len, dtype=np.float64)
+    v = np.maximum(0.0, 1.0 - (u / float(brake_len))) ** max(0.5, float(curve))
+    src_pos = pre_len + np.cumsum(v)
+    src_pos = np.clip(src_pos, 0, n - 1)
+
+    idx = src_pos.astype(np.int64)
+    idx = np.clip(idx, 0, max(0, n - 2))
+    frac = (src_pos - idx)[:, None]
+
+    if n >= 2:
+        brake_audio = (1.0 - frac) * x[idx] + frac * x[np.minimum(idx + 1, n - 1)]
+    else:
+        brake_audio = x[idx]
+
+    fade_len = min(brake_len, max(1, int(0.02 * sample_rate)))
+    brake_audio[-fade_len:] *= np.linspace(1.0, 0.0, fade_len)[:, None]
+
+    out[pre_len:] = brake_audio.astype(np.float32)
+    return limit_peak(out)
+

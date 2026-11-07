@@ -14,7 +14,8 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QWidget, QSizePolicy, QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QComboBox, QTableWidget, QTableWidgetItem, QHeaderView, QGridLayout
+    QFrame, QComboBox, QTableWidget, QTableWidgetItem, QHeaderView, QGridLayout,
+    QLineEdit
 )
 
 
@@ -97,6 +98,15 @@ class DjRotaryKnob(QWidget):
             step = (self.max_val - self.min_val) / 120.0
             self.setValue(self._value + dy * step)
             event.accept()
+
+    def wheelEvent(self, event):
+        delta = event.angleDelta().y()
+        step = (self.max_val - self.min_val) / 40.0
+        if delta > 0:
+            self.setValue(self._value + step)
+        elif delta < 0:
+            self.setValue(self._value - step)
+        event.accept()
 
     def paintEvent(self, event):
         p = QPainter(self)
@@ -195,6 +205,13 @@ class DjJogWheel(QWidget):
     def isVinylMode(self) -> bool:
         return self._vinyl_mode
 
+    @property
+    def angle(self) -> float:
+        return self._angle
+
+    def currentAngle(self) -> float:
+        return self._angle
+
     def setPlaying(self, playing: bool):
         self._playing = bool(playing)
         if self._playing and not self._timer.isActive() and not self._dragging:
@@ -254,6 +271,17 @@ class DjJogWheel(QWidget):
             if self._playing and not self._timer.isActive():
                 self._timer.start()
             event.accept()
+
+    def wheelEvent(self, event):
+        delta = event.angleDelta().y()
+        if self._vinyl_mode:
+            self.scratched.emit(int(delta * 2.0))
+        else:
+            nudge = 0.05 if delta > 0 else -0.05
+            self.nudged.emit(nudge)
+        self._angle = (self._angle + (delta * 0.1)) % 360.0
+        self.update()
+        event.accept()
 
     def paintEvent(self, event):
         p = QPainter(self)
@@ -378,6 +406,22 @@ class DjVuMeter(QWidget):
             self._decay_timer.start()
         self.update()
 
+    @property
+    def _level_l(self) -> float:
+        return self._left
+
+    @property
+    def _level_r(self) -> float:
+        return self._right
+
+    @property
+    def left_level(self) -> float:
+        return self._left
+
+    @property
+    def right_level(self) -> float:
+        return self._right
+
     def _decay(self):
         self._left = max(0.0, self._left - 0.05)
         self._right = max(0.0, self._right - 0.05)
@@ -446,7 +490,14 @@ class DjCrossfader(QWidget):
 
     crossfaderPos = Property(float, _get_pos, _set_pos)
 
+    @property
+    def value(self) -> float:
+        return self._pos
+
     def setPosition(self, pos: float):
+        self._set_pos(pos)
+
+    def setValue(self, pos: float):
         self._set_pos(pos)
 
     def animateTo(self, target_pos: float, duration_ms: int = 2000):
@@ -479,6 +530,11 @@ class DjCrossfader(QWidget):
         if event.button() == Qt.LeftButton:
             self.setPosition(0.0)  # Centro
             event.accept()
+
+    def wheelEvent(self, event):
+        delta = event.angleDelta().y()
+        self.setPosition(self._pos + (0.05 if delta > 0 else -0.05))
+        event.accept()
 
     def _update_from_mouse(self, x: float):
         margin = max(14, int(self.width() * 0.08))
@@ -566,6 +622,10 @@ class DjFader(QWidget):
 
     faderValue = Property(float, _get_value, _set_value)
 
+    @property
+    def value(self) -> float:
+        return self._value
+
     def setValue(self, val: float):
         self._set_value(val)
 
@@ -592,6 +652,11 @@ class DjFader(QWidget):
         if event.button() == Qt.LeftButton:
             self._dragging = False
             event.accept()
+
+    def wheelEvent(self, event):
+        delta = event.angleDelta().y()
+        self.setValue(self._value + (0.05 if delta > 0 else -0.05))
+        event.accept()
 
     def _update_from_mouse(self, y: float):
         margin = max(8, int(self.height() * 0.10))
@@ -712,6 +777,11 @@ class DjPitchFader(QWidget):
             self._dragging = False
             event.accept()
 
+    def wheelEvent(self, event):
+        delta = event.angleDelta().y()
+        self.setValue(self._value + (0.05 if delta < 0 else -0.05))
+        event.accept()
+
     def _update_from_mouse(self, y: float):
         margin = max(10, int(self.height() * 0.08))
         h = self.height() - margin * 2
@@ -775,12 +845,14 @@ class DjPitchFader(QWidget):
 class DjHotCuePads(QWidget):
     """Pads de rendimiento multifunción (Hot Cue, Beat Loop, Beat Jump) con retroiluminación RGB."""
     padTriggered = Signal(int, str)  # pad_index (0..3), mode ("HOT CUE" | "LOOP" | "JUMP")
+    padCleared = Signal(int)        # pad_index (0..3) para borrar Hot Cue con clic secundario
 
     def __init__(self, accent_color="#1ED760", parent=None):
         super().__init__(parent)
         self.accent_color = accent_color
         self._mode = "HOT CUE"
         self._pad_colors = ["#00FF66", "#FF8800", "#00DDFF", "#FF0088"]
+        self._active_cues = [False, False, False, False]
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -822,6 +894,8 @@ class DjHotCuePads(QWidget):
             btn.setCursor(Qt.PointingHandCursor)
             btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
             btn.setMinimumHeight(24)
+            btn.setContextMenuPolicy(Qt.CustomContextMenu)
+            btn.customContextMenuRequested.connect(lambda _pos, idx=i: self._on_pad_right_clicked(idx))
             c = self._pad_colors[i]
             btn.setStyleSheet(f"""
                 QPushButton {{
@@ -841,6 +915,14 @@ class DjHotCuePads(QWidget):
         lay.addLayout(pads_lay)
         self._update_mode_ui()
 
+    @property
+    def pads(self):
+        return self._pad_buttons
+
+    @property
+    def _pads(self):
+        return self._pad_buttons
+
     def setMode(self, mode: str):
         self._mode = mode
         self._update_mode_ui()
@@ -854,6 +936,48 @@ class DjHotCuePads(QWidget):
 
     def _on_pad_clicked(self, idx: int):
         self.padTriggered.emit(idx, self._mode)
+
+    def _on_pad_right_clicked(self, idx: int):
+        self.setCueActive(idx, False)
+        self.padCleared.emit(idx)
+
+    def setCueActive(self, idx: int, active: bool, label_text: str = ""):
+        if 0 <= idx < len(self._pad_buttons):
+            self._active_cues[idx] = bool(active)
+            btn = self._pad_buttons[idx]
+            c = self._pad_colors[idx]
+            if active and self._mode == "HOT CUE":
+                text = label_text if label_text else f"● {idx + 1}"
+                btn.setText(text)
+                btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: {c};
+                        color: #000000;
+                        font-size: 10px;
+                        font-weight: 900;
+                        border: 2px solid #FFFFFF;
+                        border-radius: 4px;
+                    }}
+                    QPushButton:hover {{ background-color: {c}CC; }}
+                """)
+            else:
+                btn.setText(str(idx + 1))
+                btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: #161620;
+                        color: {c};
+                        font-size: 11px;
+                        font-weight: 900;
+                        border: 1.5px solid {c};
+                        border-radius: 4px;
+                    }}
+                    QPushButton:hover {{ background-color: {c}33; }}
+                    QPushButton:pressed {{ background-color: {c}; color: #000000; }}
+                """)
+
+    def clearAllCues(self):
+        for i in range(4):
+            self.setCueActive(i, False)
 
 
 # =====================================================================================================
@@ -869,13 +993,14 @@ class DjLoopControls(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._loop_active = False
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(3)
 
-        btn_in = QPushButton("IN / 4BEAT")
-        btn_in.setCursor(Qt.PointingHandCursor)
-        btn_in.setStyleSheet("""
+        self.btn_in = QPushButton("IN / 4BEAT")
+        self.btn_in.setCursor(Qt.PointingHandCursor)
+        self.btn_in.setStyleSheet("""
             QPushButton {
                 min-width: 0px;
                 background-color: #383015;
@@ -888,11 +1013,11 @@ class DjLoopControls(QWidget):
             }
             QPushButton:hover { background-color: #4C401D; }
         """)
-        btn_in.clicked.connect(self.loopInRequested.emit)
+        self.btn_in.clicked.connect(self.loopInRequested.emit)
 
-        btn_out = QPushButton("OUT")
-        btn_out.setCursor(Qt.PointingHandCursor)
-        btn_out.setStyleSheet("""
+        self.btn_out = QPushButton("OUT")
+        self.btn_out.setCursor(Qt.PointingHandCursor)
+        self.btn_out.setStyleSheet("""
             QPushButton {
                 min-width: 0px;
                 background-color: #383015;
@@ -905,11 +1030,11 @@ class DjLoopControls(QWidget):
             }
             QPushButton:hover { background-color: #4C401D; }
         """)
-        btn_out.clicked.connect(self.loopOutRequested.emit)
+        self.btn_out.clicked.connect(self.loopOutRequested.emit)
 
-        btn_reloop = QPushButton("RELOOP")
-        btn_reloop.setCursor(Qt.PointingHandCursor)
-        btn_reloop.setStyleSheet("""
+        self.btn_reloop = QPushButton("RELOOP")
+        self.btn_reloop.setCursor(Qt.PointingHandCursor)
+        self.btn_reloop.setStyleSheet("""
             QPushButton {
                 min-width: 0px;
                 background-color: #382415;
@@ -922,23 +1047,53 @@ class DjLoopControls(QWidget):
             }
             QPushButton:hover { background-color: #4C301D; }
         """)
-        btn_reloop.clicked.connect(self.reloopRequested.emit)
+        self.btn_reloop.clicked.connect(self.reloopRequested.emit)
 
-        btn_half = QPushButton("1/2X")
-        btn_half.setCursor(Qt.PointingHandCursor)
-        btn_half.setStyleSheet("QPushButton { min-width: 0px; background-color: #1E1E26; color: #AAA; font-size: 8px; font-weight: bold; border-radius: 3px; padding: 3px 4px; }")
-        btn_half.clicked.connect(self.halfLoopRequested.emit)
+        self.btn_half = QPushButton("1/2X")
+        self.btn_half.setCursor(Qt.PointingHandCursor)
+        self.btn_half.setStyleSheet("QPushButton { min-width: 0px; background-color: #1E1E26; color: #AAA; font-size: 8px; font-weight: bold; border-radius: 3px; padding: 3px 4px; }")
+        self.btn_half.clicked.connect(self.halfLoopRequested.emit)
 
-        btn_double = QPushButton("2X")
-        btn_double.setCursor(Qt.PointingHandCursor)
-        btn_double.setStyleSheet("QPushButton { min-width: 0px; background-color: #1E1E26; color: #AAA; font-size: 8px; font-weight: bold; border-radius: 3px; padding: 3px 4px; }")
-        btn_double.clicked.connect(self.doubleLoopRequested.emit)
+        self.btn_double = QPushButton("2X")
+        self.btn_double.setCursor(Qt.PointingHandCursor)
+        self.btn_double.setStyleSheet("QPushButton { min-width: 0px; background-color: #1E1E26; color: #AAA; font-size: 8px; font-weight: bold; border-radius: 3px; padding: 3px 4px; }")
+        self.btn_double.clicked.connect(self.doubleLoopRequested.emit)
 
-        lay.addWidget(btn_in)
-        lay.addWidget(btn_out)
-        lay.addWidget(btn_reloop)
-        lay.addWidget(btn_half)
-        lay.addWidget(btn_double)
+        lay.addWidget(self.btn_in)
+        lay.addWidget(self.btn_out)
+        lay.addWidget(self.btn_reloop)
+        lay.addWidget(self.btn_half)
+        lay.addWidget(self.btn_double)
+
+    def setLoopActive(self, active: bool):
+        self._loop_active = bool(active)
+        if self._loop_active:
+            self.btn_reloop.setStyleSheet("""
+                QPushButton {
+                    min-width: 0px;
+                    background-color: #FF8822;
+                    color: #000000;
+                    font-size: 8px;
+                    font-weight: 900;
+                    border: 1.5px solid #FFFFFF;
+                    border-radius: 3px;
+                    padding: 3px 4px;
+                }
+            """)
+        else:
+            self.btn_reloop.setStyleSheet("""
+                QPushButton {
+                    min-width: 0px;
+                    background-color: #382415;
+                    color: #FF8822;
+                    font-size: 8px;
+                    font-weight: 900;
+                    border: 1px solid #FF8822;
+                    border-radius: 3px;
+                    padding: 3px 4px;
+                }
+                QPushButton:hover { background-color: #4C301D; }
+            """)
 
 
 # =====================================================================================================
@@ -1025,22 +1180,22 @@ class DjBeatFxRack(QWidget):
         ctrl_row = QHBoxLayout()
         ctrl_row.setSpacing(6)
 
-        btn_prev_beat = QPushButton("<")
-        btn_prev_beat.setCursor(Qt.PointingHandCursor)
-        btn_prev_beat.setStyleSheet("QPushButton { min-width: 0px; background-color: #22222E; color: #FFF; font-size: 11px; font-weight: 900; border-radius: 4px; padding: 4px 6px; }")
-        btn_prev_beat.clicked.connect(self._prev_beat)
+        self.btn_prev_beat = QPushButton("<")
+        self.btn_prev_beat.setCursor(Qt.PointingHandCursor)
+        self.btn_prev_beat.setStyleSheet("QPushButton { min-width: 0px; background-color: #22222E; color: #FFF; font-size: 11px; font-weight: 900; border-radius: 4px; padding: 4px 6px; }")
+        self.btn_prev_beat.clicked.connect(self._prev_beat)
 
-        btn_next_beat = QPushButton(">")
-        btn_next_beat.setCursor(Qt.PointingHandCursor)
-        btn_next_beat.setStyleSheet("QPushButton { min-width: 0px; background-color: #22222E; color: #FFF; font-size: 11px; font-weight: 900; border-radius: 4px; padding: 4px 6px; }")
-        btn_next_beat.clicked.connect(self._next_beat)
+        self.btn_next_beat = QPushButton(">")
+        self.btn_next_beat.setCursor(Qt.PointingHandCursor)
+        self.btn_next_beat.setStyleSheet("QPushButton { min-width: 0px; background-color: #22222E; color: #FFF; font-size: 11px; font-weight: 900; border-radius: 4px; padding: 4px 6px; }")
+        self.btn_next_beat.clicked.connect(self._next_beat)
 
         self.knob_depth = DjRotaryKnob("DEPTH", min_val=0.0, max_val=1.0, default_val=0.5, accent_color="#00D2FF", bipolar=False, unit="%")
         self.knob_depth.valueChanged.connect(self._on_depth_changed)
 
-        ctrl_row.addWidget(btn_prev_beat)
+        ctrl_row.addWidget(self.btn_prev_beat)
         ctrl_row.addWidget(self.knob_depth)
-        ctrl_row.addWidget(btn_next_beat)
+        ctrl_row.addWidget(self.btn_next_beat)
         lay.addLayout(ctrl_row)
 
         self.btn_on_off = QPushButton("BEAT FX ON/OFF")
@@ -1118,6 +1273,35 @@ class DjBeatFxRack(QWidget):
         self.fxToggled.emit(self._is_active)
         self._emit_change()
 
+    def setActive(self, active: bool):
+        if self._is_active != bool(active):
+            self._toggle_fx()
+
+    def setFx(self, fx_name: str):
+        fx_upper = str(fx_name).strip().upper()
+        for i in range(self.combo_fx.count()):
+            if self.combo_fx.itemText(i).upper() == fx_upper or fx_upper in self.combo_fx.itemText(i).upper():
+                self.combo_fx.setCurrentIndex(i)
+                return
+        self._current_fx = fx_upper
+        self.lbl_fx_name.setText(fx_upper)
+        self._emit_change()
+
+    def setBeat(self, beat_str: str):
+        b_str = str(beat_str).strip()
+        if b_str in self.BEATS:
+            self._beat_idx = self.BEATS.index(b_str)
+            self.lbl_beat.setText(f"BEAT: {self.BEATS[self._beat_idx]}")
+            self._emit_change()
+
+    @property
+    def _current_beat(self) -> str:
+        return self.BEATS[self._beat_idx]
+
+    @property
+    def current_beat(self) -> str:
+        return self.BEATS[self._beat_idx]
+
     def _emit_change(self):
         beat_val = [0.25, 0.5, 0.75, 1.0, 2.0, 4.0][self._beat_idx]
         self.fxChanged.emit(self._current_fx.lower(), {
@@ -1134,9 +1318,17 @@ class DjBeatFxRack(QWidget):
 class DjMasterMonitorSection(QWidget):
     """Sección de Master, Booth y Monitorización de Auriculares (Headphones Level, Mix, Cue A/B)."""
     cueToggled = Signal(str, bool)
+    masterVolumeChanged = Signal(float)
+    boothVolumeChanged = Signal(float)
+    hpLevelChanged = Signal(float)
+    hpMixChanged = Signal(float)
+    hpAbToggled = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._m_cue_active = False
+        self._hp_ab_mode = "A"
+
         lay = QVBoxLayout(self)
         lay.setContentsMargins(4, 4, 4, 4)
         lay.setSpacing(6)
@@ -1150,6 +1342,8 @@ class DjMasterMonitorSection(QWidget):
         knobs_row1.setSpacing(4)
         self.knob_master = DjRotaryKnob("MASTER", 0.0, 1.0, 0.8, accent_color="#FFFFFF", bipolar=False, unit="%")
         self.knob_booth = DjRotaryKnob("BOOTH", 0.0, 1.0, 0.7, accent_color="#FFAA00", bipolar=False, unit="%")
+        self.knob_master.valueChanged.connect(self.masterVolumeChanged.emit)
+        self.knob_booth.valueChanged.connect(self.boothVolumeChanged.emit)
         knobs_row1.addWidget(self.knob_master)
         knobs_row1.addWidget(self.knob_booth)
         lay.addLayout(knobs_row1)
@@ -1157,7 +1351,10 @@ class DjMasterMonitorSection(QWidget):
         knobs_row2 = QHBoxLayout()
         knobs_row2.setSpacing(4)
         self.knob_hp_level = DjRotaryKnob("HP VOL", 0.0, 1.0, 0.75, accent_color="#00E5FF", bipolar=False, unit="%")
+        self.knob_hp_vol = self.knob_hp_level
         self.knob_hp_mix = DjRotaryKnob("HP MIX", -1.0, 1.0, 0.0, accent_color="#00E5FF", bipolar=True, unit="%")
+        self.knob_hp_level.valueChanged.connect(self.hpLevelChanged.emit)
+        self.knob_hp_mix.valueChanged.connect(self.hpMixChanged.emit)
         knobs_row2.addWidget(self.knob_hp_level)
         knobs_row2.addWidget(self.knob_hp_mix)
         lay.addLayout(knobs_row2)
@@ -1165,6 +1362,7 @@ class DjMasterMonitorSection(QWidget):
         cue_row = QHBoxLayout()
         cue_row.setSpacing(4)
         self.btn_cue_master = QPushButton("M-CUE")
+        self.btn_master_cue = self.btn_cue_master
         self.btn_cue_master.setCursor(Qt.PointingHandCursor)
         self.btn_cue_master.setStyleSheet("""
             QPushButton {
@@ -1179,15 +1377,55 @@ class DjMasterMonitorSection(QWidget):
             }
             QPushButton:hover { background-color: #443018; }
         """)
-        self.btn_cue_master.clicked.connect(lambda: self.cueToggled.emit("MASTER", True))
+        self.btn_cue_master.clicked.connect(self._toggle_master_cue)
 
-        self.btn_hp_ab = QPushButton("HP A/B")
+        self.btn_hp_ab = QPushButton("HP A")
+        self.btn_hp_a_b = self.btn_hp_ab
         self.btn_hp_ab.setCursor(Qt.PointingHandCursor)
-        self.btn_hp_ab.setStyleSheet("QPushButton { min-width: 0px; background-color: #1E1E26; color: #AAA; font-size: 9px; font-weight: bold; border-radius: 4px; padding: 3px 6px; }")
+        self.btn_hp_ab.setStyleSheet("QPushButton { min-width: 0px; background-color: #1E1E26; color: #00E5FF; font-size: 9px; font-weight: bold; border-radius: 4px; padding: 3px 6px; border: 1px solid #00E5FF; }")
+        self.btn_hp_ab.clicked.connect(self._toggle_hp_ab)
 
         cue_row.addWidget(self.btn_cue_master)
         cue_row.addWidget(self.btn_hp_ab)
         lay.addLayout(cue_row)
+
+    def _toggle_master_cue(self):
+        self._m_cue_active = not self._m_cue_active
+        if self._m_cue_active:
+            self.btn_cue_master.setStyleSheet("""
+                QPushButton {
+                    min-width: 0px;
+                    background-color: #FFAA33;
+                    color: #000000;
+                    font-size: 9px;
+                    font-weight: 900;
+                    border: 1.5px solid #FFFFFF;
+                    border-radius: 4px;
+                    padding: 3px 6px;
+                }
+            """)
+        else:
+            self.btn_cue_master.setStyleSheet("""
+                QPushButton {
+                    min-width: 0px;
+                    background-color: #2D2010;
+                    color: #FFAA33;
+                    font-size: 9px;
+                    font-weight: 800;
+                    border: 1px solid #FFAA33;
+                    border-radius: 4px;
+                    padding: 3px 6px;
+                }
+                QPushButton:hover { background-color: #443018; }
+            """)
+        self.cueToggled.emit("MASTER", self._m_cue_active)
+
+    def _toggle_hp_ab(self):
+        self._hp_ab_mode = "B" if self._hp_ab_mode == "A" else "A"
+        color = "#00E5FF" if self._hp_ab_mode == "A" else "#FF7700"
+        self.btn_hp_ab.setText(f"HP {self._hp_ab_mode}")
+        self.btn_hp_ab.setStyleSheet(f"QPushButton {{ min-width: 0px; background-color: #1E1E26; color: {color}; font-size: 9px; font-weight: bold; border-radius: 4px; padding: 3px 6px; border: 1px solid {color}; }}")
+        self.hpAbToggled.emit(self._hp_ab_mode)
 
 
 # =====================================================================================================
@@ -1195,11 +1433,28 @@ class DjMasterMonitorSection(QWidget):
 # =====================================================================================================
 class DjRearPanelDialog(QDialog):
     """Panel posterior gráfico con todas las entradas y salidas reales del DJM-A9 y CDJs:
-    Master XLR, Master RCA, Booth Out, USBs, LAN Pro DJ Link, MIC Inputs, AUX, LINE, PHONO, Power y Tierra."""
+    Master XLR, Master RCA, Booth Out, USBs, LAN Pro DJ Link, MIC Inputs, AUX, LINE, PHONO, Power y Tierra.
+    Totalmente interactivo: cada conector responde a clics conmutando conexión y mostrando especificaciones técnicas."""
+    connectionToggled = Signal(str, bool)
+
+    CONNECTORS = [
+        ("Master XLR", "Salida principal balanceada (L/R) a sistema de sonido PA profesional", "XLR L/R", "#00FF66", "+24 dBu max, balanceado 600 Ω, Neutrik NC3MD"),
+        ("Master RCA", "Salida principal no balanceada (L/R) mediante conectores RCA dorados", "RCA L/R", "#FFCC00", "+18 dBV max, chapado en oro, 10 kΩ"),
+        ("Booth Out", "Salida estéreo balanceada (Jack 1/4\" TRS) para monitores de cabina", "JACK TRS", "#00CCFF", "+24 dBu max, balanceado 600 Ω, TRS 6.35mm"),
+        ("USB Host/Link", "Conexión USB Type-B y Type-C con ordenador (Antigravity DJ / Rekordbox)", "USB DUAL", "#FF0055", "32-bit / 96 kHz, USB Audio Class 2.0 asíncrono"),
+        ("LAN Pro DJ Link", "Puertos Ethernet RJ45 para sincronización de tempo y metadatos", "RJ45 LINK", "#00E5FF", "Gigabit 1000BASE-T, TCPIP Sync & Rekordbox DB"),
+        ("MIC Input & Level", "Entrada de micrófono Combo XLR/Jack con control de ganancia y Talkover", "MIC COMBO", "#FFAA00", "-52 dBu sensibilidad, previo analógico Clase A"),
+        ("AUX Input", "Entrada auxiliar de línea estéreo RCA para teléfonos o reproductores externos", "AUX STEREO", "#E0E0E0", "-12 dBV / +4 dBu conmutables, 47 kΩ"),
+        ("LINE Inputs", "Entradas de nivel de línea RCA para canales 1 y 2", "CH 1/2 LINE", "#CCCCCC", "Nivel de línea estándar +4 dBu, 47 kΩ"),
+        ("PHONO Inputs", "Entradas preamplificadas RIAA para tocadiscos de vinilo (Ch 1 y Ch 2)", "PHONO RIAA", "#FF5533", "Curva RIAA de alta precisión, relación S/N 88 dB"),
+        ("Ground Terminal", "Borne de toma de tierra metálico (GND) para eliminar zumbidos de masa", "GND SCREW", "#FFDD00", "Borne macizo moleteado de cobre para conexión equipotencial"),
+        ("Power (Alimentación)", "Conector eléctrico IEC con interruptor basculante e indicador LED", "POWER AC", "#00FF66", "Entrada IEC C14 100-240V 50/60Hz, 54W"),
+    ]
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Panel Posterior de Conexiones I/O - Mesa Pioneer DJM-A9 & CDJs")
-        self.resize(780, 420)
+        self.resize(800, 440)
         self.setStyleSheet("""
             QDialog {
                 background-color: #121218;
@@ -1216,38 +1471,40 @@ class DjRearPanelDialog(QDialog):
         title.setStyleSheet("font-size: 15px; font-weight: 900; color: #00E5FF; letter-spacing: 1px;")
         layout.addWidget(title)
 
-        desc = QLabel("Emulación física de las conexiones de audio profesional y señal de la cabina DJ.")
+        desc = QLabel("Emulación física interactiva de las conexiones profesionales. Haz clic en cualquier puerto para conectar/desconectar o consultar especificaciones:")
         desc.setStyleSheet("font-size: 11px; color: #888899;")
         layout.addWidget(desc)
 
         chassis = QFrame()
         chassis.setStyleSheet("background-color: #0B0B0F; border: 2px solid #20202C; border-radius: 8px;")
         ch_lay = QGridLayout(chassis)
-        ch_lay.setContentsMargins(14, 14, 14, 14)
-        ch_lay.setSpacing(10)
+        ch_lay.setContentsMargins(12, 12, 12, 12)
+        ch_lay.setSpacing(8)
 
-        connectors = [
-            ("Master XLR", "Salida principal balanceada (L/R) a sistema de sonido PA profesional", "XLR L/R", "#00FF66"),
-            ("Master RCA", "Salida principal no balanceada (L/R) mediante conectores RCA dorados", "RCA L/R", "#FFCC00"),
-            ("Booth Out", "Salida estéreo balanceada (Jack 1/4\" TRS) para monitores de cabina", "JACK TRS", "#00CCFF"),
-            ("USB Host/Link", "Conexión USB Type-B y Type-C con ordenador (Antigravity DJ / Rekordbox)", "USB DUAL", "#FF0055"),
-            ("LAN Pro DJ Link", "Puertos Ethernet RJ45 para sincronización de tempo y metadatos", "RJ45 LINK", "#00E5FF"),
-            ("MIC Input & Level", "Entrada de micrófono Combo XLR/Jack con control de ganancia y Talkover", "MIC COMBO", "#FFAA00"),
-            ("AUX Input", "Entrada auxiliar de línea estéreo RCA para teléfonos o reproductores externos", "AUX STEREO", "#E0E0E0"),
-            ("LINE Inputs", "Entradas de nivel de línea RCA para canales 1 y 2", "CH 1/2 LINE", "#CCCCCC"),
-            ("PHONO Inputs", "Entradas preamplificadas RIAA para tocadiscos de vinilo (Ch 1 y Ch 2)", "PHONO RIAA", "#FF5533"),
-            ("Ground Terminal", "Borne de toma de tierra metálico (GND) para eliminar zumbidos de masa", "GND SCREW", "#FFDD00"),
-            ("Power (Alimentación)", "Conector eléctrico IEC con interruptor basculante e indicador LED", "POWER AC", "#00FF66"),
-        ]
-
+        self._conn_states = {}
+        self._connector_buttons = {}
         row = 0
         col = 0
-        for name, desc_text, badge, color in connectors:
-            card = QFrame()
-            card.setStyleSheet("background-color: #151520; border: 1px solid #262638; border-radius: 6px; padding: 6px;")
+        for name, desc_text, badge, color, specs in self.CONNECTORS:
+            card = QPushButton()
+            card.setText(f"{name} [CONECTADO]")
+            card.setCursor(Qt.PointingHandCursor)
+            card.setStyleSheet("""
+                QPushButton {
+                    background-color: #151520;
+                    border: 1px solid #262638;
+                    border-radius: 6px;
+                    padding: 6px;
+                    text-align: left;
+                }
+                QPushButton:hover {
+                    background-color: #1C1C2C;
+                    border-color: #383850;
+                }
+            """)
             c_lay = QVBoxLayout(card)
             c_lay.setContentsMargins(4, 4, 4, 4)
-            c_lay.setSpacing(3)
+            c_lay.setSpacing(2)
 
             top = QHBoxLayout()
             lbl_name = QLabel(name)
@@ -1260,9 +1517,17 @@ class DjRearPanelDialog(QDialog):
             c_lay.addLayout(top)
 
             lbl_d = QLabel(desc_text)
-            lbl_d.setStyleSheet("font-size: 10px; color: #9999A8;")
+            lbl_d.setStyleSheet("font-size: 9px; color: #9999A8;")
             lbl_d.setWordWrap(True)
             c_lay.addWidget(lbl_d)
+
+            status_lbl = QLabel("● CONECTADO")
+            status_lbl.setStyleSheet(f"font-size: 8.5px; font-weight: 800; color: {color};")
+            c_lay.addWidget(status_lbl)
+
+            self._conn_states[name] = {"connected": True, "status_lbl": status_lbl, "color": color, "specs": specs}
+            self._connector_buttons[name] = card
+            card.clicked.connect(lambda _=False, n=name: self._toggle_connector(n))
 
             ch_lay.addWidget(card, row, col)
             col += 1
@@ -1272,21 +1537,48 @@ class DjRearPanelDialog(QDialog):
 
         layout.addWidget(chassis)
 
+        btn_row = QHBoxLayout()
+        self.lbl_info = QLabel("Haz clic en cualquier puerto para ver sus especificaciones técnicas.")
+        self.lbl_info.setStyleSheet("font-size: 10px; color: #00E5FF; font-style: italic;")
+        btn_row.addWidget(self.lbl_info, 1)
+
         btn_close = QPushButton("Cerrar Panel Posterior")
         btn_close.setCursor(Qt.PointingHandCursor)
         btn_close.setStyleSheet("""
             QPushButton {
                 background-color: #22222E;
                 color: #FFFFFF;
-                font-size: 12px;
+                font-size: 11px;
                 font-weight: bold;
                 border-radius: 6px;
-                padding: 8px 16px;
+                padding: 6px 14px;
             }
             QPushButton:hover { background-color: #2D2D3D; }
         """)
         btn_close.clicked.connect(self.accept)
-        layout.addWidget(btn_close, alignment=Qt.AlignRight)
+        btn_row.addWidget(btn_close)
+        layout.addLayout(btn_row)
+
+    def _toggle_connector(self, name: str):
+        info = self._conn_states.get(name)
+        if not info:
+            return
+        info["connected"] = not info["connected"]
+        is_conn = info["connected"]
+        btn = self._connector_buttons.get(name)
+        if btn:
+            btn.setText(f"{name} [{'CONECTADO' if is_conn else 'DESCONECTADO'}]")
+        lbl = info["status_lbl"]
+        color = info["color"]
+        if is_conn:
+            lbl.setText("● CONECTADO")
+            lbl.setStyleSheet(f"font-size: 8.5px; font-weight: 800; color: {color};")
+            self.lbl_info.setText(f"{name}: CONECTADO | {info['specs']}")
+        else:
+            lbl.setText("○ DESCONECTADO")
+            lbl.setStyleSheet("font-size: 8.5px; font-weight: 800; color: #666677;")
+            self.lbl_info.setText(f"{name}: DESCONECTADO (Señal interrumpida)")
+        self.connectionToggled.emit(name, is_conn)
 
 
 # =====================================================================================================
@@ -1295,6 +1587,8 @@ class DjRearPanelDialog(QDialog):
 class DjEnvironmentBar(QFrame):
     """Barra interactiva del equipamiento del DJ:
     DJ Headphones, Studio Monitors, PA Speakers, Subwoofer, Microphone, USB Flash Drive, Laptop, Audio Interface, DJ Stand."""
+    itemTriggered = Signal(str, str)  # item_id, title
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setStyleSheet("""
@@ -1305,27 +1599,29 @@ class DjEnvironmentBar(QFrame):
             }
         """)
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(10, 6, 10, 6)
-        lay.setSpacing(8)
+        lay.setContentsMargins(8, 4, 8, 4)
+        lay.setSpacing(6)
 
-        items = [
-            ("🎧 Headphones", "Preescucha en privado de temas sin salir a público (PFL Cue)", "#00E5FF"),
-            ("🔊 Monitors", "Monitores activos de cabina para mezcla de precisión", "#00FF66"),
-            ("📢 PA Speakers", "Sistema de sonido frontal para la pista de baile", "#FFDD00"),
-            ("💥 Subwoofer", "Pegada en frecuencias subgraves con pegada dinámica", "#FF5533"),
-            ("🎙️ Mic", "Micrófono de cabina con atenuación Talkover automática", "#FFAA00"),
-            ("💾 USB Drive", "Memorias USB montadas y listas para carga de canciones", "#00E5FF"),
-            ("💻 Laptop", "Núcleo de reproducción y análisis de audio Antigravity DJ", "#BB88FF"),
-            ("🎛️ Audio I/F", "Tarjeta de sonido profesional 24-bit / 96 kHz", "#00FF66"),
-            ("🏗️ DJ Stand", "Cabina y soporte ergonómico con aislamiento acústico", "#888899"),
+        self._items = [
+            ("headphones", "🎧 Headphones", "Preescucha en privado de temas sin salir a público (PFL Cue)", "#00E5FF"),
+            ("monitors", "🔊 Monitors", "Monitores activos de cabina para mezcla de precisión (Booth Mute)", "#00FF66"),
+            ("pa", "📢 PA Speakers", "Sistema de sonido frontal para la pista de baile (Master Mute)", "#FFDD00"),
+            ("subwoofer", "💥 Subwoofer", "Pegada en frecuencias subgraves con pegada dinámica (Bass Boost)", "#FF5533"),
+            ("mic", "🎙️ Mic", "Micrófono de cabina con atenuación Talkover automática", "#FFAA00"),
+            ("usb", "💾 USB Drive", "Memorias USB montadas y listas para carga de canciones (Explorar)", "#00E5FF"),
+            ("laptop", "💻 Laptop", "Núcleo de reproducción y análisis de audio Antigravity DJ (Stats)", "#BB88FF"),
+            ("audio_if", "🎛️ Audio I/F", "Tarjeta de sonido profesional 24-bit / 96 kHz (Config)", "#00FF66"),
+            ("stand", "🏗️ DJ Stand", "Cabina y soporte ergonómico con aislamiento acústico (Luces)", "#888899"),
         ]
 
-        for title, tooltip, color in items:
-            lbl = QLabel(title)
-            lbl.setCursor(Qt.PointingHandCursor)
-            lbl.setToolTip(tooltip)
-            lbl.setStyleSheet(f"""
-                QLabel {{
+        self.buttons = {}
+        for item_id, title, tooltip, color in self._items:
+            btn = QPushButton(title)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setToolTip(tooltip)
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    min-width: 0px;
                     font-size: 10px;
                     font-weight: 800;
                     color: #CCCCCC;
@@ -1334,9 +1630,271 @@ class DjEnvironmentBar(QFrame):
                     border-radius: 4px;
                     padding: 3px 6px;
                 }}
-                QLabel:hover {{ color: {color}; border-color: {color}; }}
+                QPushButton:hover {{ color: {color}; border-color: {color}; background-color: #242434; }}
+                QPushButton:pressed {{ background-color: {color}33; }}
             """)
-            lay.addWidget(lbl)
+            btn.clicked.connect(lambda _=False, i=item_id, t=title: self._on_item_clicked(i, t))
+            self.buttons[item_id] = btn
+            lay.addWidget(btn)
+
+    def _on_item_clicked(self, item_id: str, title: str):
+        self.itemTriggered.emit(item_id, title)
+
+
+# =====================================================================================================
+# 7b. SELECTOR DE SOUND COLOR FX (PIONEER DJM-A9)
+# =====================================================================================================
+class DjColorFxSelector(QWidget):
+    """Selector de Sound Color FX estilo Pioneer DJM-A9:
+    Botones iluminados para SPACE, DUB ECHO, SWEEP, NOISE, CRUSH, FILTER."""
+    colorFxChanged = Signal(str)
+
+    EFFECTS = [
+        ("SPACE", "#00E5FF"),
+        ("DUB ECHO", "#FFAA00"),
+        ("SWEEP", "#FF0088"),
+        ("NOISE", "#FFFFFF"),
+        ("CRUSH", "#FF3344"),
+        ("FILTER", "#00FF66"),
+    ]
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._current_fx = "FILTER"
+        self._buttons = {}
+
+        lay = QGridLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(2)
+
+        for idx, (name, col) in enumerate(self.EFFECTS):
+            btn = QPushButton(name)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            btn.setFixedHeight(18)
+            btn.clicked.connect(lambda _=False, n=name: self.selectFx(n))
+            self._buttons[name] = (btn, col)
+            row = idx // 2
+            col_pos = idx % 2
+            lay.addWidget(btn, row, col_pos)
+
+        self._update_styles()
+
+    def selectFx(self, name: str):
+        if name in self._buttons and name != self._current_fx:
+            self._current_fx = name
+            self._update_styles()
+            self.colorFxChanged.emit(name)
+
+    def currentFx(self) -> str:
+        return self._current_fx
+
+    def _update_styles(self):
+        for name, (btn, col) in self._buttons.items():
+            if name == self._current_fx:
+                btn.setStyleSheet(f"""
+                    QPushButton {{
+                        min-width: 0px;
+                        background-color: {col};
+                        color: #000000;
+                        font-size: 7.5px;
+                        font-weight: 900;
+                        border: 1px solid #FFFFFF;
+                        border-radius: 3px;
+                        padding: 1px 3px;
+                    }}
+                """)
+            else:
+                btn.setStyleSheet(f"""
+                    QPushButton {{
+                        min-width: 0px;
+                        background-color: #181822;
+                        color: {col}AA;
+                        font-size: 7.5px;
+                        font-weight: 800;
+                        border: 1px solid #282836;
+                        border-radius: 3px;
+                        padding: 1px 3px;
+                    }}
+                    QPushButton:hover {{ background-color: #242434; color: #FFFFFF; }}
+                """)
+
+
+# =====================================================================================================
+# 7c. NAVEGADOR DE BIBLIOTECA PIONEER CDJ-3000 (BROWSE)
+# =====================================================================================================
+class DjTrackBrowserDialog(QDialog):
+    """Navegador de canciones y biblioteca estilo pantalla Pioneer CDJ-3000.
+    Permite buscar, filtrar por BPM/Tono, previsualizar y cargar en Deck A o Deck B."""
+    trackSelected = Signal(str, dict)  # "A" o "B", track_dict
+
+    def __init__(self, tracks: list, target_deck="A", parent=None):
+        super().__init__(parent)
+        self.tracks = tracks or []
+        self.target_deck = target_deck
+        self.setWindowTitle("Navegador de Biblioteca Pioneer CDJ-3000 (BROWSE)")
+        self.resize(720, 440)
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #121218;
+                color: #FFFFFF;
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            }
+            QLineEdit {
+                background-color: #181824;
+                color: #FFFFFF;
+                border: 1px solid #2D2D40;
+                border-radius: 6px;
+                padding: 6px 10px;
+                font-size: 12px;
+            }
+            QTableWidget {
+                background-color: #14141E;
+                alternate-background-color: #181826;
+                color: #FFFFFF;
+                border: 1px solid #242436;
+                border-radius: 6px;
+                gridline-color: #1E1E2C;
+                font-size: 11px;
+            }
+            QHeaderView::section {
+                background-color: #1E1E2C;
+                color: #00E5FF;
+                font-weight: 900;
+                padding: 6px;
+                border: none;
+            }
+        """)
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(14, 14, 14, 14)
+        lay.setSpacing(10)
+
+        # Header
+        top = QHBoxLayout()
+        lbl_icon = QLabel("💿")
+        lbl_icon.setStyleSheet("font-size: 18px;")
+        top.addWidget(lbl_icon)
+
+        lbl_t = QLabel(f"PIONEER CDJ BROWSE — CARGAR EN DECK {target_deck}")
+        lbl_t.setStyleSheet("font-size: 14px; font-weight: 900; color: #00E5FF; letter-spacing: 1px;")
+        top.addWidget(lbl_t)
+        top.addStretch()
+
+        self.search_box = QLineEdit()
+        self.search_box.setPlaceholderText("🔍 Buscar por título, artista, BPM o tono...")
+        self.search_box.textChanged.connect(self._filter_tracks)
+        top.addWidget(self.search_box, 1)
+        lay.addLayout(top)
+
+        # Table
+        self.table = QTableWidget(0, 5)
+        self.table.setHorizontalHeaderLabels(["#", "Título", "Artista", "BPM", "Key"])
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SingleSelection)
+        self.table.setAlternatingRowColors(True)
+        self.table.verticalHeader().setVisible(False)
+        self.table.doubleClicked.connect(self._on_double_click)
+        lay.addWidget(self.table)
+
+        # Buttons bottom
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+
+        btn_local = QPushButton("📁 Abrir archivo de audio en disco...")
+        btn_local.setCursor(Qt.PointingHandCursor)
+        btn_local.setStyleSheet("QPushButton { background-color: #242436; color: #CCC; font-size: 11px; font-weight: bold; border-radius: 6px; padding: 6px 12px; } QPushButton:hover { background-color: #303046; color: #FFF; }")
+        btn_local.clicked.connect(self._on_choose_local_file)
+        btn_row.addWidget(btn_local)
+
+        btn_row.addStretch()
+
+        btn_load_a = QPushButton("LOAD A")
+        btn_load_a.setCursor(Qt.PointingHandCursor)
+        btn_load_a.setStyleSheet("QPushButton { background-color: #1A3828; color: #1ED760; font-size: 11px; font-weight: 900; border: 1.5px solid #1ED760; border-radius: 6px; padding: 6px 14px; } QPushButton:hover { background-color: #244C36; }")
+        btn_load_a.clicked.connect(lambda: self._load_selected("A"))
+        btn_row.addWidget(btn_load_a)
+
+        btn_load_b = QPushButton("LOAD B")
+        btn_load_b.setCursor(Qt.PointingHandCursor)
+        btn_load_b.setStyleSheet("QPushButton { background-color: #382415; color: #FF7700; font-size: 11px; font-weight: 900; border: 1.5px solid #FF7700; border-radius: 6px; padding: 6px 14px; } QPushButton:hover { background-color: #4C301D; }")
+        btn_load_b.clicked.connect(lambda: self._load_selected("B"))
+        btn_row.addWidget(btn_load_b)
+
+        btn_close = QPushButton("Cerrar")
+        btn_close.setCursor(Qt.PointingHandCursor)
+        btn_close.setStyleSheet("QPushButton { background-color: #22222E; color: #AAA; font-size: 11px; font-weight: bold; border-radius: 6px; padding: 6px 12px; }")
+        btn_close.clicked.connect(self.reject)
+        btn_row.addWidget(btn_close)
+
+        lay.addLayout(btn_row)
+
+        self._populate_table(self.tracks)
+
+    def _populate_table(self, track_list):
+        self.table.setRowCount(0)
+        self._current_items = track_list
+        for i, t in enumerate(track_list):
+            self.table.insertRow(i)
+            idx_item = QTableWidgetItem(f"{i + 1}")
+            idx_item.setTextAlignment(Qt.AlignCenter)
+            title_item = QTableWidgetItem(t.get("title", "Desconocido"))
+            artist_item = QTableWidgetItem(t.get("uploader", t.get("artist", "")))
+            bpm = t.get("bpm")
+            bpm_str = f"{float(bpm):.1f}" if bpm else "---"
+            bpm_item = QTableWidgetItem(bpm_str)
+            bpm_item.setTextAlignment(Qt.AlignCenter)
+            key_item = QTableWidgetItem(str(t.get("key", t.get("tone", "---"))))
+            key_item.setTextAlignment(Qt.AlignCenter)
+
+            self.table.setItem(i, 0, idx_item)
+            self.table.setItem(i, 1, title_item)
+            self.table.setItem(i, 2, artist_item)
+            self.table.setItem(i, 3, bpm_item)
+            self.table.setItem(i, 4, key_item)
+
+    def _filter_tracks(self, text: str):
+        query = text.strip().lower()
+        if not query:
+            self._populate_table(self.tracks)
+            return
+        filtered = []
+        for t in self.tracks:
+            title = str(t.get("title", "")).lower()
+            artist = str(t.get("uploader", t.get("artist", ""))).lower()
+            bpm = str(t.get("bpm", "")).lower()
+            key = str(t.get("key", t.get("tone", ""))).lower()
+            if query in title or query in artist or query in bpm or query in key:
+                filtered.append(t)
+        self._populate_table(filtered)
+
+    def _on_double_click(self, _index):
+        self._load_selected(self.target_deck)
+
+    def _load_selected(self, deck: str):
+        row = self.table.currentRow()
+        if 0 <= row < len(self._current_items):
+            item = self._current_items[row]
+            self.trackSelected.emit(deck, item)
+            self.accept()
+
+    def _on_choose_local_file(self):
+        from PySide6.QtWidgets import QFileDialog
+        path, _ = QFileDialog.getOpenFileName(
+            self, f"Seleccionar pista de audio para Deck {self.target_deck}", "",
+            "Archivos de Audio (*.mp3 *.wav *.flac *.ogg *.m4a *.aac *.aiff);;Todos los archivos (*.*)"
+        )
+        if path:
+            import os
+            title = os.path.splitext(os.path.basename(path))[0]
+            item = {"title": title, "artist": "Archivo Local", "local_path": path, "bpm": 128.0, "key": "8A"}
+            self.trackSelected.emit(self.target_deck, item)
+            self.accept()
 
 
 # =====================================================================================================

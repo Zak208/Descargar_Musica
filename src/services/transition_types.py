@@ -32,7 +32,7 @@ Tipos (constantes TYPE_*):
 """
 import math
 
-from services import camelot, dj_dsp, dj_fx, mix_planner, mix_points
+from services import camelot, dj_dsp, dj_fx, dj_planner, mix_planner, mix_points
 from services.mix_types import KIND_CUT, SAMPLE_RATE, BeatGrid, TransitionPlan
 
 TYPE_BLEND = "blend"
@@ -42,6 +42,11 @@ TYPE_FILTER = "filter"
 TYPE_REVERB_WASH = "reverb_wash"
 TYPE_DELAY_DROP = "delay_drop"
 TYPE_SMART_FILTER_EQ = "smart_filter_eq"
+TYPE_VINYL_BRAKE = "vinyl_brake"
+TYPE_BASS_SWAP_CLUB = "bass_swap_club"
+TYPE_EDM_BUILD_DROP = "edm_build_drop"
+TYPE_REGGAETON_DYNAMIC = "reggaeton_dynamic"
+TYPE_POP_MELODIC = "pop_melodic"
 
 TYPES = (
     TYPE_BLEND,
@@ -51,6 +56,11 @@ TYPES = (
     TYPE_REVERB_WASH,
     TYPE_DELAY_DROP,
     TYPE_SMART_FILTER_EQ,
+    TYPE_VINYL_BRAKE,
+    TYPE_BASS_SWAP_CLUB,
+    TYPE_EDM_BUILD_DROP,
+    TYPE_REGGAETON_DYNAMIC,
+    TYPE_POP_MELODIC,
 )
 
 CUT_A_RAMP_S = 0.005            # A baja en 5 ms hasta el corte
@@ -304,6 +314,25 @@ def _render_smart_filter_eq(a, b, plan, sample_rate):
     return out.astype(np.float32)
 
 
+def _render_vinyl_brake(dry, a, b, c: int, sample_rate: int):
+    """Freno de vinilo (vinyl brake) en Track A antes del corte c, y Track B entra limpio en c."""
+    np = _np()
+    n = len(dry)
+    out = np.zeros((n, 2), dtype=np.float32)
+    brake_dur = min(1.2, max(0.2, c / sample_rate)) if c > 0 else 0.0
+    if c > 0:
+        a_cut = a[:c]
+        out[:c] = dj_fx.vinyl_brake(a_cut, duration_s=brake_dur, sample_rate=sample_rate)
+    if c < n:
+        b_cut = b[c:]
+        rb = min(int(round(CUT_B_RAMP_S * sample_rate)), len(b_cut))
+        if rb > 0:
+            b_cut = b_cut.copy()
+            b_cut[:rb] *= dj_dsp._ramp(rb, down=False)[:, None]
+        out[c:] = b_cut
+    return out
+
+
 def render_typed_parts(a, b, plan: TransitionPlan, kind: str, bpm: float = None, sample_rate: int = SAMPLE_RATE,
                        tail_s: float = None):
     """(mezcla, cola) de la transición del tipo `kind`. Ver el docstring del módulo para la longitud de cada parte y cómo se
@@ -317,7 +346,7 @@ def render_typed_parts(a, b, plan: TransitionPlan, kind: str, bpm: float = None,
     b = dj_dsp._to_stereo(b)
     empty = np.zeros((0, 2), dtype=np.float32)
     cut = _is_cut(plan, sample_rate)
-    if kind == TYPE_BLEND or (cut and kind not in (TYPE_ECHO_OUT, TYPE_DELAY_DROP, TYPE_REVERB_WASH)):
+    if kind == TYPE_BLEND or (cut and kind not in (TYPE_ECHO_OUT, TYPE_DELAY_DROP, TYPE_REVERB_WASH, TYPE_VINYL_BRAKE)):
         return dj_dsp.render_transition(a, b, plan, sample_rate), empty
     if cut:
         dry = dj_dsp.render_transition(a, b, plan, sample_rate).astype(np.float64)
@@ -329,6 +358,14 @@ def render_typed_parts(a, b, plan: TransitionPlan, kind: str, bpm: float = None,
             return _render_filter(a, b, plan, sample_rate), empty
         if kind == TYPE_SMART_FILTER_EQ:
             return _render_smart_filter_eq(a, b, plan, sample_rate), empty
+        if kind == TYPE_BASS_SWAP_CLUB:
+            return dj_dsp.render_bass_swap_strict(a, b, plan, sample_rate=sample_rate), empty
+        if kind == TYPE_EDM_BUILD_DROP:
+            return dj_dsp.render_edm_build_drop(a, b, plan, sample_rate=sample_rate), empty
+        if kind == TYPE_REGGAETON_DYNAMIC:
+            return dj_dsp.render_reggaeton_dynamic(a, b, plan, sample_rate=sample_rate), empty
+        if kind == TYPE_POP_MELODIC:
+            return dj_dsp.render_pop_melodic(a, b, plan, sample_rate=sample_rate), empty
         c = _cut_point(plan, n, sample_rate)
         dry = _dry_cut(a.astype(np.float64), b.astype(np.float64), c, sample_rate)
         if kind == TYPE_CUT_BAR:
@@ -336,6 +373,8 @@ def render_typed_parts(a, b, plan: TransitionPlan, kind: str, bpm: float = None,
         a_line = a
 
     limit = len(dry) + (10 ** 12 if tail_s is None else max(0, int(round(float(tail_s) * sample_rate))))
+    if kind == TYPE_VINYL_BRAKE:
+        return _render_vinyl_brake(dry, a_line, b, c, sample_rate), empty
     if kind == TYPE_ECHO_OUT:
         return _render_echo_out(dry, a_line, c, bpm, sample_rate, limit)
     if kind == TYPE_DELAY_DROP:
@@ -437,6 +476,11 @@ def choose_type(a_info: dict, b_info: dict, plan: TransitionPlan, bpm_a: float =
     tone_a, tone_b = camelot.normalize(a_info.get("tone")), camelot.normalize(b_info.get("tone"))
     key_score = camelot.score(tone_a, tone_b)
     if tone_a and tone_b and key_score <= camelot.SCORE_BAD:
+        fam_clash = dj_planner.classify_genre(a_info.get("genre"), bpm=tempo_a)
+        if fam_clash == dj_planner.GENRE_HIPHOP:
+            return TYPE_VINYL_BRAKE, f"freno de vinilo: disonancia tonal ({tone_a} vs {tone_b}), corte limpio con vinyl brake"
+        if fam_clash == dj_planner.GENRE_REGGAETON:
+            return TYPE_ECHO_OUT, f"eco de salida: disonancia tonal ({tone_a} vs {tone_b}), corte con eco rítmico para disolver choque"
         if energy_a is not None and energy_a >= 0.75 and (energy_a - (energy_b or 0.5)) > 0.2:
             return TYPE_REVERB_WASH, f"washout con reverb: los tonos chocan ({tone_a} y {tone_b}) y la reverb disuelve la disonancia"
         return TYPE_FILTER, f"filtro: los tonos chocan ({tone_a} y {tone_b}) y el tempo se puede igualar"
@@ -446,7 +490,34 @@ def choose_type(a_info: dict, b_info: dict, plan: TransitionPlan, bpm_a: float =
             return TYPE_FILTER, f"filtro: {what} y la mezcla es larga ({mix_points.fmt_seconds(length)})"
         return TYPE_BLEND, f"mezcla: {what}, pero la mezcla es corta ({mix_points.fmt_seconds(length)})"
 
-    # 6. Todo encaja: mezcla larga
+    # 6. Adaptación profesional al género musical y flujo rítmico
+    fam_a = dj_planner.classify_genre(a_info.get("genre"), bpm=tempo_a)
+    fam_b = dj_planner.classify_genre(b_info.get("genre"), bpm=tempo_b)
+    fam = fam_a or fam_b
+
+    # House / Tech House / Techno:
+    if fam == dj_planner.GENRE_HOUSE and length > SHORT_MIX_S:
+        return TYPE_BASS_SWAP_CLUB, f"bass swap club: mezcla larga progresiva ({mix_points.fmt_seconds(length)}) House/Techno con barrido HPF y cambio estricto de graves en compás"
+
+    # Reggaetón / Urbano / Dembow:
+    if fam == dj_planner.GENRE_REGGAETON:
+        return TYPE_REGGAETON_DYNAMIC, "mezcla urbana dinámica: tallado de medios vocales (-6 dB Mid-Carve) y cambio de ritmo en drop/estribillo"
+
+    # Hip-Hop / Boom Bap / Trap:
+    if fam == dj_planner.GENRE_HIPHOP:
+        if length <= SHORT_MIX_S + 1e-9:
+            return TYPE_VINYL_BRAKE, "freno de vinilo (vinyl brake): transición Hip-Hop con parada de motor al primer beat"
+        return TYPE_DELAY_DROP, "delay drop con ping-pong: corte rítmico Hip-Hop/Trap"
+
+    # Electrónica / EDM Festival:
+    if fam == dj_planner.GENRE_EDM:
+        return TYPE_EDM_BUILD_DROP, "build-up y drop EDM: subida de filtro HPF en ambas pistas y explosión de graves en el drop"
+
+    # Pop / Comercial:
+    if fam == dj_planner.GENRE_POP:
+        return TYPE_POP_MELODIC, "fundido melódico Pop: alineación por compases, volumen compensado y ecualización de voces"
+
+    # 7. Todo encaja: mezcla larga
     tones = "mismo tono" if tone_a == tone_b else f"tonos compatibles ({tone_a} y {tone_b})"
     if ((energy_a is not None and energy_a >= 0.75 and energy_b is not None and energy_b >= 0.70)
             or profile == "club") and length > LONG_MIX_S + 1e-9:

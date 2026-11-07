@@ -1190,7 +1190,8 @@ class EngineSession:
         """Con corte en el compás o eco, el corte (`bass_swap_at`) debe caer donde A aún suena justo antes y B ya suena justo
         después (si no, un silencio: A con su final mudo o B con su principio mudo). Si no es así, se mueve al comienzo de
         compás de A más cercano en que sí (o cada medio segundo sin rejilla). Con los demás tipos, el plan tal cual."""
-        if kind not in (transition_types.TYPE_CUT_BAR, transition_types.TYPE_ECHO_OUT, transition_types.TYPE_DELAY_DROP, transition_types.TYPE_REVERB_WASH):
+        if kind not in (transition_types.TYPE_CUT_BAR, transition_types.TYPE_ECHO_OUT, transition_types.TYPE_DELAY_DROP,
+                        transition_types.TYPE_REVERB_WASH, transition_types.TYPE_VINYL_BRAKE, transition_types.TYPE_EDM_BUILD_DROP):
             return plan
         sr = SAMPLE_RATE
         n = round(plan.length_s * sr)
@@ -1219,7 +1220,8 @@ class EngineSession:
     @staticmethod
     def _split(kind, plan, n) -> int:
         """Dónde se parte la mezcla (desde ahí domina B): la mitad, o el corte con corte en el compás y eco de salida."""
-        if kind in (transition_types.TYPE_CUT_BAR, transition_types.TYPE_ECHO_OUT, transition_types.TYPE_DELAY_DROP, transition_types.TYPE_REVERB_WASH):
+        if kind in (transition_types.TYPE_CUT_BAR, transition_types.TYPE_ECHO_OUT, transition_types.TYPE_DELAY_DROP,
+                    transition_types.TYPE_REVERB_WASH, transition_types.TYPE_VINYL_BRAKE, transition_types.TYPE_EDM_BUILD_DROP):
             return transition_types._cut_point(plan, n, SAMPLE_RATE)
         return n // 2
 
@@ -1240,7 +1242,8 @@ class EngineSession:
         """A y B en la línea de tiempo de la mezcla y su ganancia de medios y agudos (fundido, o escalón en el corte)."""
         ts = transition_scorer
         n = len(x)
-        if kind in (transition_types.TYPE_ECHO_OUT, transition_types.TYPE_CUT_BAR):
+        if kind in (transition_types.TYPE_ECHO_OUT, transition_types.TYPE_CUT_BAR, transition_types.TYPE_DELAY_DROP,
+                    transition_types.TYPE_REVERB_WASH, transition_types.TYPE_VINYL_BRAKE, transition_types.TYPE_EDM_BUILD_DROP):
             a_line, b_line = ts._place(np, a_part[:split], 0, n), ts._place(np, b_part[split:], split, n)
             gain_a = (np.arange(n) < split).astype(np.float64)
             return a_line, b_line, gain_a, 1.0 - gain_a

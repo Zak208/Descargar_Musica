@@ -3,6 +3,26 @@
 Formato: `MAYOR.MENOR.PARCHE`. MAYOR = cambios que rompen datos o uso, MENOR = funciones nuevas, PARCHE = arreglos.
 Cada versión subida a GitHub tiene su etiqueta `vX.Y.Z` (pestaña *Releases/Tags*).
 
+## 1.25.0
+**Cabina DJ 100% Funcional (CDJ-3000 & DJM-A9) y Motor de Mezcla Adaptativo por Géneros Musicales**
+- **Cabina DJ Pioneer 100% Interactiva y Funcional**:
+  - Cableado y reactividad integral de todos los botones y controles que anteriormente eran inertes:
+    - *Navegación CDJ*: Diálogo interactivo `DjTrackBrowserDialog` con búsqueda en vivo, tonalidad Key, BPM y botones `LOAD A` y `LOAD B`; botones de menú contextual Pioneer (`MENU`), retorno (`BACK`) y expulsión segura (`EJECT`).
+    - *Transporte y Modos*: `MASTER TEMPO` (bloqueo de tono independiente de velocidad), `QUANTIZE` (cuadriculado rítmico automático de cues y loops), `SLIP MODE` (avance temporal interno mientras se realiza scratch o bucle), y `REVERSE` con efecto backspin gradual.
+    - *Pads y Loops*: Botón CUE con soporte dual (salto a cue en reproducción; audición continua mientras se mantenga presionado en pausa); pads de rendimiento con modos intercambiables (`HOT CUE`, `LOOP`, `JUMP`) y borrado por clic derecho.
+    - *Mesa DJM-A9*: Conmutadores de entrada de señal (`USB A`, `USB B`, `LINE`, `PHONO`); selector de 6 efectos Sound Color FX (`SPACE`, `DUB ECHO`, `SWEEP`, `NOISE`, `CRUSH`, `FILTER`); selector de asignación de crossfader (`A`, `THRU`, `B`).
+    - *Monitorización Master & Cabina*: Potenciómetros de Master Level, Booth Monitor, volumen de auriculares (`HP VOL`), balance `HP MIX`, preescucha `M-CUE` y conmutador `HP A/B`.
+    - *Soporte Universal de Rueda de Ratón*: Todos los mandos giratorios, pitch faders, channel faders y jog wheels responden suavemente a `wheelEvent`.
+- **Motor DJ Adaptativo por Géneros y Armonía Camelot**:
+  - Clasificación y reglas de transición específicas por familia musical:
+    - *House / Tech House / Techno*: Fraseo largo de 16/32 compases con **Bass Swap** estricto (-24 dB en corte de graves saliente con entrada instantánea a 0 dB de graves en beat 1) y barrido de filtro HPF progresivo.
+    - *Reggaetón / Urbano / Dembow*: Transición dinámica de 4/8 compases con **Mid-Carve** vocal (-6 dB en medios) para evitar choques de voces y Beat FX Echo-Out a 1/2 beat.
+    - *Hip-Hop / Trap*: Transición con **Vinyl Brake** modelando la inercia analógica de parada de plato con caída de tempo y pitch.
+    - *Pop / Comercial*: Fundido melódico de 8/16 compases con compensación acústica de volumen y preservación de fase.
+    - *EDM / Festival*: Build-up con barrido HPF dual durante el redoble de caja y corte limpio en el beat 1 del drop con máxima potencia de graves.
+  - Protección Anti-Disonancia Camelot: Detección de incompatibilidad armónica tonal; el motor sustituye automáticamente mezclas melódicas disonantes por transiciones de filtro, eco o freno de vinilo.
+  - Animación física en la mesa virtual: Crossfader, knobs de ecualización, filtros y módulo Beat FX Rack se mueven y encienden en tiempo real reflejando las acciones del DJ profesional durante la mezcla.
+
 ## 1.24.0
 **Integración Real de Audio y DSP en la Mesa DJ y Reproducción Universal de Previsualizaciones en el Buscador**
 - **Previsualización Universal en el Buscador**:

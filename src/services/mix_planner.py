@@ -84,7 +84,32 @@ def _closest(candidates, target, low, high):
     return min(fit, key=lambda t: abs(t - target)) if fit else None
 
 
-def plan_transition(a: dict, b: dict, bars: int = 16) -> TransitionPlan:
+def optimal_bars_for_genre(genre_a: str, genre_b: str = None, default_bars: int = 16) -> int:
+    """Calcula los compases de mezcla ideales según los géneros musicales de las canciones.
+
+    - House / Tech House / Techno: 16 o 32 compases (mezclas largas progresivas).
+    - Reggaetón / Urbano / Dembow: 8 compases (mezclas dinámicas y cortas).
+    - Hip-Hop / Boom Bap / Trap: 4 u 8 compases (cortes rítmicos).
+    - Pop / Comercial: 16 u 8 compases (fundidos melódicos alineados).
+    - EDM / Festival: 16 compases (build-up y drop).
+    """
+    try:
+        from services.dj_planner import (
+            classify_genre, GENRE_HOUSE, GENRE_REGGAETON, GENRE_HIPHOP, GENRE_EDM, GENRE_POP
+        )
+        fa = classify_genre(genre_a)
+        fb = classify_genre(genre_b)
+        fam = fa or fb
+        if fam in (GENRE_REGGAETON, GENRE_HIPHOP):
+            return 8
+        elif fam == GENRE_HOUSE or fam in (GENRE_POP, GENRE_EDM):
+            return 16
+    except Exception:
+        pass
+    return default_bars
+
+
+def plan_transition(a: dict, b: dict, bars: int = None) -> TransitionPlan:
     """Plan de la mezcla de A (la que suena) a B (la que entra). Ver la explicación del módulo."""
     if not isinstance(a, dict) or not isinstance(b, dict):
         return mix_points.cut(0.0, 0.0, "corte limpio: faltan los datos de " + ("la que suena" if not isinstance(a, dict)
@@ -92,6 +117,12 @@ def plan_transition(a: dict, b: dict, bars: int = 16) -> TransitionPlan:
     base = mix_points.plan(a, b)
     if base.kind == KIND_CUT:
         return base
+    if bars is None:
+        bars = optimal_bars_for_genre(
+            a.get("genre") if isinstance(a, dict) else "",
+            b.get("genre") if isinstance(b, dict) else "",
+            default_bars=16
+        )
     grid_a, grid_b = _grid(a), _grid(b)
     ratio = tempo_ratio(_bpm(a, grid_a), _bpm(b, grid_b))
     if ratio is None:
@@ -149,14 +180,16 @@ def _phrased(a, b, grid_a: BeatGrid, grid_b: BeatGrid, ratio: float, bars: int, 
     ev_a, ev_b = (sa or {}).get("events"), (sb or {}).get("events")
     voc_a, voc_b = (sa or {}).get("vocal"), (sb or {}).get("vocal")
     clash, keep, vocal_tried = None, None, False
-    while grid_a.bar_s * bars > mix_points.MAX_MIX_S and bars > MIN_BARS:
+    max_len = 64.0 if bars >= 32 else mix_points.MAX_MIX_S
+    while grid_a.bar_s * bars > max_len and bars > MIN_BARS:
         bars //= 2
     while bars >= MIN_BARS:
         length = grid_a.bar_s * bars
         latest = a_dur - length
         b_fits = not b_dur or length * ratio <= b_dur / mix_points.TRACK_SHARE + 1e-6    # como en la fase 8: un tercio de B
         if latest >= a_dur / 2 and b_fits:
-            for multiple in A_PHRASES:
+            a_phrases = (32, 16, 8) if bars >= 32 else A_PHRASES
+            for multiple in a_phrases:
                 a_start = _closest(_phrase_starts(grid_a, base.a_start_s, multiple), base.a_start_s, a_dur / 2, latest)
                 if a_start is not None:
                     break

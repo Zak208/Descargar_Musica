@@ -347,3 +347,184 @@ def mid_carve(audio, center_hz: float = 1500.0, width_oct: float = 1.0, gain_db:
     filtered = np.fft.irfft(spec * mask[None, :], n=size, axis=1)[:, :n].T
     out = filtered.astype(np.float32)
     return out.ravel() if was_1d else out
+
+
+def render_bass_swap_strict(a, b, plan, hpf_sweep_a: bool = True, kill_db: float = -24.0,
+                            sample_rate: int = SAMPLE_RATE):
+    """Mezcla profesional House / Techno con Bass Swap estricto y barrido HPF.
+
+    - Ecualización activa estricta: en el compás del cambio (bass_swap_at), la pista saliente A
+      corta sus graves a kill_db (-24 dB o silencio total) mientras la entrante B abre sus graves
+      a 0 dB instantáneamente en el golpe 1.
+    - Barrido HPF en A: en los compases previos al swap, un filtro paso alto barre suavemente
+      de 25 a 300 Hz para despejar el espectro antes de la entrada del bombo de B.
+    """
+    np = _np()
+    a = _to_stereo(a)
+    b = _to_stereo(b)
+    length = int(round(float(plan.length_s) * sample_rate))
+    if plan.kind == KIND_CUT or length <= 0:
+        return _clean_cut(a, b)
+
+    a = _fit(a, length)
+    b = _fit(b, length)
+
+    step = min(SWAP_STEP_S, length / sample_rate)
+    swap = min(max(float(plan.bass_swap_at), step / 2.0), length / sample_rate - step / 2.0)
+
+    # Barrido HPF en A previo al cambio de graves para despejar el espectro
+    if hpf_sweep_a and swap > 0.5:
+        from services import dj_fx
+        sweep_win = min(swap, 8.0)
+        n_start = int((swap - sweep_win) * sample_rate)
+        n_end = int(swap * sample_rate)
+        if n_end > n_start:
+            a_sub = a[n_start:n_end]
+            a_sweep = dj_fx.filter_sweep(a_sub, "hp", 25.0, 300.0, sample_rate=sample_rate)
+            a_proc = a.copy()
+            a_proc[n_start:n_end] = a_sweep
+            if n_end < length:
+                a_proc[n_end:] = resonant_filter(a[n_end:], 300.0, kind="hp", sample_rate=sample_rate)
+            a = a_proc
+
+    # Fundido de potencia constante en medios y agudos
+    angle = (np.arange(length, dtype=np.float64) + 0.5) / length * (math.pi / 2.0)
+    fade_a, fade_b = np.cos(angle), np.sin(angle)
+
+    # Curvas de bajos con corte estricto
+    kill_lin = 10.0 ** (float(kill_db) / 20.0)
+    bass_b = band_gains(length, [(swap - step / 2.0, 0.0), (swap + step / 2.0, 1.0)], sample_rate).astype(np.float64)
+    bass_a = band_gains(length, [(swap - step / 2.0, 1.0), (swap + step / 2.0, kill_lin)], sample_rate).astype(np.float64)
+
+    low_a = _lowpass(a, LOW_HZ, sample_rate)
+    low_b = _lowpass(b, LOW_HZ, sample_rate)
+
+    out = (fade_a[:, None] * a + fade_b[:, None] * b
+           + (bass_a - fade_a)[:, None] * low_a
+           + (bass_b - fade_b)[:, None] * low_b)
+    from services import dj_fx
+    return dj_fx.limit_peak(out.astype(np.float32))
+
+
+def render_edm_build_drop(a, b, plan, sample_rate: int = SAMPLE_RATE):
+    """Mezcla Electrónica / EDM Festival con Build-Up sincronizado y explosión de graves en el Drop.
+
+    - Build-up (antes de bass_swap_at): filtro HPF subiendo progresivamente en ambas pistas
+      hacia 1200 Hz con tensión creciente.
+    - Drop (en bass_swap_at, golpe 1): Track A se corta a cero de inmediato y Track B
+      explota con todo su espectro y pegada de graves en 0 dB.
+    """
+    np = _np()
+    from services import dj_fx
+    a = _to_stereo(a)
+    b = _to_stereo(b)
+    length = int(round(float(plan.length_s) * sample_rate))
+    if plan.kind == KIND_CUT or length <= 0:
+        return _clean_cut(a, b)
+
+    a = _fit(a, length)
+    b = _fit(b, length)
+    n = length
+    c = min(max(int(round(float(plan.bass_swap_at) * sample_rate)), 1), n - 1)
+
+    # Tramo 1: Build-up antes del corte c
+    a_build = a[:c]
+    b_build = b[:c]
+    fa_build = dj_fx.filter_sweep(a_build, "hp", 30.0, 1200.0, resonance=0.2, sample_rate=sample_rate)
+    fb_build = dj_fx.filter_sweep(b_build, "hp", 150.0, 900.0, resonance=0.1, sample_rate=sample_rate)
+
+    # Mezcla en build-up con volumen equilibrado
+    t_b = np.linspace(0.0, 1.0, c)[:, None]
+    build_mix = (1.0 - t_b * 0.4) * fa_build + (t_b * 0.6) * fb_build
+
+    # Tramo 2: Drop tras el corte c (Track B entra al 100% con toda su potencia)
+    b_drop = b[c:]
+
+    out = np.zeros((n, 2), dtype=np.float32)
+    # Rampa de salida de 3 ms en A para caída contundente sin clic digital
+    r_cut = min(int(0.003 * sample_rate), c)
+    if r_cut > 0:
+        build_mix[-r_cut:] *= _ramp(r_cut, down=True)[:, None]
+    out[:c] = build_mix.astype(np.float32)
+
+    # Entrada de B en el drop
+    out[c:] = b_drop
+    return dj_fx.limit_peak(out.astype(np.float32))
+
+
+def render_reggaeton_dynamic(a, b, plan, sample_rate: int = SAMPLE_RATE):
+    """Mezcla Reggaetón / Urbano / Dembow con tallado vocal (Mid-Carve -6 dB) y cambio rítmico.
+
+    Evita el emborronamiento y solapamiento de dos líneas vocales compitiendo a la vez,
+    y realiza un cambio de graves contundente sincronizado con el dembow.
+    """
+    np = _np()
+    a = _to_stereo(a)
+    b = _to_stereo(b)
+    length = int(round(float(plan.length_s) * sample_rate))
+    if plan.kind == KIND_CUT or length <= 0:
+        return _clean_cut(a, b)
+
+    a = _fit(a, length)
+    b = _fit(b, length)
+
+    # Mid-Carve vocal en Track A (-6 dB en 1400 Hz) para despejar la voz entrante
+    a_carved = mid_carve(a, center_hz=1400.0, width_oct=1.2, gain_db=-6.0, sample_rate=sample_rate)
+    # Rampa gradual de activación del mid carve
+    u = np.linspace(0.0, 1.0, length)[:, None]
+    a_proc = a * (1.0 - u) + a_carved * u
+
+    angle = (np.arange(length, dtype=np.float64) + 0.5) / length * (math.pi / 2.0)
+    fade_a, fade_b = np.cos(angle), np.sin(angle)
+
+    step = min(SWAP_STEP_S, length / sample_rate)
+    swap = min(max(float(plan.bass_swap_at), step / 2.0), length / sample_rate - step / 2.0)
+    bass_b = band_gains(length, [(swap - step / 2.0, 0.0), (swap + step / 2.0, 1.0)], sample_rate).astype(np.float64)
+    bass_a = 1.0 - bass_b
+
+    low_a = _lowpass(a_proc, LOW_HZ, sample_rate)
+    low_b = _lowpass(b, LOW_HZ, sample_rate)
+
+    out = (fade_a[:, None] * a_proc + fade_b[:, None] * b
+           + (bass_a - fade_a)[:, None] * low_a
+           + (bass_b - fade_b)[:, None] * low_b)
+    from services import dj_fx
+    return dj_fx.limit_peak(out.astype(np.float32))
+
+
+def render_pop_melodic(a, b, plan, sample_rate: int = SAMPLE_RATE):
+    """Mezcla Pop / Comercial con alineación melódica, volumen compensado y ecualización vocal.
+
+    Compensa medios suaves (-3.5 dB) y mantiene potencia acústica constante en las frases.
+    """
+    np = _np()
+    a = _to_stereo(a)
+    b = _to_stereo(b)
+    length = int(round(float(plan.length_s) * sample_rate))
+    if plan.kind == KIND_CUT or length <= 0:
+        return _clean_cut(a, b)
+
+    a = _fit(a, length)
+    b = _fit(b, length)
+
+    # Atenuación suave de medios en A (-3.5 dB) para armonizar voces
+    a_carved = mid_carve(a, center_hz=1600.0, width_oct=1.0, gain_db=-3.5, sample_rate=sample_rate)
+    u = np.linspace(0.0, 1.0, length)[:, None]
+    a_proc = a * (1.0 - u * 0.7) + a_carved * (u * 0.7)
+
+    angle = (np.arange(length, dtype=np.float64) + 0.5) / length * (math.pi / 2.0)
+    fade_a, fade_b = np.cos(angle), np.sin(angle)
+
+    step = min(SWAP_STEP_S, length / sample_rate)
+    swap = min(max(float(plan.bass_swap_at), step / 2.0), length / sample_rate - step / 2.0)
+    bass_b = band_gains(length, [(swap - step / 2.0, 0.0), (swap + step / 2.0, 1.0)], sample_rate).astype(np.float64)
+    bass_a = 1.0 - bass_b
+
+    low_a = _lowpass(a_proc, LOW_HZ, sample_rate)
+    low_b = _lowpass(b, LOW_HZ, sample_rate)
+
+    out = (fade_a[:, None] * a_proc + fade_b[:, None] * b
+           + (bass_a - fade_a)[:, None] * low_a
+           + (bass_b - fade_b)[:, None] * low_b)
+    from services import dj_fx
+    return dj_fx.limit_peak(out.astype(np.float32))
