@@ -3,6 +3,13 @@
 Formato: `MAYOR.MENOR.PARCHE`. MAYOR = cambios que rompen datos o uso, MENOR = funciones nuevas, PARCHE = arreglos.
 Cada versión subida a GitHub tiene su etiqueta `vX.Y.Z` (pestaña *Releases/Tags*).
 
+## 1.20.1
+**Previsualización en Buscador y Anticipación Rítmica DJ**
+- **Enrutamiento directo CDN (Deezer / iTunes)**: Reproducción nativa instantánea sin pasar por proxy local, evitando errores 403 y bloqueos de red interna.
+- **Formato YouTube robusto**: Configuración `ba/b/18/best` en `PreviewAudioWorker` para sortear el experimento SABR de YouTube.
+- **Fallback silencioso**: Si el CDN falla o caduca, se conmuta automáticamente a YouTube sin congelar la app.
+- **Anticipación acústica en Modo DJ**: Detección dinámica de decaimiento (`_fading_end`) en `EngineSession._before_silence` que adelanta la mezcla en frases musicales de 8, 4 o 1 compases de `BeatGrid`, garantizando que la transición ocurra con la música al 100% de volumen y pegada sin baches de energía.
+
 ## 1.20.0
 **Corrección de Álbumes y Previsualización Instantánea CDN**
 - **Carga robusta de álbumes (Deezer + iTunes)**: Resolución del error «Algo salió mal» al abrir álbumes de Deezer con IDs numéricos o alfanuméricos mediante un sistema de resolución híbrida transparente (`dz_` + fallback a Deezer/iTunes) y señal polimórfica en `AlbumCard`.
